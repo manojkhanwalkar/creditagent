@@ -1,0 +1,26 @@
+server:
+  port: ${PORT:8082}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: credit-report-mcp-server
+
+credit:
+  files:
+    directory: ${CREDIT_FILES_DIR:./data/credit-files}
+    # Required. Must equal the credit report generator's key. No default on purpose.
+    hmac-key: ${CREDIT_FILE_HMAC_KEY}
+    allowed-origins: ${MCP_ALLOWED_ORIGINS:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

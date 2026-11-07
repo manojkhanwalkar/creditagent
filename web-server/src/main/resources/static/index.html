@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Credit Agent</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>Credit Agent</h1>
+  </header>
+
+  <main class="widgets">
+    <!-- Widget: credit score. More widgets will be added to this grid later. -->
+    <section class="widget" aria-labelledby="score-title">
+      <h2 id="score-title">Credit score</h2>
+
+      <form id="score-form" autocomplete="off" novalidate>
+        <label for="ssn">Social Security Number</label>
+        <div class="ssn-row">
+          <input id="ssn" name="ssn" type="password" inputmode="numeric"
+                 placeholder="AAA-GG-SSSS" maxlength="11" required
+                 pattern="\d{3}-?\d{2}-?\d{4}" aria-describedby="ssn-help form-error"
+                 autocomplete="off" spellcheck="false">
+          <button id="toggle-ssn" type="button" class="secondary" aria-pressed="false">Show</button>
+        </div>
+        <p id="ssn-help" class="help">9 digits, with or without dashes.</p>
+        <button type="submit" id="submit">Get score</button>
+        <p id="form-error" class="error" role="alert" hidden></p>
+      </form>
+
+      <figure class="ring-figure" id="result" hidden>
+        <svg class="ring" viewBox="0 0 200 200" role="img" aria-labelledby="ring-label">
+          <title id="ring-label">Credit score</title>
+          <circle class="ring-track" cx="100" cy="100" r="80"></circle>
+          <circle class="ring-value" id="ring-value" cx="100" cy="100" r="80"
+                  transform="rotate(-90 100 100)"></circle>
+          <text x="100" y="98" class="ring-score" id="ring-score" text-anchor="middle"></text>
+          <text x="100" y="124" class="ring-max" text-anchor="middle">of 850</text>
+        </svg>
+        <figcaption id="ring-caption"></figcaption>
+      </figure>
+    </section>
+  </main>
+</body>
+</html>

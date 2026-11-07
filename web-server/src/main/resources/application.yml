@@ -1,0 +1,29 @@
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: web-server
+  mvc:
+    problemdetails:
+      enabled: true
+
+credit:
+  web:
+    mcp-url: ${CREDIT_MCP_URL:http://localhost:8082/mcp}
+    score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
+    timeout: ${DOWNSTREAM_TIMEOUT:5s}
+    rate-limit-per-minute: ${RATE_LIMIT_PER_MINUTE:20}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

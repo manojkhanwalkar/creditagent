@@ -1,0 +1,78 @@
+:root {
+  --bg: #f7f7f4;
+  --surface: #ffffff;
+  --border: #d4d4ce;
+  --text: #1b1b1a;
+  --muted: #55554f;
+  --accent: #2457c5;
+  --error: #c2272d;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body { margin: 0; }
+
+.page-header { padding: 24px 32px 0; }
+.page-header h1 { margin: 0; font-size: 28px; }
+
+.widgets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+  padding: 24px 32px 48px;
+}
+
+.widget {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+.widget h2 { margin: 0 0 16px; font-size: 18px; }
+
+label { display: block; font-weight: 600; margin-bottom: 6px; }
+.ssn-row { display: flex; gap: 8px; }
+input {
+  flex: 1;
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  letter-spacing: 0.08em;
+}
+input:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.help { color: var(--muted); font-size: 14px; margin: 6px 0 16px; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.6; cursor: progress; }
+
+.error { color: var(--error); font-weight: 500; margin: 12px 0 0; }
+
+.ring-figure { margin: 24px 0 0; text-align: center; }
+.ring { width: 220px; height: 220px; }
+.ring-track { fill: none; stroke: #ececE7; stroke-width: 16; }
+.ring-value {
+  fill: none;
+  stroke-width: 16;
+  stroke-linecap: round;
+  stroke-dasharray: 0 999;
+  transition: stroke-dasharray 600ms ease-out;
+}
+.ring-score { font-size: 44px; font-weight: 600; }
+.ring-max { font-size: 14px; fill: var(--muted); }
+figcaption { color: var(--muted); margin-top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-value { transition: none; }
+}

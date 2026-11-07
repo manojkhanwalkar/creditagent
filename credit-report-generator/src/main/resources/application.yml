@@ -1,0 +1,27 @@
+server:
+  port: ${PORT:8083}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: credit-report-generator
+
+credit:
+  files:
+    directory: ${CREDIT_FILES_DIR:./data/credit-files}
+    # Required. Must be the same value the MCP server uses. No default on purpose.
+    hmac-key: ${CREDIT_FILE_HMAC_KEY}
+    # Comma-separated demo SSNs to generate at start-up, e.g. 123-45-6789,234-56-7890
+    seed-ssns: ${CREDIT_SEED_SSNS:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

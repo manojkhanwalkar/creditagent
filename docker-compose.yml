@@ -1,0 +1,69 @@
+# Local stack. Build the jars first: mvn -B package -DskipTests
+# Then: cp .env.example .env  (and set CREDIT_FILE_HMAC_KEY), docker compose up --build
+#
+# Only the web UI (8080) and the client agent (8086) are published, and only on localhost.
+# Everything else talks over the private compose network.
+
+x-service: &service
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  credit-report-generator:
+    <<: *service
+    build: { context: ., args: { MODULE: credit-report-generator } }
+    environment:
+      CREDIT_FILES_DIR: /data/credit-files
+      CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
+      CREDIT_SEED_SSNS: ${CREDIT_SEED_SSNS:-}
+    volumes:
+      - credit-files:/data/credit-files
+
+  credit-report-mcp-server:
+    <<: *service
+    build: { context: ., args: { MODULE: credit-report-mcp-server } }
+    environment:
+      CREDIT_FILES_DIR: /data/credit-files
+      CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
+    volumes:
+      - credit-files:/data/credit-files:ro
+
+  score-calculator:
+    <<: *service
+    build: { context: ., args: { MODULE: score-calculator } }
+
+  web-server:
+    <<: *service
+    build: { context: ., args: { MODULE: web-server } }
+    environment:
+      CREDIT_MCP_URL: http://credit-report-mcp-server:8082/mcp
+      SCORE_CALCULATOR_URL: http://score-calculator:8081
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on: [credit-report-mcp-server, score-calculator]
+
+  credit-intelligence-agent:
+    <<: *service
+    build: { context: ., args: { MODULE: credit-intelligence-agent } }
+    environment:
+      CREDIT_MCP_URL: http://credit-report-mcp-server:8082/mcp
+      SCORE_CALCULATOR_URL: http://score-calculator:8081
+      AGENT_PUBLIC_URL: http://credit-intelligence-agent:8085
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on: [credit-report-mcp-server, score-calculator]
+
+  client-agent:
+    <<: *service
+    build: { context: ., args: { MODULE: client-agent } }
+    environment:
+      INTELLIGENCE_AGENT_URL: http://credit-intelligence-agent:8085
+    ports:
+      - "127.0.0.1:8086:8086"
+    depends_on: [credit-intelligence-agent]
+
+volumes:
+  credit-files:

@@ -1,0 +1,12 @@
+{
+  "name": "credit-agent-web-ui",
+  "private": true,
+  "type": "module",
+  "description": "Unit tests for the browser code served by web-server (no build step, no dependencies).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"src/test/js/**/*.test.js\""
+  }
+}

@@ -1,0 +1,3 @@
+# Only the built jars are copied into images.
+**
+!*/target/*.jar

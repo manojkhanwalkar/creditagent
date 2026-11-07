@@ -1,0 +1,29 @@
+# Build output
+target/
+*.class
+*.jar
+!**/.mvn/wrapper/maven-wrapper.jar
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+.DS_Store
+
+# Node
+node_modules/
+
+# Local configuration and secrets
+.env
+*.env.local
+application-local.yml
+*.pem
+*.key
+
+# Runtime data: generated credit files contain personal data
+data/
+credit-files/
+*.log

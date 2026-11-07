@@ -1,0 +1,7 @@
+# Replace the placeholders with real GitHub users or teams, then require code-owner review
+# in the main branch protection rule.
+#
+# *                                   OWNER_HANDLE
+# /.github/                           OWNER_HANDLE
+# /docs/security-review.md            SECURITY_TEAM_HANDLE
+# /common/src/main/java/**/Ssn.java   SECURITY_TEAM_HANDLE
