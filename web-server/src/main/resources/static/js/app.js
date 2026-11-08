@@ -1,5 +1,5 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
-import { authHeaders, checkRegistration, createSession, ssnHint } from './auth.js';
+import { authHeaders, checkRegistration, createSession, registrationFailure, ssnHint } from './auth.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -129,20 +129,42 @@ registerForm.addEventListener('submit', async (event) => {
     confirm: $('reg-confirm').value,
     email: $('reg-email').value.trim(),
     phone: $('reg-phone').value.trim(),
-    ssn: $('reg-ssn').value.trim(),
+    ssnCard: $('reg-ssn-card').files[0] || null,
   };
   const problem = checkRegistration(form);
   showFormError(error, problem || '');
   if (problem) return;
 
   const button = $('register-submit');
+  const label = button.textContent;
   button.disabled = true;
+  button.textContent = 'Checking your card…';
   try {
-    const { response, data } = await api('/api/v1/auth/register', {
-      body: { userId: form.userId, password: form.password, email: form.email, phone: form.phone, ssn: form.ssn },
+    // Multipart: the browser sets the Content-Type with its boundary. There is no SSN field; the
+    // server's KYC provider reads the SSN from the card photo.
+    const body = new FormData();
+    body.append('userId', form.userId);
+    body.append('password', form.password);
+    body.append('email', form.email);
+    body.append('phone', form.phone);
+    body.append('ssnCard', form.ssnCard, form.ssnCard.name);
+    const response = await fetch('/api/v1/auth/register', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body,
+      credentials: 'same-origin',
+      cache: 'no-store',
     });
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      showFormError(error, messageFor(response.status, data));
+      const failure = registrationFailure(response.status, data);
+      showFormError(error, failure.message);
+      if (failure.retakePhoto) {
+        // Keep everything else the user typed; only the photo has to be chosen again.
+        const photo = $('reg-ssn-card');
+        photo.value = '';
+        photo.focus();
+      }
       return;
     }
     if (await logIn(form.userId, form.password, error)) {
@@ -153,6 +175,7 @@ registerForm.addEventListener('submit', async (event) => {
     showFormError(error, 'Could not reach the server. Check your connection and try again.');
   } finally {
     button.disabled = false;
+    button.textContent = label;
   }
 });
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
+import com.creditagent.web.kyc.DocumentRejectedException;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -19,13 +20,14 @@ class AuthServiceTest {
     final InMemoryRepositories.Users users = new InMemoryRepositories.Users();
     final InMemoryRepositories.Sessions sessions = new InMemoryRepositories.Sessions();
     final InMemoryRepositories.MutableClock clock = new InMemoryRepositories.MutableClock(Instant.parse("2026-11-08T12:00:00Z"));
+    final FakeIdentityVerifier kyc = new FakeIdentityVerifier();
     final AuthService auth = new AuthService(
-            users, sessions, new BCryptPasswordEncoder(4), HASHER,
+            users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
             new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
             Duration.ofMinutes(5), clock);
 
     String register() {
-        return auth.register("Avery", PASSWORD, "avery@example.com", "+1 415 555 0100", AVERY_SSN);
+        return auth.register("Avery", PASSWORD, "avery@example.com", "+1 415 555 0100", FakeIdentityVerifier.card(AVERY_SSN));
     }
 
     @Test
@@ -44,16 +46,57 @@ class AuthServiceTest {
     @Test
     void anSsnCanOnlyBelongToOneAccount() {
         register();
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "123456789"))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", FakeIdentityVerifier.card("123456789")))
                 .isInstanceOf(AuthExceptions.SsnAlreadyRegisteredException.class);
         assertThat(users.find("blake")).isEmpty();
     }
 
     @Test
-    void registrationNeedsAValidSsn() {
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "000-12-3456"))
+    void theSsnIsTheOneTheKycProviderReadFromTheCard() {
+        register();
+        User user = users.find("avery").orElseThrow();
+        assertThat(user.kycVerificationId()).isEqualTo("kyc_test_1");
+        assertThat(user.toString()).doesNotContain("kyc_test");
+        assertThat(HASHER.matches(com.creditagent.common.Ssn.parse(AVERY_SSN), user.ssnHash())).isTrue();
+    }
+
+    @Test
+    void registrationNeedsACardPhoto() {
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", null))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class)
-                .hasMessageNotContaining("3456");
+                .hasMessageContaining("Social Security card");
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", new byte[0]))
+                .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
+        assertThat(kyc.calls).hasValue(0);
+    }
+
+    @Test
+    void aBlurryPhotoIsRejectedAndTheUserCanRetry() {
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101",
+                        FakeIdentityVerifier.blurry()))
+                .isInstanceOf(DocumentRejectedException.class)
+                .hasMessageContaining("blurry")
+                .extracting(e -> ((DocumentRejectedException) e).reason())
+                .isEqualTo(DocumentRejectedException.IMAGE_BLURRY);
+        assertThat(users.find("blake")).isEmpty();
+
+        assertThat(auth.register("blake", "another long passphrase", "b@example.com", "+14155550101",
+                FakeIdentityVerifier.card("234-56-7890"))).isEqualTo("blake");
+    }
+
+    @Test
+    void cheapChecksRunBeforeTheKycCall() {
+        register();
+        assertThatThrownBy(() -> auth.register("blake", "Password1234", "b@example.com", "+14155550101",
+                        FakeIdentityVerifier.card("234-56-7890")))
+                .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "not-an-email", "+14155550101",
+                        FakeIdentityVerifier.card("234-56-7890")))
+                .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
+        assertThatThrownBy(() -> auth.register("avery", "another long passphrase", "a@example.com", "+14155550101",
+                        FakeIdentityVerifier.card("234-56-7890")))
+                .isInstanceOf(UserAlreadyExistsException.class);
+        assertThat(kyc.calls).hasValue(1); // only the first, successful registration
     }
 
     @Test
@@ -76,7 +119,7 @@ class AuthServiceTest {
     @Test
     void duplicateUserIdFailsRegardlessOfCase() {
         register();
-        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", "+14155550101", "234-56-7890"))
+        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", "+14155550101", FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(UserAlreadyExistsException.class);
     }
 
@@ -136,10 +179,10 @@ class AuthServiceTest {
     @Test
     void aShortIdleTimeoutStillCountsActivity() {
         AuthService quick = new AuthService(
-                users, sessions, new BCryptPasswordEncoder(4), HASHER,
+                users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
                 Duration.ofSeconds(20), clock);
-        quick.register("quinn", PASSWORD, "q@example.com", "+14155550102", "345-67-8901");
+        quick.register("quinn", PASSWORD, "q@example.com", "+14155550102", FakeIdentityVerifier.card("345-67-8901"));
         String token = quick.login("quinn", PASSWORD).token();
         clock.advance(Duration.ofSeconds(12));
         quick.authenticate(token);
@@ -165,7 +208,7 @@ class AuthServiceTest {
                 return sessions.touch(sessionId, last, expires);
             }
         };
-        AuthService racy = new AuthService(users, racing, new BCryptPasswordEncoder(4), HASHER,
+        AuthService racy = new AuthService(users, racing, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
                 Duration.ofMinutes(5), clock);
         clock.advance(Duration.ofMinutes(1));
@@ -202,7 +245,7 @@ class AuthServiceTest {
     @Test
     void aTokenForAnotherUsersSessionIsRejected() {
         register();
-        auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "234-56-7890");
+        auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", FakeIdentityVerifier.card("234-56-7890"));
         String averySession = sessions.byId.isEmpty() ? auth.login("avery", PASSWORD).token() : null;
         String sessionId = sessions.byId.keySet().iterator().next();
         String forged = new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock)

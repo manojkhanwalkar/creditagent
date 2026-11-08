@@ -3,6 +3,7 @@ package com.creditagent.web.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -25,10 +26,12 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 
 /** Register, log in, use the token on the score API, log out: through the real filter chain. */
 @WebMvcTest(controllers = AuthController.class)
@@ -42,9 +45,20 @@ import org.springframework.test.web.servlet.MockMvc;
 class AuthControllerTest {
 
     static final String PASSWORD = "correct horse battery staple";
-    static final String REGISTER = """
-            {"userId":"Avery","password":"%s","email":"avery@example.com","phone":"+1 415 555 0100","ssn":"123-45-6789"}
-            """.formatted(PASSWORD);
+
+    /** A registration form for {@code userId} with {@code card} as the SSN card photo. */
+    static MockMultipartHttpServletRequestBuilder register(String userId, byte[] card) {
+        return (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
+                .file(new MockMultipartFile("ssnCard", "my card.png", MediaType.IMAGE_PNG_VALUE, card))
+                .param("userId", userId)
+                .param("password", PASSWORD)
+                .param("email", "avery@example.com")
+                .param("phone", "+1 415 555 0100");
+    }
+
+    static MockMultipartHttpServletRequestBuilder register(String userId, String ssnOnCard) {
+        return register(userId, FakeIdentityVerifier.card(ssnOnCard));
+    }
 
     @TestConfiguration
     @EnableConfigurationProperties(WebServerProperties.class)
@@ -52,11 +66,12 @@ class AuthControllerTest {
         static final InMemoryRepositories.MutableClock CLOCK =
                 new InMemoryRepositories.MutableClock(Instant.parse("2026-11-08T12:00:00Z"));
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
+        static final FakeIdentityVerifier KYC = new FakeIdentityVerifier();
 
         @Bean
         AuthService authService() {
             return new AuthService(
-                    new InMemoryRepositories.Users(), SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")),
+                    new InMemoryRepositories.Users(), SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")), KYC,
                     new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), CLOCK),
                     Duration.ofMinutes(5), CLOCK);
         }
@@ -70,16 +85,15 @@ class AuthControllerTest {
 
     @Test
     void fullFlow() throws Exception {
-        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON).content(REGISTER))
+        mvc.perform(register("Avery", "123-45-6789"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId").value("avery"))
                 .andExpect(content().string(Matchers.not(Matchers.containsString(PASSWORD))));
 
-        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON).content(REGISTER))
+        mvc.perform(register("Avery", "123-45-6789"))
                 .andExpect(status().isConflict());
-        // Same SSN under another user id: also refused.
-        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content(REGISTER.replace("Avery", "imposter")))
+        // A card with the same SSN under another user id: also refused.
+        mvc.perform(register("imposter", "123-45-6789"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("An account already exists for that SSN."));
 
@@ -107,6 +121,49 @@ class AuthControllerTest {
     }
 
     @Test
+    void aBlurryCardPhotoIs422WithAReasonAndCanBeRetried() throws Exception {
+        mvc.perform(register("dana", FakeIdentityVerifier.blurry()))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.reason").value("IMAGE_BLURRY"))
+                .andExpect(jsonPath("$.detail").value(Matchers.containsString("blurry")));
+
+        mvc.perform(register("dana", "456-78-9012")).andExpect(status().isCreated());
+    }
+
+    @Test
+    void somethingThatIsNotACardIs422() throws Exception {
+        mvc.perform(register("erin", "a holiday photo".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.reason").value("NOT_AN_SSN_CARD"));
+    }
+
+    @Test
+    void theSsnCannotBeTypedIn() throws Exception {
+        // An ssn field is ignored: the account gets the SSN on the card, not the one typed.
+        mvc.perform(register("frank", "567-89-0123").param("ssn", "123-45-6789"))
+                .andExpect(status().isCreated());
+        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"frank\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(jsonPath("$.ssnMasked").value("***-**-0123"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(login).doesNotContain("6789");
+
+        // The old JSON form, SSN and all, is no longer accepted.
+        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"gail\",\"password\":\"" + PASSWORD
+                                + "\",\"email\":\"g@example.com\",\"phone\":\"+14155550101\",\"ssn\":\"678-90-1234\"}"))
+                .andExpect(status().isUnsupportedMediaType());
+    }
+
+    @Test
+    void aMissingCardIs400() throws Exception {
+        mvc.perform(multipart("/api/v1/auth/register")
+                        .param("userId", "hana").param("password", PASSWORD)
+                        .param("email", "h@example.com").param("phone", "+14155550101"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void badCredentialsAre401WithAGenericMessage() throws Exception {
         mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"ghost\",\"password\":\"whatever-it-is\"}"))
@@ -117,8 +174,11 @@ class AuthControllerTest {
 
     @Test
     void weakPasswordIs400WithoutEchoingIt() throws Exception {
-        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"blake\",\"password\":\"Password1234\",\"email\":\"b@example.com\",\"phone\":\"+14155550101\",\"ssn\":\"234-56-7890\"}"))
+        mvc.perform(multipart("/api/v1/auth/register")
+                        .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE,
+                                FakeIdentityVerifier.card("234-56-7890")))
+                        .param("userId", "blake").param("password", "Password1234")
+                        .param("email", "b@example.com").param("phone", "+14155550101"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string(Matchers.not(Matchers.containsString("Password1234"))));
     }
@@ -134,8 +194,7 @@ class AuthControllerTest {
 
     @Test
     void sessionTimesOutAfterFiveIdleMinutes() throws Exception {
-        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content(REGISTER.replace("Avery", "casey").replace("123-45-6789", "345-67-8901")));
+        mvc.perform(register("casey", "345-67-8901")).andExpect(status().isCreated());
         String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"casey\",\"password\":\"" + PASSWORD + "\"}"))
                 .andReturn().getResponse().getContentAsString();

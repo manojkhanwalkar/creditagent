@@ -5,7 +5,7 @@ This follows the *Credit Agent* spec and system diagram. Numbers and letters on 
 ```mermaid
 flowchart LR
     subgraph Browser
-        UI[Web UI<br/>SSN form + score ring]
+        UI[Web UI<br/>register with SSN card photo<br/>SSN form + score ring]
     end
     subgraph Web["web-server :8080 (Spring Boot)"]
         WS[CreditScoreController<br/>CreditScoreService]
@@ -17,6 +17,7 @@ flowchart LR
     NRG[normalized-report-generator :8084<br/>merges 3 bureau reports]
     GEN[credit-report-generator :8083]
     SC[score-calculator :8081<br/>five-factor scorecard 300–850]
+    KYC[kyc-service :8087<br/>dummy KYC provider<br/>blur check + reads SSN from card]
     subgraph Agents["Agents · LangChain4j · A2A"]
         CA[client-agent :8086]
         CIA[credit-intelligence-agent :8085]
@@ -33,6 +34,9 @@ flowchart LR
     SC -. "9 · score" .-> WS
     WS -. "10 · score" .-> UI
     GEN -- "writes 3 bureau reports" --> FS
+    UI -- "R1 · register + card photo (multipart)" --> WS
+    WS -- "R2 · card photo" --> KYC
+    KYC -. "R3 · SSN + verification id, or REJECTED (IMAGE_BLURRY…)" .-> WS
     CA -- "A · SSN (A2A SendMessage)" --> CIA
     CIA -- "B · resources/read (runs 3–6)" --> M
     M -. "C · credit report" .-> CIA
@@ -49,10 +53,11 @@ flowchart LR
 | `web-support` | Request-size limit filter for services that accept untrusted JSON (score calculator, NRG) | Spring Web |
 | `service-clients` | MCP client for reports, HTTP client for scores (shared by the web server and the agent) | LangChain4j MCP client, Spring `RestClient` |
 | `score-calculator` | `POST /api/v1/scores`: report in, score out | Spring Boot |
+| `kyc-service` | Dummy external KYC provider: `POST /api/v1/ssn-verifications` takes a photo of an SSN card, refuses blurred or non-card images, and returns the SSN it read | Spring Boot, Java ImageIO |
 | `credit-report-generator` | Creates a synthetic credit history and writes one report per bureau, each in that bureau's format | Spring Boot |
 | `normalized-report-generator` | NRG: `POST /api/v1/normalized-reports`, three bureau reports in, one `CreditReport` out | Spring Boot |
 | `credit-report-mcp-server` | MCP server over the file store; reads all three bureau files and has NRG merge them | LangChain4j `McpServer` (tools) plus resources, Streamable HTTP |
-| `web-server` | Serves the UI, registers and logs in users (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
+| `web-server` | Serves the UI, registers users after a KYC check of their SSN card, logs them in (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
 
@@ -88,11 +93,20 @@ The views differ the way real files do: each lender reports to each bureau with 
 sequenceDiagram
     participant UI as Web UI
     participant WS as web-server :8080
+    participant K as kyc-service :8087
     participant U as DynamoDB users
     participant S as DynamoDB sessions
-    UI->>WS: POST /api/v1/auth/register {userId, password, email, phone, ssn}
-    WS->>U: TransactWriteItems: user (BCrypt hash, SSN HMAC) + ssn#hash claim, both if not exists
-    WS-->>UI: 201, or 409 if the user id or the SSN is taken
+    UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, phone, ssnCard image)
+    WS->>WS: check fields, password rules, user id free (400 / 409, no KYC call)
+    WS->>K: POST /api/v1/ssn-verifications (multipart: document)
+    alt photo blurred, not a card, or unreadable
+        K-->>WS: REJECTED + reason (IMAGE_BLURRY, NOT_AN_SSN_CARD, …)
+        WS-->>UI: 422 {reason, detail}; UI clears the photo and asks for a new one
+    else card verified
+        K-->>WS: VERIFIED {ssn, verificationId}
+        WS->>U: TransactWriteItems: user (BCrypt hash, SSN HMAC, KYC id) + ssn#hash claim, both if not exists
+        WS-->>UI: 201, or 409 if the user id or the SSN is taken
+    end
     UI->>WS: POST /api/v1/auth/login {userId, password}
     WS->>U: GetItem userId
     WS->>S: PutItem session (SSN hash, expiresAt = now + 5 min)
@@ -105,7 +119,18 @@ sequenceDiagram
     WS->>S: DeleteItem session
 ```
 
-**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone, the SSN's HMAC (`ssnHash`) and last four digits, and creation time. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+**SSN from the card, not the keyboard.** Registration has no SSN field. The user uploads a photo of their Social Security card and the web server sends it to the KYC provider through `IdentityVerifier` (`KycHttpClient`). The SSN bound to the account is the one the provider read, so nobody can claim another person's SSN by typing it. Field, password and user-id checks run first, so a bad form never costs a KYC call. The web server only forwards PNG and JPEG files (by magic bytes) up to 5 MB, and never decodes them itself.
+
+**The dummy KYC provider.** `kyc-service` stands in for an external provider and runs the checks a real one does, in order: the file is a PNG or JPEG of sensible size (pixel count checked from the header before decoding); the photo is sharp enough; it is an SSN card; a valid SSN can be read. Sharpness is the variance of the Laplacian of the grey-scale image scaled to 1000 px wide; below `KYC_MIN_SHARPNESS` (default 100) the answer is `REJECTED` with reason `IMAGE_BLURRY`, and the UI shows "The image is too blurry to read. Take a sharper photo…" and asks for a new photo while keeping the rest of the form. Instead of OCR, it reads a label its own sample cards carry in their PNG metadata, which keeps the demo deterministic. Sample cards come from `GET /api/v1/sample-cards/{ssn}?blur=N` when `KYC_SAMPLE_CARDS_ENABLED=true` (compose only). A sharp sample scores about 1,450, blur 2 about 140 and blur 3 about 48.
+
+| Provider answer | Web server | UI |
+|---|---|---|
+| `VERIFIED`, SSN, verification id | creates the user (409 if the SSN or id is taken) | logs in |
+| `REJECTED` `IMAGE_BLURRY` | 422, `reason: IMAGE_BLURRY` | "too blurry", clears the photo, asks to retry |
+| `REJECTED` `UNSUPPORTED_IMAGE`, `IMAGE_SIZE`, `NOT_AN_SSN_CARD`, `SSN_UNREADABLE` | 422 with that reason | the reason's message, asks for a new photo |
+| error, timeout, or a malformed answer | 503 | "try again in a few minutes" |
+
+**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone, the SSN's HMAC (`ssnHash`) and last four digits, the KYC verification id (`kycVerificationId`), and creation time. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
 
 **Own report only.** `CreditScoreController` hashes the requested SSN with the same key and compares it, in constant time, with the session's hash. A mismatch is 403 "You can only look up your own credit report." and happens before the MCP server is called.
 

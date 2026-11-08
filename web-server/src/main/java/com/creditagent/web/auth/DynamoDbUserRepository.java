@@ -41,6 +41,9 @@ public class DynamoDbUserRepository implements UserRepository {
         item.put("phone", s(user.phone()));
         item.put("ssnHash", s(user.ssnHash()));
         item.put("ssnLastFour", s(user.ssnLastFour()));
+        if (user.kycVerificationId() != null) {
+            item.put("kycVerificationId", s(user.kycVerificationId()));
+        }
         item.put("createdAt", s(user.createdAt().toString()));
         Map<String, AttributeValue> claim = Map.of(
                 KEY, s(SSN_CLAIM_PREFIX + user.ssnHash()),
@@ -85,6 +88,7 @@ public class DynamoDbUserRepository implements UserRepository {
                 item.get("phone").s(),
                 text(item, "ssnHash"),
                 text(item, "ssnLastFour"),
+                text(item, "kycVerificationId"),
                 Instant.parse(item.get("createdAt").s())));
     }
 

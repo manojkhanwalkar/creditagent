@@ -58,7 +58,7 @@ class DynamoDbRepositoriesTest {
     }
 
     static User user(String id, String ssnHash) {
-        return new User(id, "$2a$hash", id + "@example.com", "+14155550100", ssnHash, "6789",
+        return new User(id, "$2a$hash", id + "@example.com", "+14155550100", ssnHash, "6789", "kyc_" + id,
                 Instant.parse("2026-11-08T12:00:00Z"));
     }
 

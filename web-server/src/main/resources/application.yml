@@ -10,6 +10,11 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  servlet:
+    multipart:
+      # Registration uploads a photo of the user's Social Security card. Larger uploads get 413.
+      max-file-size: ${SSN_CARD_MAX_BYTES:5MB}
+      max-request-size: ${SSN_CARD_MAX_REQUEST_BYTES:6MB}
 
 credit:
   web:
@@ -17,6 +22,10 @@ credit:
     score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}
     rate-limit-per-minute: ${RATE_LIMIT_PER_MINUTE:20}
+  kyc:
+    # KYC provider that checks the SSN card photo and reads the SSN from it (kyc-service locally).
+    url: ${KYC_URL:http://localhost:8087}
+    timeout: ${KYC_TIMEOUT:10s}
   auth:
     # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
     jwt-secret: ${JWT_SECRET}

@@ -1,11 +1,12 @@
 package com.creditagent.web.auth;
 
-import com.creditagent.common.InvalidSsnException;
 import com.creditagent.common.Ssn;
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
 import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
+import com.creditagent.web.kyc.DocumentRejectedException;
+import com.creditagent.web.kyc.IdentityVerifier;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -38,6 +39,7 @@ public class AuthService {
     private final SessionRepository sessions;
     private final PasswordEncoder passwords;
     private final SsnHasher ssnHasher;
+    private final IdentityVerifier identity;
     private final JwtService jwt;
     private final Duration idleTimeout;
     private final Duration touchInterval;
@@ -51,6 +53,7 @@ public class AuthService {
             SessionRepository sessions,
             PasswordEncoder passwords,
             SsnHasher ssnHasher,
+            IdentityVerifier identity,
             JwtService jwt,
             Duration idleTimeout,
             Clock clock) {
@@ -58,6 +61,7 @@ public class AuthService {
         this.sessions = Objects.requireNonNull(sessions);
         this.passwords = Objects.requireNonNull(passwords);
         this.ssnHasher = Objects.requireNonNull(ssnHasher);
+        this.identity = Objects.requireNonNull(identity);
         this.jwt = Objects.requireNonNull(jwt);
         this.idleTimeout = Objects.requireNonNull(idleTimeout);
         Duration tenth = idleTimeout.dividedBy(10);
@@ -67,35 +71,46 @@ public class AuthService {
     }
 
     /**
-     * Validates and stores a new user.
+     * Validates and stores a new user. The SSN is not typed in: the KYC provider reads it from the
+     * photo of the user's Social Security card, after checking that the photo is a sharp, authentic
+     * card. The cheap checks run first, so a bad password or a taken user id never costs a KYC call.
      *
+     * @param ssnCardImage the uploaded photo of the card (PNG or JPEG)
      * @return the stored (lower-case) user id
-     * @throws AuthExceptions.InvalidRegistrationException if a field breaks a rule
+     * @throws AuthExceptions.InvalidRegistrationException if a field breaks a rule or no photo was sent
      * @throws UserAlreadyExistsException if the id is taken
-     * @throws SsnAlreadyRegisteredException if another account already has this SSN
+     * @throws DocumentRejectedException if the provider refused the photo, for example as blurred
+     * @throws com.creditagent.clients.ServiceUnavailableException if the provider could not be reached
+     * @throws SsnAlreadyRegisteredException if another account already has the SSN on the card
      */
-    public String register(String userId, String password, String email, String phone, String ssn) {
+    public String register(String userId, String password, String email, String phone, byte[] ssnCardImage) {
         String id = RegistrationPolicy.normaliseUserId(userId);
         RegistrationPolicy.checkPassword(password, id);
-        Ssn parsed;
-        try {
-            parsed = Ssn.parse(ssn);
-        } catch (InvalidSsnException e) {
-            throw new InvalidRegistrationException(e.getMessage());
+        String normalisedEmail = RegistrationPolicy.normaliseEmail(email);
+        String normalisedPhone = RegistrationPolicy.normalisePhone(phone);
+        if (ssnCardImage == null || ssnCardImage.length == 0) {
+            throw new InvalidRegistrationException("Upload a photo of your Social Security card.");
         }
+        // Early answer only; the conditional write below is the real check.
+        if (users.find(id).isPresent()) {
+            throw new UserAlreadyExistsException();
+        }
+        IdentityVerifier.VerifiedSsn verified = identity.verifySsnCard(ssnCardImage);
+        Ssn ssn = verified.ssn();
         User user = new User(
                 id,
                 passwords.encode(password),
-                RegistrationPolicy.normaliseEmail(email),
-                RegistrationPolicy.normalisePhone(phone),
-                ssnHasher.hash(parsed),
-                parsed.digits().substring(5),
+                normalisedEmail,
+                normalisedPhone,
+                ssnHasher.hash(ssn),
+                ssn.digits().substring(5),
+                verified.verificationId(),
                 clock.instant());
         // The conditional transaction is the real uniqueness check; there is no read-then-write race.
         switch (users.create(user)) {
             case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
             case SSN_TAKEN -> throw new SsnAlreadyRegisteredException();
-            case CREATED -> log.info("Registered user {}", id);
+            case CREATED -> log.info("Registered user {} (KYC {})", id, verified.verificationId());
         }
         return id;
     }
