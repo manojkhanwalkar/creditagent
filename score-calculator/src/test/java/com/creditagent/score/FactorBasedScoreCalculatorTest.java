@@ -13,6 +13,7 @@ import com.creditagent.score.FactorBasedScoreCalculator.ScoreBreakdown;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import org.junit.jupiter.api.Test;
 
 class FactorBasedScoreCalculatorTest {
@@ -185,6 +186,136 @@ class FactorBasedScoreCalculatorTest {
     @Test
     void requiresAReport() {
         assertThatThrownBy(() -> calculator.calculate(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    /** The example scores quoted in the PR and the design doc; change both together. */
+    @Test
+    void workedExamplesMatchTheDesignDoc() {
+        List<CreditAccount> highUtilization = List.of(
+                card(12_900, 15_000, 300),
+                card(8_600, 10_000, 180),
+                loan(AccountType.MORTGAGE, 150_000, 400_000, 144),
+                loan(AccountType.AUTO_LOAN, 6_000, 30_000, 48));
+        List<CreditAccount> derogatory = new ArrayList<>(withLate(0, 1, 2));
+        derogatory.add(new CreditAccount(AccountType.CREDIT_CARD, "Contoso Card", AccountStatus.CHARGED_OFF, 2_000, 2_000, 60, 0, 0, 1));
+
+        assertThat(score(report(pristineAccounts(), 0, 0, 0))).as("clean, seasoned").isEqualTo(846);
+        assertThat(score(withLate(1, 0, 0))).as("one 30-day late").isEqualTo(804);
+        assertThat(score(report(highUtilization, 0, 0, 0))).as("cards 86% used").isEqualTo(754);
+        assertThat(score(report(pristineAccounts(), 0, 1, 0))).as("clean plus one collection").isEqualTo(710);
+        assertThat(score(report(List.of(card(100, 1_000, 8)), 1, 0, 0))).as("one card, 8 months").isEqualTo(702);
+        assertThat(score(report(derogatory, 2, 1, 1))).as("lates, charge-off, collection, public record").isEqualTo(526);
+        assertThat(score(report(List.of(), 0, 0, 0))).as("empty file").isEqualTo(548);
+    }
+
+    // ---- untrusted input -----------------------------------------------------------------------
+
+    @Test
+    void negativeLateCountsCannotRaiseTheScore() {
+        List<CreditAccount> accounts = new ArrayList<>(pristineAccounts());
+        accounts.set(0, new CreditAccount(AccountType.CREDIT_CARD, "N", AccountStatus.OPEN, 9_900, 10_000, 300, -50, -1, -1));
+        List<CreditAccount> zeroLates = new ArrayList<>(pristineAccounts());
+        zeroLates.set(0, card(9_900, 10_000, 300));
+        ScoreBreakdown b = calculator.breakdown(report(accounts, 0, 0, 0));
+        assertThat(b.paymentHistory()).isEqualTo(1.0);
+        assertThat(b.score()).isEqualTo(score(zeroLates));
+    }
+
+    @Test
+    void negativeReportLevelCountsAreTreatedAsZero() {
+        assertThat(score(report(pristineAccounts(), -5, -3, -2))).isEqualTo(score(report(pristineAccounts(), 0, 0, 0)));
+    }
+
+    @Test
+    void aNegativeBalanceOnOneCardCannotHideAnotherCardsBalance() {
+        List<CreditAccount> withCredit = List.of(
+                card(-1_000_000, 10_000, 300), card(9_900, 10_000, 300), loan(AccountType.AUTO_LOAN, 6_000, 30_000, 48));
+        List<CreditAccount> withZero = List.of(
+                card(0, 10_000, 300), card(9_900, 10_000, 300), loan(AccountType.AUTO_LOAN, 6_000, 30_000, 48));
+        assertThat(score(withCredit)).isEqualTo(score(withZero));
+    }
+
+    @Test
+    void negativeLimitsAndAgesAreTreatedAsZero() {
+        List<CreditAccount> negative = List.of(card(100, -10_000, -500), card(100, 10_000, 300), card(100, 10_000, 300));
+        List<CreditAccount> zero = List.of(card(100, 0, 0), card(100, 10_000, 300), card(100, 10_000, 300));
+        assertThat(calculator.breakdown(report(negative, 0, 0, 0))).isEqualTo(calculator.breakdown(report(zero, 0, 0, 0)));
+    }
+
+    @Test
+    void cardsWithoutALimitAreLeftOutOfUtilization() {
+        CreditReport withZeroLimitCard = report(List.of(card(5_000, 0, 120), card(500, 10_000, 120)), 0, 0, 0);
+        CreditReport withoutIt = report(List.of(card(500, 10_000, 120)), 0, 0, 0);
+        assertThat(FactorBasedScoreCalculator.revolvingUtilizationScore(withZeroLimitCard))
+                .isEqualTo(FactorBasedScoreCalculator.revolvingUtilizationScore(withoutIt));
+        assertThat(FactorBasedScoreCalculator.revolvingUtilizationScore(report(List.of(card(5_000, 0, 120)), 0, 0, 0)))
+                .as("no card has a limit")
+                .isEqualTo(0.70);
+    }
+
+    @Test
+    void hugeAmountsDoNotOverflow() {
+        CreditReport cards = report(List.of(card(Long.MAX_VALUE, Long.MAX_VALUE, 120), card(0, Long.MAX_VALUE, 120)), 0, 0, 0);
+        // total utilisation 50%, highest card 100%
+        assertThat(FactorBasedScoreCalculator.revolvingUtilizationScore(cards))
+                .isCloseTo(0.80 * FactorBasedScoreCalculator.utilizationBand(0.5)
+                        + 0.20 * FactorBasedScoreCalculator.utilizationBand(1.0), within(1e-9));
+
+        CreditReport loans = report(List.of(
+                loan(AccountType.AUTO_LOAN, Long.MAX_VALUE, Long.MAX_VALUE, 40),
+                loan(AccountType.AUTO_LOAN, Long.MAX_VALUE, Long.MAX_VALUE, 40)), 0, 0, 0);
+        assertThat(FactorBasedScoreCalculator.installmentPaydownScore(loans)).as("nothing paid down").isEqualTo(0.60);
+    }
+
+    @Test
+    void anAccountWithoutAStatusCountsAsOpen() {
+        List<CreditAccount> unknown = new ArrayList<>(pristineAccounts());
+        for (int i = 0; i < unknown.size(); i++) {
+            CreditAccount a = unknown.get(i);
+            unknown.set(i, new CreditAccount(a.type(), a.creditor(), null, a.balance(), a.creditLimit(), a.monthsOpen(), 0, 0, 0));
+        }
+        assertThat(calculator.breakdown(report(unknown, 0, 0, 0)))
+                .isEqualTo(calculator.breakdown(report(pristineAccounts(), 0, 0, 0)));
+    }
+
+    @Test
+    void anAccountWithoutATypeIsNeitherRevolvingNorInstalment() {
+        CreditAccount untyped = new CreditAccount(null, null, AccountStatus.OPEN, 9_000, 10_000, 300, 0, 0, 0);
+        CreditReport cardsOnly = report(List.of(card(300, 15_000, 300)), 0, 0, 0);
+        CreditReport cardsAndUntyped = report(List.of(card(300, 15_000, 300), untyped), 0, 0, 0);
+        assertThat(FactorBasedScoreCalculator.creditMix(cardsAndUntyped)).isEqualTo(FactorBasedScoreCalculator.creditMix(cardsOnly));
+        assertThat(FactorBasedScoreCalculator.installmentPaydownScore(cardsAndUntyped)).isEqualTo(0.80);
+        assertThat(FactorBasedScoreCalculator.revolvingUtilizationScore(cardsAndUntyped))
+                .isEqualTo(FactorBasedScoreCalculator.revolvingUtilizationScore(cardsOnly));
+        assertThat(FactorBasedScoreCalculator.creditMix(report(List.of(untyped), 0, 0, 0))).isEqualTo(0.0);
+        assertThat(score(report(List.of(untyped), 0, 0, 0))).isBetween(300, 850);
+    }
+
+    @Test
+    void arbitraryParseableInputAlwaysGivesAScoreInRange() {
+        Random random = new Random(42);
+        long[] amounts = {Long.MIN_VALUE, -1, 0, 1, 500, 10_000, Long.MAX_VALUE};
+        int[] counts = {Integer.MIN_VALUE, -1, 0, 1, 3, 1_000, Integer.MAX_VALUE};
+        AccountType[] types = {null, AccountType.CREDIT_CARD, AccountType.MORTGAGE, AccountType.AUTO_LOAN};
+        AccountStatus[] statuses = {null, AccountStatus.OPEN, AccountStatus.CLOSED, AccountStatus.CHARGED_OFF};
+        for (int i = 0; i < 5_000; i++) {
+            List<CreditAccount> accounts = new ArrayList<>();
+            for (int n = random.nextInt(6); n > 0; n--) {
+                accounts.add(new CreditAccount(
+                        types[random.nextInt(types.length)], null, statuses[random.nextInt(statuses.length)],
+                        amounts[random.nextInt(amounts.length)], amounts[random.nextInt(amounts.length)],
+                        counts[random.nextInt(counts.length)], counts[random.nextInt(counts.length)],
+                        counts[random.nextInt(counts.length)], counts[random.nextInt(counts.length)]));
+            }
+            CreditReport r = new CreditReport(null, null, null, null, random.nextBoolean() ? accounts : null,
+                    counts[random.nextInt(counts.length)], counts[random.nextInt(counts.length)],
+                    counts[random.nextInt(counts.length)]);
+            ScoreBreakdown b = calculator.breakdown(r);
+            assertThat(List.of(b.paymentHistory(), b.amountsOwed(), b.historyLength(), b.newCredit(), b.creditMix()))
+                    .as("sub-scores for %s", r)
+                    .allSatisfy(sub -> assertThat(sub).isBetween(0.0, 1.0));
+            assertThat(b.score()).isBetween(300, 850);
+        }
     }
 
     private int score(List<CreditAccount> accounts) {

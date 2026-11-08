@@ -41,6 +41,12 @@ import java.util.Objects;
  * still within the seven-year reporting window. A real FICO Score also refuses to score a file with
  * no account open for at least six months; this service always returns a score, so an empty file
  * gets the conservative result described in {@link #breakdown(CreditReport)}.
+ *
+ * <p>Reports arrive as untrusted JSON, so the calculator first {@linkplain #normalize(CreditReport)
+ * normalises} them rather than failing: negative counts, amounts and ages count as zero, an account
+ * with no status counts as open, and an account with no type counts towards the number and age of
+ * accounts and towards payment history, but not towards utilisation, instalment pay-down or mix.
+ * Amounts are summed as doubles, so very large values cannot overflow.
  */
 public class FactorBasedScoreCalculator implements ScoreCalculator {
 
@@ -93,6 +99,7 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
     /** Category sub-scores and the resulting score, for tests and explanations. */
     public ScoreBreakdown breakdown(CreditReport report) {
         Objects.requireNonNull(report, "report");
+        report = normalize(report);
         double payment = paymentHistory(report);
         double amounts = amountsOwed(report);
         double length = historyLength(report);
@@ -109,6 +116,36 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
         int score = (int) Math.round(CreditScore.MIN + range * weighted);
         score = Math.clamp(score, CreditScore.MIN, CreditScore.MAX);
         return new ScoreBreakdown(scorecard, payment, amounts, length, newCredit, mix, score);
+    }
+
+    /**
+     * Clamps every count, amount and age to zero or more and gives an account without a status the
+     * status {@link AccountStatus#OPEN}. The account type is kept as is, including {@code null}.
+     */
+    static CreditReport normalize(CreditReport report) {
+        List<CreditAccount> accounts = report.accounts().stream().map(FactorBasedScoreCalculator::normalize).toList();
+        return new CreditReport(
+                report.reportId(),
+                report.ssnMasked(),
+                report.fullName(),
+                report.generatedAt(),
+                accounts,
+                Math.max(0, report.hardInquiriesLast12Months()),
+                Math.max(0, report.collections()),
+                Math.max(0, report.publicRecords()));
+    }
+
+    static CreditAccount normalize(CreditAccount account) {
+        return new CreditAccount(
+                account.type(),
+                account.creditor(),
+                account.status() == null ? AccountStatus.OPEN : account.status(),
+                Math.max(0, account.balance()),
+                Math.max(0, account.creditLimit()),
+                Math.max(0, account.monthsOpen()),
+                Math.max(0, account.latePayments30()),
+                Math.max(0, account.latePayments60()),
+                Math.max(0, account.latePayments90()));
     }
 
     /** Derogatory segmentation takes precedence over thin-file segmentation. */
@@ -143,8 +180,8 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
                 penalty += CHARGE_OFF_PENALTY;
             }
         }
-        penalty += COLLECTION_PENALTY * Math.max(0, report.collections());
-        penalty += PUBLIC_RECORD_PENALTY * Math.max(0, report.publicRecords());
+        penalty += COLLECTION_PENALTY * report.collections();
+        penalty += PUBLIC_RECORD_PENALTY * report.publicRecords();
         return Math.exp(-penalty);
     }
 
@@ -159,20 +196,24 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
                 + 0.15 * accountsWithBalanceScore(report);
     }
 
-    /** Blends total utilisation (80%) with the highest single-card utilisation (20%). */
+    /**
+     * Blends total utilisation (80%) with the highest single-card utilisation (20%). Cards without a
+     * positive limit are left out of both, since their utilisation is undefined.
+     */
     static double revolvingUtilizationScore(CreditReport report) {
-        List<CreditAccount> cards = owedRevolving(report);
-        long limit = cards.stream().mapToLong(CreditAccount::creditLimit).sum();
-        if (cards.isEmpty() || limit <= 0) {
+        List<CreditAccount> cards = owedRevolving(report).stream()
+                .filter(c -> c.creditLimit() > 0)
+                .toList();
+        if (cards.isEmpty()) {
             return 0.70; // no revolving credit to show responsible use
         }
-        long balance = cards.stream().mapToLong(CreditAccount::balance).sum();
+        double limit = cards.stream().mapToDouble(CreditAccount::creditLimit).sum();
+        double balance = cards.stream().mapToDouble(CreditAccount::balance).sum();
         double highestCard = cards.stream()
-                .filter(c -> c.creditLimit() > 0)
                 .mapToDouble(c -> (double) c.balance() / c.creditLimit())
                 .max()
-                .orElse(0);
-        return 0.80 * utilizationBand((double) balance / limit) + 0.20 * utilizationBand(highestCard);
+                .orElseThrow();
+        return 0.80 * utilizationBand(balance / limit) + 0.20 * utilizationBand(highestCard);
     }
 
     /** Lower is better, but 1–9% scores slightly higher than 0% (FICO: some use beats none). */
@@ -194,9 +235,9 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
         if (loans.isEmpty()) {
             return 0.80;
         }
-        long remaining = loans.stream().mapToLong(CreditAccount::balance).sum();
-        long original = loans.stream().mapToLong(CreditAccount::creditLimit).sum();
-        double ratio = (double) remaining / original;
+        double remaining = loans.stream().mapToDouble(CreditAccount::balance).sum();
+        double original = loans.stream().mapToDouble(CreditAccount::creditLimit).sum();
+        double ratio = remaining / original;
         if (ratio <= 0.50) return 1.00;
         if (ratio <= 0.80) return 0.85;
         if (ratio <= 0.95) return 0.70;
@@ -301,8 +342,9 @@ public class FactorBasedScoreCalculator implements ScoreCalculator {
                 .toList();
     }
 
+    /** Every known non-card type; an account without a type is neither revolving nor instalment. */
     private static boolean isInstallment(AccountType type) {
-        return type != AccountType.CREDIT_CARD;
+        return type != null && type != AccountType.CREDIT_CARD;
     }
 
     /** The population segment a report is scored in. */
