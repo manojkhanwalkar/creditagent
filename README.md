@@ -70,6 +70,7 @@ CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
 | `CREDIT_MCP_URL` | web server, agent | `http://localhost:8082/mcp` |
 | `SCORE_CALCULATOR_URL` | web server, agent | `http://localhost:8081` |
 | `RATE_LIMIT_PER_MINUTE` | web server | `20` |
+| `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
