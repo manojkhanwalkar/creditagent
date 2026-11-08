@@ -1,5 +1,6 @@
 package com.creditagent.mcp;
 
+import com.creditagent.clients.HttpClients;
 import com.creditagent.common.CreditFileNames;
 import dev.langchain4j.community.mcp.server.McpServer;
 import dev.langchain4j.mcp.protocol.McpImplementation;
@@ -7,9 +8,10 @@ import java.util.List;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.web.client.RestClient;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(McpServerProperties.class)
+@EnableConfigurationProperties({McpServerProperties.class, NrgProperties.class})
 class McpServerConfiguration {
 
     static final String SERVER_NAME = "credit-report-mcp";
@@ -18,6 +20,11 @@ class McpServerConfiguration {
     @Bean
     CreditFileNames creditFileNames(McpServerProperties properties) {
         return new CreditFileNames(properties.hmacKey());
+    }
+
+    @Bean
+    ReportNormalizerClient reportNormalizerClient(RestClient.Builder builder, NrgProperties properties) {
+        return new NrgHttpClient(HttpClients.restClient(builder, properties.url(), properties.timeout()));
     }
 
     @Bean

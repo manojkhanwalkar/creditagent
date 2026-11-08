@@ -20,4 +20,9 @@ class GeneratorConfiguration {
     CreditReportFactory creditReportFactory() {
         return new CreditReportFactory(new SecureRandom(), Clock.systemUTC());
     }
+
+    @Bean
+    BureauReportFormatter bureauReportFormatter() {
+        return new BureauReportFormatter(new SecureRandom());
+    }
 }

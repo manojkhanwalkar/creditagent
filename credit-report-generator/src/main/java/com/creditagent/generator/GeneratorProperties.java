@@ -9,7 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * @param directory where credit files are written (shared with the MCP server)
+ * @param directory reports root; each bureau's files go in {@code <directory>/<Bureau>/} (shared
+ *     with the MCP server)
  * @param hmacKey key used to derive file names; must match the MCP server's key
  * @param seedSsns SSNs to generate reports for at start-up (demo data only)
  */

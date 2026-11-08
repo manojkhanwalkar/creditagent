@@ -40,6 +40,7 @@ jobs:
         service:
           - score-calculator
           - credit-report-generator
+          - normalized-report-generator
           - credit-report-mcp-server
           - web-server
           - credit-intelligence-agent

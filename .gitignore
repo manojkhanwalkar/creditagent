@@ -26,4 +26,5 @@ application-local.yml
 # Runtime data: generated credit files contain personal data
 data/
 credit-files/
+Reports/
 *.log

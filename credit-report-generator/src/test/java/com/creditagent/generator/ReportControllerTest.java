@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.creditagent.common.CreditReport;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import java.time.Instant;
 import java.util.List;
 import org.hamcrest.Matchers;
@@ -31,9 +32,10 @@ class ReportControllerTest {
     CreditReportService service;
 
     @Test
-    void createsAReportAndReturnsOnlyItsIdAndMaskedSsn() throws Exception {
-        CreditReport report = new CreditReport("r-42", "***-**-6789", "Avery Patel", Instant.EPOCH, List.of(), 0, 0, 0);
-        given(service.generate(eq(Ssn.parse("123-45-6789")), any())).willReturn(report);
+    void createsReportsAndReturnsOnlyIdMaskedSsnAndBureaus() throws Exception {
+        CreditReport report = new CreditReport("truth-id", "***-**-6789", "Avery Patel", Instant.EPOCH, List.of(), 0, 0, 0);
+        given(service.generate(eq(Ssn.parse("123-45-6789")), any()))
+                .willReturn(new CreditReportService.GeneratedReports("r-42", report, List.of(Bureau.EQUIFAX, Bureau.TRANSUNION)));
 
         mvc.perform(post("/api/v1/reports")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -41,6 +43,8 @@ class ReportControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.reportId").value("r-42"))
                 .andExpect(jsonPath("$.ssnMasked").value("***-**-6789"))
+                .andExpect(jsonPath("$.bureaus[0]").value("Equifax"))
+                .andExpect(jsonPath("$.bureaus[1]").value("TransUnion"))
                 .andExpect(content().string(Matchers.not(Matchers.containsString("Avery"))));
     }
 

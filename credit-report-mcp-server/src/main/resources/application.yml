@@ -10,10 +10,15 @@ spring:
 
 credit:
   files:
-    directory: ${CREDIT_FILES_DIR:./data/credit-files}
+    # Reports root; each bureau's files are in <root>/Equifax, /Experian, /TransUnion.
+    # CREDIT_FILES_DIR is the pre-multi-bureau name, still honoured so existing setups keep their location.
+    directory: ${CREDIT_REPORTS_DIR:${CREDIT_FILES_DIR:${user.home}/Reports}}
     # Required. Must equal the credit report generator's key. No default on purpose.
     hmac-key: ${CREDIT_FILE_HMAC_KEY}
     allowed-origins: ${MCP_ALLOWED_ORIGINS:}
+  nrg:
+    url: ${NRG_URL:http://localhost:8084}
+    timeout: ${DOWNSTREAM_TIMEOUT:5s}
 
 management:
   endpoints:

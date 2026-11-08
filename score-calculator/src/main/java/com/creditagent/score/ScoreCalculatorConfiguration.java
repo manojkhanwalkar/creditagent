@@ -1,5 +1,6 @@
 package com.creditagent.score;
 
+import com.creditagent.web.support.RequestSizeLimitFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;

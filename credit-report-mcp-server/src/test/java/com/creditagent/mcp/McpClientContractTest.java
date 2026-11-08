@@ -21,6 +21,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -39,7 +42,18 @@ class McpClientContractTest {
     @BeforeAll
     static void createCreditFile() throws IOException {
         dir = Files.createTempDirectory("mcp-contract");
-        Files.writeString(dir.resolve(new CreditFileNames(KEY).fileNameFor(Ssn.parse("123-45-6789"))), REPORT);
+        Path experian = Files.createDirectories(dir.resolve("Experian"));
+        Files.writeString(experian.resolve(new CreditFileNames(KEY).fileNameFor(Ssn.parse("123-45-6789"))), "{}");
+    }
+
+    /** Stands in for the NRG service. */
+    @TestConfiguration
+    static class FakeNrg {
+        @Bean
+        @Primary
+        ReportNormalizerClient fakeNrg() {
+            return bureauReports -> REPORT;
+        }
     }
 
     @DynamicPropertySource

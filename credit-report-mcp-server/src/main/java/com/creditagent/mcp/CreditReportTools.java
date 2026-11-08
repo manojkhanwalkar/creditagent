@@ -15,16 +15,16 @@ public class CreditReportTools {
 
     static final String NOT_FOUND = "No credit report found for that SSN.";
 
-    private final CreditFileRepository repository;
+    private final CreditReportService reports;
 
-    public CreditReportTools(CreditFileRepository repository) {
-        this.repository = repository;
+    public CreditReportTools(CreditReportService reports) {
+        this.reports = reports;
     }
 
-    @Tool(name = "get_credit_report", value = "Returns the credit report (JSON) for a US Social Security Number.")
+    @Tool(name = "get_credit_report", value = "Returns the normalized credit report (JSON), merged from all three bureaus, for a US Social Security Number.")
     public String getCreditReport(@P("SSN, formatted AAA-GG-SSSS or as 9 digits") String ssn) {
         try {
-            return repository.findReportJson(Ssn.parse(ssn)).orElse(NOT_FOUND);
+            return reports.findNormalizedReport(Ssn.parse(ssn)).orElse(NOT_FOUND);
         } catch (InvalidSsnException e) {
             return e.getMessage();
         }

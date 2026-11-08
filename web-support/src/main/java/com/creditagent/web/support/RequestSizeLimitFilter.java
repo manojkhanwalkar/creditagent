@@ -1,4 +1,4 @@
-package com.creditagent.score;
+package com.creditagent.web.support;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ReadListener;
@@ -16,11 +16,11 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * before anything is read; a chunked body is cut off once it passes the limit, which fails JSON
  * binding with 400.
  */
-class RequestSizeLimitFilter extends OncePerRequestFilter {
+public class RequestSizeLimitFilter extends OncePerRequestFilter {
 
     private final long maxBytes;
 
-    RequestSizeLimitFilter(long maxBytes) {
+    public RequestSizeLimitFilter(long maxBytes) {
         if (maxBytes <= 0) {
             throw new IllegalArgumentException("maxBytes must be positive");
         }

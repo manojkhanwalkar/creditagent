@@ -1,0 +1,26 @@
+server:
+  port: ${PORT:8084}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: normalized-report-generator
+  mvc:
+    problemdetails:
+      enabled: true
+
+nrg:
+  # Three bureau files of at most 1 MiB each (the MCP server's cap) plus envelope.
+  max-request-bytes: ${NRG_MAX_REQUEST_BYTES:3200000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

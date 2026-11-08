@@ -16,20 +16,26 @@ services:
     <<: *service
     build: { context: ., args: { MODULE: credit-report-generator } }
     environment:
-      CREDIT_FILES_DIR: /data/credit-files
+      CREDIT_REPORTS_DIR: /data/Reports
       CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
       CREDIT_SEED_SSNS: ${CREDIT_SEED_SSNS:-}
     volumes:
-      - credit-files:/data/credit-files
+      - credit-reports:/data/Reports
+
+  normalized-report-generator:
+    <<: *service
+    build: { context: ., args: { MODULE: normalized-report-generator } }
 
   credit-report-mcp-server:
     <<: *service
     build: { context: ., args: { MODULE: credit-report-mcp-server } }
     environment:
-      CREDIT_FILES_DIR: /data/credit-files
+      CREDIT_REPORTS_DIR: /data/Reports
       CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
+      NRG_URL: http://normalized-report-generator:8084
     volumes:
-      - credit-files:/data/credit-files:ro
+      - credit-reports:/data/Reports:ro
+    depends_on: [normalized-report-generator]
 
   score-calculator:
     <<: *service
@@ -66,4 +72,4 @@ services:
     depends_on: [credit-intelligence-agent]
 
 volumes:
-  credit-files:
+  credit-reports:
