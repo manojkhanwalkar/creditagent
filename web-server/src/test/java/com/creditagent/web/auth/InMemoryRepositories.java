@@ -34,7 +34,7 @@ final class InMemoryRepositories {
         }
     }
 
-    static final class Sessions implements SessionRepository {
+    static class Sessions implements SessionRepository {
         final Map<String, Session> byId = new ConcurrentHashMap<>();
 
         @Override
@@ -45,6 +45,12 @@ final class InMemoryRepositories {
         @Override
         public Optional<Session> find(String sessionId) {
             return Optional.ofNullable(byId.get(sessionId));
+        }
+
+        @Override
+        public boolean touch(String sessionId, Instant lastActivityAt, Instant expiresAt) {
+            return byId.computeIfPresent(sessionId, (id, s) -> new Session(
+                    id, s.userId(), s.ssnHash(), s.ssnLastFour(), s.createdAt(), lastActivityAt, expiresAt)) != null;
         }
 
         @Override

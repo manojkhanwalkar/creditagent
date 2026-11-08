@@ -79,7 +79,25 @@ class DynamoDbRepositoriesTest {
         assertThat(sessions.deleteExpired(now)).isEqualTo(1);
         assertThat(sessions.find("stale")).isEmpty();
 
+        assertThat(sessions.touch("live", now.plusSeconds(60), now.plusSeconds(360))).isTrue();
+        assertThat(sessions.find("live").orElseThrow().expiresAt()).isEqualTo(now.plusSeconds(360));
+
         sessions.delete("live");
         assertThat(sessions.find("live")).isEmpty();
+        // Touching a deleted session must not re-create it.
+        assertThat(sessions.touch("live", now, now.plusSeconds(300))).isFalse();
+        assertThat(sessions.find("live")).isEmpty();
+    }
+
+    @Test
+    void sweepingDeletesInBatches() {
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        for (int i = 0; i < 60; i++) {
+            sessions.save(new Session("old-" + i, "avery", "h", "6789", now.minusSeconds(900), now.minusSeconds(600), now.minusSeconds(1)));
+        }
+        sessions.save(new Session("keep", "avery", "h", "6789", now, now, now.plusSeconds(300)));
+        assertThat(sessions.deleteExpired(now)).isEqualTo(60);
+        assertThat(sessions.find("keep")).isPresent();
+        assertThat(sessions.find("old-0")).isEmpty();
     }
 }

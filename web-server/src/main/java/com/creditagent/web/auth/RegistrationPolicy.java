@@ -33,9 +33,14 @@ public final class RegistrationPolicy {
 
     private RegistrationPolicy() {}
 
+    /** The stored form of a user id (trimmed, lower case), without validating it. Used by login. */
+    public static String canonicalUserId(String userId) {
+        return userId == null ? "" : userId.strip().toLowerCase(Locale.ROOT);
+    }
+
     /** Lower-cases and validates a user id. */
     public static String normaliseUserId(String userId) {
-        String id = userId == null ? "" : userId.strip().toLowerCase(Locale.ROOT);
+        String id = canonicalUserId(userId);
         if (!USER_ID.matcher(id).matches()) {
             throw new InvalidRegistrationException(
                     "User id must be 3 to 32 characters: letters, digits, '.', '_' or '-', starting with a letter or digit.");

@@ -148,6 +148,38 @@ class AuthServiceTest {
     }
 
     @Test
+    void aRequestInFlightDuringLogoutDoesNotBringTheSessionBack() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        // The request has read the session; logout deletes it before the request records activity.
+        InMemoryRepositories.Sessions racing = new InMemoryRepositories.Sessions() {
+            @Override
+            public java.util.Optional<Session> find(String sessionId) {
+                java.util.Optional<Session> found = sessions.find(sessionId);
+                sessions.delete(sessionId);
+                return found;
+            }
+
+            @Override
+            public boolean touch(String sessionId, Instant last, Instant expires) {
+                return sessions.touch(sessionId, last, expires);
+            }
+        };
+        AuthService racy = new AuthService(users, racing, new BCryptPasswordEncoder(4), HASHER,
+                new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
+                Duration.ofMinutes(5), clock);
+        clock.advance(Duration.ofMinutes(1));
+        assertThatThrownBy(() -> racy.authenticate(token)).isInstanceOf(UnauthenticatedException.class);
+        assertThat(sessions.byId).isEmpty();
+    }
+
+    @Test
+    void loginIgnoresCaseAndSpaces() {
+        register();
+        assertThat(auth.login("  AVERY ", PASSWORD).userId()).isEqualTo("avery");
+    }
+
+    @Test
     void logoutEndsTheSession() {
         register();
         String token = auth.login("avery", PASSWORD).token();

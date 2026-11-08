@@ -149,6 +149,17 @@ class AuthControllerTest {
     }
 
     @Test
+    void percentEncodedPathsDoNotSkipAuthentication() throws Exception {
+        // %61 is "a": Spring routes /%61pi/... to /api/..., so the filter must treat it the same.
+        for (String path : new String[] {"/%61pi/v1/credit-score", "/api;x=1/v1/credit-score", "/API/v1/credit-score"}) {
+            int status = mvc.perform(post(java.net.URI.create(path)).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"ssn\":\"123-45-6789\"}"))
+                    .andReturn().getResponse().getStatus();
+            assertThat(status).as(path).isEqualTo(401);
+        }
+    }
+
+    @Test
     void scoreApiNeedsAToken() throws Exception {
         given(scores.scoreFor(Ssn.parse("123-45-6789"))).willReturn(CreditScore.of(700));
         mvc.perform(post("/api/v1/credit-score").contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"123-45-6789\"}"))

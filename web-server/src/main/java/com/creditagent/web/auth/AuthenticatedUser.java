@@ -11,6 +11,11 @@ public record AuthenticatedUser(String userId, String sessionId, String ssnHash,
     public static final String REQUEST_ATTRIBUTE = "com.creditagent.web.auth.AuthenticatedUser";
 
     public String ssnMasked() {
+        return mask(ssnLastFour);
+    }
+
+    /** {@code ***-**-6789}, or null if the last four are unknown. */
+    public static String mask(String ssnLastFour) {
         return ssnLastFour == null ? null : "***-**-" + ssnLastFour;
     }
 

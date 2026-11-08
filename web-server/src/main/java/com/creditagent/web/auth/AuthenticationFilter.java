@@ -1,5 +1,6 @@
 package com.creditagent.web.auth;
 
+import com.creditagent.web.RequestPaths;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -38,8 +39,7 @@ class AuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        return !path.startsWith("/api/") || OPEN_PATHS.contains(path);
+        return !RequestPaths.isApi(request) || OPEN_PATHS.contains(RequestPaths.path(request));
     }
 
     @Override

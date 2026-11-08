@@ -1,6 +1,5 @@
 package com.creditagent.web.auth;
 
-import java.time.Duration;
 import java.time.Instant;
 
 /**
@@ -21,10 +20,6 @@ public record Session(
 
     public boolean isExpired(Instant now) {
         return !now.isBefore(expiresAt);
-    }
-
-    public Session touchedAt(Instant now, Duration idleTimeout) {
-        return new Session(sessionId, userId, ssnHash, ssnLastFour, createdAt, now, now.plus(idleTimeout));
     }
 
     @Override

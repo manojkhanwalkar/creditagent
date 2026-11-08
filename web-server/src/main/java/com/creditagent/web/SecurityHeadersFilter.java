@@ -39,7 +39,7 @@ class SecurityHeadersFilter extends OncePerRequestFilter {
         response.setHeader("Referrer-Policy", "no-referrer");
         response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
         response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-        if (request.getRequestURI().startsWith("/api/")) {
+        if (RequestPaths.isApi(request)) {
             // Scores are personal data: never cache them anywhere.
             response.setHeader("Cache-Control", "no-store");
         }

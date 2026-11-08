@@ -1,0 +1,4 @@
+# False positives reviewed by hand. Format: <commit>:<file>:<rule>:<line>
+# Test-only JWT key in an early commit of PR #7; the test now builds its keys at run time
+# (TestSecrets) and the squash merge to main never contained this literal.
+e0e529e16a496f0a3ae6c504022dc5a7692663fa:web-server/src/test/java/com/creditagent/web/auth/JwtServiceTest.java:generic-api-key:15

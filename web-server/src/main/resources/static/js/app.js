@@ -242,10 +242,15 @@ function render({ score, ssnMasked }) {
     const { response, data } = await api('/api/v1/auth/session', { method: 'GET' });
     if (response.ok) {
       showSignedIn(data.userId, data.ssnMasked);
+    } else if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
     } else {
-      showSignedOut(response.status === 401 ? messageFor(401, data) : undefined);
+      // 429 or a server error says nothing about the token: keep it, and let the next request decide.
+      showSignedIn(session.user());
+      showNotice(messageFor(response.status, data));
     }
   } catch {
-    showSignedOut('Could not reach the server.');
+    showSignedIn(session.user());
+    showNotice('Could not reach the server. Your session is kept; try again shortly.');
   }
 })();

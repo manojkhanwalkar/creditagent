@@ -102,7 +102,7 @@ public class AuthService {
 
     /** Checks the password and opens a session. @throws UnauthenticatedException on any mismatch */
     public LoginResult login(String userId, String password) {
-        String id = userId == null ? "" : userId.strip().toLowerCase(java.util.Locale.ROOT);
+        String id = RegistrationPolicy.canonicalUserId(userId);
         Optional<User> user = id.isEmpty() ? Optional.empty() : users.find(id);
         String candidate = password == null ? "" : password;
         // Always run BCrypt, so response time does not reveal whether the user id exists.
@@ -117,8 +117,8 @@ public class AuthService {
                 randomId(), id, found.ssnHash(), found.ssnLastFour(), now, now, now.plus(idleTimeout));
         sessions.save(session);
         log.info("User {} logged in", id);
-        AuthenticatedUser signedIn = new AuthenticatedUser(id, session.sessionId(), found.ssnHash(), found.ssnLastFour());
-        return new LoginResult(jwt.issue(id, session.sessionId()), id, signedIn.ssnMasked(), idleTimeout);
+        return new LoginResult(
+                jwt.issue(id, session.sessionId()), id, AuthenticatedUser.mask(found.ssnLastFour()), idleTimeout);
     }
 
     /**
@@ -138,8 +138,10 @@ public class AuthService {
             sessions.delete(session.sessionId());
             throw new UnauthenticatedException("Your session timed out. Please log in again.");
         }
-        if (Duration.between(session.lastActivityAt(), now).compareTo(touchInterval) >= 0) {
-            sessions.save(session.touchedAt(now, idleTimeout));
+        if (Duration.between(session.lastActivityAt(), now).compareTo(touchInterval) >= 0
+                && !sessions.touch(session.sessionId(), now, now.plus(idleTimeout))) {
+            // Logged out or swept while this request was in flight.
+            throw new UnauthenticatedException("Your session has ended. Please log in again.");
         }
         return new AuthenticatedUser(session.userId(), session.sessionId(), session.ssnHash(), session.ssnLastFour());
     }
