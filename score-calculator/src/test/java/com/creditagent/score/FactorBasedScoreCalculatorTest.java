@@ -206,6 +206,12 @@ class FactorBasedScoreCalculatorTest {
         assertThat(score(report(List.of(card(100, 1_000, 8)), 1, 0, 0))).as("one card, 8 months").isEqualTo(702);
         assertThat(score(report(derogatory, 2, 1, 1))).as("lates, charge-off, collection, public record").isEqualTo(526);
         assertThat(score(report(List.of(), 0, 0, 0))).as("empty file").isEqualTo(548);
+
+        List<CreditAccount> bankruptcy = List.of(
+                new CreditAccount(AccountType.CREDIT_CARD, "C", AccountStatus.OPEN, 4_000, 5_000, 60, 0, 1, 2),
+                new CreditAccount(AccountType.CREDIT_CARD, "C", AccountStatus.CHARGED_OFF, 2_000, 2_000, 60, 0, 0, 1),
+                loan(AccountType.AUTO_LOAN, 15_000, 20_000, 30));
+        assertThat(score(report(bankruptcy, 2, 1, 1))).as("charge-off, collection, bankruptcy").isEqualTo(446);
     }
 
     // ---- untrusted input -----------------------------------------------------------------------
