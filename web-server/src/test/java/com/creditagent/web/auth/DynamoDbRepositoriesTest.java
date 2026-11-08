@@ -48,6 +48,15 @@ class DynamoDbRepositoriesTest {
         client.close();
     }
 
+    /**
+     * "Now" for session tests, an hour ahead of the real clock. DynamoDB Local applies the TTL against
+     * the real clock, so every expiresAt these tests write stays in the real future and only the
+     * repository (given this "now") ever treats a row as expired.
+     */
+    static Instant testNow() {
+        return Instant.now().plus(java.time.Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+    }
+
     static User user(String id, String ssnHash) {
         return new User(id, "$2a$hash", id + "@example.com", "+14155550100", ssnHash, "6789",
                 Instant.parse("2026-11-08T12:00:00Z"));
@@ -67,9 +76,7 @@ class DynamoDbRepositoriesTest {
 
     @Test
     void sessionsRoundTripAndExpire() {
-        // Relative to the real clock: DynamoDB Local applies the TTL and would remove a "live"
-        // session whose expiresAt is already in the past.
-        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Instant now = testNow();
         Session live = new Session("live", "avery", "hash-a", "6789", now, now, now.plusSeconds(300));
         Session stale = new Session("stale", "avery", "hash-a", "6789", now.minusSeconds(900), now.minusSeconds(600), now.minusSeconds(300));
         sessions.save(live);
@@ -91,7 +98,7 @@ class DynamoDbRepositoriesTest {
 
     @Test
     void sweepingDeletesInBatches() {
-        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Instant now = testNow();
         for (int i = 0; i < 60; i++) {
             sessions.save(new Session("old-" + i, "avery", "h", "6789", now.minusSeconds(900), now.minusSeconds(600), now.minusSeconds(1)));
         }
