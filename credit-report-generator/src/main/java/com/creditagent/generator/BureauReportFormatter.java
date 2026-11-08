@@ -75,18 +75,35 @@ public class BureauReportFormatter {
 
     public BureauReports format(CreditReport report) {
         LocalDate reportDate = LocalDate.ofInstant(report.generatedAt(), ZoneOffset.UTC);
-        List<Tradeline> tradelines = report.accounts().stream().map(this::tradeline).toList();
+        Set<String> usedNumbers = new HashSet<>();
+        List<Tradeline> tradelines = report.accounts().stream().map(a -> tradeline(a, usedNumbers)).toList();
         List<Inquiry> inquiries = inquiries(report.hardInquiriesLast12Months(), reportDate);
         String[] name = splitName(report.fullName());
         String lastFour = report.ssnMasked().substring(report.ssnMasked().length() - 4);
 
         return new BureauReports(
-                equifax(report, reportDate, tradelines, inquiries, name, lastFour),
-                experian(report, reportDate, tradelines, inquiries, name, lastFour),
-                transUnion(report, reportDate, tradelines, inquiries, name, lastFour));
+                holdsFile(Bureau.EQUIFAX, report, tradelines, inquiries)
+                        ? equifax(report, reportDate, tradelines, inquiries, name, lastFour) : null,
+                holdsFile(Bureau.EXPERIAN, report, tradelines, inquiries)
+                        ? experian(report, reportDate, tradelines, inquiries, name, lastFour) : null,
+                holdsFile(Bureau.TRANSUNION, report, tradelines, inquiries)
+                        ? transUnion(report, reportDate, tradelines, inquiries, name, lastFour) : null);
     }
 
-    private Tradeline tradeline(CreditAccount account) {
+    /**
+     * A bureau holds a file only if something was reported to it. Collections and public records are
+     * at every bureau, so a consumer with either has a file everywhere.
+     */
+    private static boolean holdsFile(
+            Bureau bureau, CreditReport report, List<Tradeline> tradelines, List<Inquiry> inquiries) {
+        return report.collections() > 0
+                || report.publicRecords() > 0
+                || tradelines.stream().anyMatch(t -> t.reportedTo(bureau))
+                || inquiries.stream().anyMatch(i -> i.bureau() == bureau)
+                || tradelines.isEmpty() && inquiries.isEmpty();
+    }
+
+    private Tradeline tradeline(CreditAccount account, Set<String> usedNumbers) {
         Map<Bureau, Integer> lag = new EnumMap<>(Bureau.class);
         for (Bureau bureau : Bureau.values()) {
             if (random.nextDouble() < REPORTING_PROBABILITY) {
@@ -96,7 +113,12 @@ public class BureauReportFormatter {
         if (lag.isEmpty()) {
             lag.put(Bureau.values()[random.nextInt(Bureau.values().length)], random.nextInt(MAX_UPDATE_LAG_DAYS + 1));
         }
-        return new Tradeline(account, "%04d".formatted(random.nextInt(10_000)), lag);
+        // NRG identifies an account by type, creditor and these four digits, so they must not repeat.
+        String lastFour;
+        do {
+            lastFour = "%04d".formatted(random.nextInt(10_000));
+        } while (!usedNumbers.add(lastFour));
+        return new Tradeline(account, lastFour, lag);
     }
 
     private List<Inquiry> inquiries(int count, LocalDate reportDate) {

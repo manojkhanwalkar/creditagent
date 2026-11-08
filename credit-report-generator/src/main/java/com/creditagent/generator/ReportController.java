@@ -43,7 +43,7 @@ class ReportController {
     ResponseEntity<GenerateReportResponse> generate(@Valid @RequestBody GenerateReportRequest request) {
         Ssn ssn = Ssn.parse(request.ssn());
         CreditReportService.GeneratedReports generated = service.generate(ssn, request.fullName());
-        String reportId = generated.report().reportId();
+        String reportId = generated.reportId();
         List<String> bureaus = generated.bureaus().stream().map(Bureau::directoryName).toList();
         return ResponseEntity.created(URI.create("/api/v1/reports/" + reportId))
                 .body(new GenerateReportResponse(reportId, generated.report().ssnMasked(), bureaus));

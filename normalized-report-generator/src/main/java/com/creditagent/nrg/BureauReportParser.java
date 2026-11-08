@@ -31,9 +31,7 @@ class BureauReportParser {
         List<ReportedAccount> accounts = report.trades().stream()
                 .map(t -> {
                     AccountType type = accountType(() -> BureauCodes.fromMetro2AccountType(t.accountType()));
-                    AccountStatus status = t.rate() != null && t.rate().strip().endsWith("9")
-                            ? AccountStatus.CHARGED_OFF
-                            : t.closed() ? AccountStatus.CLOSED : AccountStatus.OPEN;
+                    AccountStatus status = equifaxStatus(t.rate(), t.closed());
                     long limit = "R".equalsIgnoreCase(t.portfolioType()) ? t.creditLimit() : t.highCredit();
                     YearMonth opened = equifaxMonth(t.dateOpened());
                     return new ReportedAccount(
@@ -59,17 +57,13 @@ class BureauReportParser {
         List<ReportedAccount> accounts = report.tradelines().stream()
                 .map(t -> {
                     AccountType type = accountType(() -> BureauCodes.fromMetro2AccountType(t.accountTypeCode()));
-                    AccountStatus status = switch (t.statusCode() == null ? "" : t.statusCode().strip()) {
-                        case BureauCodes.EXPERIAN_CHARGED_OFF -> AccountStatus.CHARGED_OFF;
-                        case BureauCodes.EXPERIAN_CLOSED -> AccountStatus.CLOSED;
-                        default -> AccountStatus.OPEN;
-                    };
+                    AccountStatus status = experianStatus(t.statusCode());
                     String profile = t.paymentProfile() == null ? "" : t.paymentProfile();
                     YearMonth opened = YearMonth.from(date(t.openDate(), EXPERIAN_DATE, "Experian openDate"));
                     return new ReportedAccount(
                             new AccountKey(type, t.subscriberName(), BureauCodes.lastFour(t.accountNumber())),
                             new CreditAccount(
-                                    type, t.subscriberName(), status,
+                                    type, titleCase(t.subscriberName()), status,
                                     amount(t.balanceAmount(), "Experian balanceAmount"),
                                     amount(t.amount1(), "Experian amount1"),
                                     monthsBetween(opened, reportDate),
@@ -92,11 +86,7 @@ class BureauReportParser {
         List<ReportedAccount> accounts = report.trades().stream()
                 .map(t -> {
                     AccountType type = accountType(() -> BureauCodes.fromTransUnionIndustryCode(t.industryCode()));
-                    AccountStatus status = BureauCodes.TRANSUNION_CHARGED_OFF.equals(t.accountRating())
-                            ? AccountStatus.CHARGED_OFF
-                            : BureauCodes.TRANSUNION_CLOSED_REMARK.equalsIgnoreCase(t.remark())
-                                    ? AccountStatus.CLOSED
-                                    : AccountStatus.OPEN;
+                    AccountStatus status = transUnionStatus(t.accountRating(), t.remark());
                     long limit = t.creditLimit() != null ? t.creditLimit() : t.highCredit() == null ? 0 : t.highCredit();
                     TransUnionReport.HistoricalCounters lates = t.historicalCounters() == null
                             ? new TransUnionReport.HistoricalCounters(0, 0, 0)
@@ -118,6 +108,50 @@ class BureauReportParser {
         return new BureauView(
                 Bureau.TRANSUNION, reportDate, fullName(name.first(), name.last()), lastFour(report.ssnMasked()),
                 accounts, inquiries, report.collectionsCount(), report.publicRecordsCount());
+    }
+
+    /**
+     * Equifax rate: portfolio letter plus manner-of-payment digit. 1–5 are current to 120+ days late,
+     * 7 a wage-earner plan (all still open); 8 repossession and 9 charge-off/collection are derogatory
+     * and count as charged off. Anything else is refused rather than read as current.
+     */
+    private static AccountStatus equifaxStatus(String rate, boolean closed) {
+        String code = rate == null ? "" : rate.strip().toUpperCase(Locale.ROOT);
+        if (!code.matches("[RIMOC][0-9]")) {
+            throw new InvalidBureauReportException("Equifax rate is not a known code");
+        }
+        return switch (code.charAt(1)) {
+            case '8', '9' -> AccountStatus.CHARGED_OFF;
+            case '1', '2', '3', '4', '5', '7' -> closed ? AccountStatus.CLOSED : AccountStatus.OPEN;
+            default -> throw new InvalidBureauReportException("Equifax rate is not a known code");
+        };
+    }
+
+    /**
+     * Experian status (Metro 2 account status): 11 current and 71–84 past due are open; 13 paid or
+     * closed; 93 collection, 94 foreclosure, 95 voluntary surrender, 96 repossession and 97 charge-off
+     * are derogatory. Anything else is refused.
+     */
+    private static AccountStatus experianStatus(String statusCode) {
+        return switch (statusCode == null ? "" : statusCode.strip()) {
+            case BureauCodes.EXPERIAN_OPEN, "71", "78", "80", "82", "83", "84" -> AccountStatus.OPEN;
+            case BureauCodes.EXPERIAN_CLOSED -> AccountStatus.CLOSED;
+            case "93", "94", "95", "96", BureauCodes.EXPERIAN_CHARGED_OFF -> AccountStatus.CHARGED_OFF;
+            default -> throw new InvalidBureauReportException("Experian statusCode is not a known code");
+        };
+    }
+
+    /**
+     * TransUnion rating: 01–05 current to 120+ days late and 07 wage-earner plan are open; 08
+     * repossession and 09 charge-off/collection are derogatory. Anything else is refused.
+     */
+    private static AccountStatus transUnionStatus(String rating, String remark) {
+        return switch (rating == null ? "" : rating.strip()) {
+            case BureauCodes.TRANSUNION_PAID_AS_AGREED, "02", "03", "04", "05", "07" ->
+                    BureauCodes.TRANSUNION_CLOSED_REMARK.equalsIgnoreCase(remark) ? AccountStatus.CLOSED : AccountStatus.OPEN;
+            case "08", BureauCodes.TRANSUNION_CHARGED_OFF -> AccountStatus.CHARGED_OFF;
+            default -> throw new InvalidBureauReportException("TransUnion accountRating is not a known code");
+        };
     }
 
     private static int monthsBetween(YearMonth opened, LocalDate reportDate) {
@@ -146,9 +180,16 @@ class BureauReportParser {
             return "";
         }
         int comma = name.indexOf(',');
-        String reordered = comma < 0 ? name : name.substring(comma + 1).strip() + " " + name.substring(0, comma).strip();
+        return titleCase(comma < 0 ? name : name.substring(comma + 1).strip() + " " + name.substring(0, comma).strip());
+    }
+
+    /** {@code NORTHWIND BANK} to {@code Northwind Bank}: Experian upper-cases names, the others do not. */
+    private static String titleCase(String text) {
+        if (text == null) {
+            return "";
+        }
         StringBuilder out = new StringBuilder();
-        for (String word : reordered.strip().toLowerCase(Locale.ROOT).split("\\s+")) {
+        for (String word : text.strip().toLowerCase(Locale.ROOT).split("\\s+")) {
             if (!word.isEmpty()) {
                 out.append(out.isEmpty() ? "" : " ").append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
             }

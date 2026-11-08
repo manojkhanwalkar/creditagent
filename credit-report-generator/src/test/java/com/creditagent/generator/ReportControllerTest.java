@@ -33,9 +33,9 @@ class ReportControllerTest {
 
     @Test
     void createsReportsAndReturnsOnlyIdMaskedSsnAndBureaus() throws Exception {
-        CreditReport report = new CreditReport("r-42", "***-**-6789", "Avery Patel", Instant.EPOCH, List.of(), 0, 0, 0);
+        CreditReport report = new CreditReport("truth-id", "***-**-6789", "Avery Patel", Instant.EPOCH, List.of(), 0, 0, 0);
         given(service.generate(eq(Ssn.parse("123-45-6789")), any()))
-                .willReturn(new CreditReportService.GeneratedReports(report, List.of(Bureau.EQUIFAX, Bureau.TRANSUNION)));
+                .willReturn(new CreditReportService.GeneratedReports("r-42", report, List.of(Bureau.EQUIFAX, Bureau.TRANSUNION)));
 
         mvc.perform(post("/api/v1/reports")
                         .contentType(MediaType.APPLICATION_JSON)

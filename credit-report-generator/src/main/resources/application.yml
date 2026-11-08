@@ -10,7 +10,9 @@ spring:
 
 credit:
   files:
-    directory: ${CREDIT_REPORTS_DIR:${user.home}/Reports}
+    # Reports root; each bureau's files are in <root>/Equifax, /Experian, /TransUnion.
+    # CREDIT_FILES_DIR is the pre-multi-bureau name, still honoured so existing setups keep their location.
+    directory: ${CREDIT_REPORTS_DIR:${CREDIT_FILES_DIR:${user.home}/Reports}}
     # Required. Must be the same value the MCP server uses. No default on purpose.
     hmac-key: ${CREDIT_FILE_HMAC_KEY}
     # Comma-separated demo SSNs to generate at start-up, e.g. 123-45-6789,234-56-7890

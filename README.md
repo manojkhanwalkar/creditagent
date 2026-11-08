@@ -68,7 +68,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | Variable | Used by | Default |
 |---|---|---|
 | `CREDIT_FILE_HMAC_KEY` | generator, MCP server | **required**, at least 32 characters |
-| `CREDIT_REPORTS_DIR` | generator, MCP server | `~/Reports` (bureau files in `Equifax/`, `Experian/`, `TransUnion/`) |
+| `CREDIT_REPORTS_DIR` | generator, MCP server | `~/Reports` (bureau files in `Equifax/`, `Experian/`, `TransUnion/`). The old name `CREDIT_FILES_DIR` is still read as a fallback; files in the old flat layout are not migrated, so regenerate them |
 | `NRG_URL` | MCP server | `http://localhost:8084` |
 | `NRG_MAX_REQUEST_BYTES` | NRG | `3200000` (larger bodies get 413) |
 | `CREDIT_SEED_SSNS` | generator | none |

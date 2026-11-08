@@ -14,8 +14,10 @@ import com.creditagent.common.bureau.TransUnionReport;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
@@ -70,17 +72,24 @@ class BureauReportFormatterTest {
                 .create(Ssn.parse("123-45-6789"), null);
         BureauReports reports = new BureauReportFormatter(new Random()).format(report);
 
-        List<String> numbers = new java.util.ArrayList<>();
-        reports.equifax().trades().forEach(t -> numbers.add(t.memberName() + t.accountNumber().substring(12)));
-        reports.experian().tradelines().forEach(t -> numbers.add(t.subscriberName() + t.accountNumber().substring(8)));
-        reports.transunion().trades().forEach(t -> numbers.add(t.subscriberName() + t.accountNumber().substring(0, 4)));
-        assertThat(numbers.stream().map(String::toUpperCase).distinct().count()).isLessThanOrEqualTo(report.accounts().size());
-        assertThat(numbers.size()).isGreaterThanOrEqualTo(report.accounts().size());
-
-        int inquiries = reports.equifax().inquiries().size()
-                + reports.experian().inquiries().size()
-                + reports.transunion().inquiries().size();
+        Set<String> lastFours = new HashSet<>();
+        int inquiries = 0;
+        if (reports.equifax() != null) {
+            reports.equifax().trades().forEach(t -> lastFours.add(t.accountNumber().substring(12)));
+            inquiries += reports.equifax().inquiries().size();
+        }
+        if (reports.experian() != null) {
+            reports.experian().tradelines().forEach(t -> lastFours.add(t.accountNumber().substring(8)));
+            inquiries += reports.experian().inquiries().size();
+        }
+        if (reports.transunion() != null) {
+            reports.transunion().trades().forEach(t -> lastFours.add(t.accountNumber().substring(0, 4)));
+            inquiries += reports.transunion().inquiries().size();
+        }
+        // Account numbers are unique per consumer, so each account shows exactly one last four.
+        assertThat(lastFours).hasSize(report.accounts().size());
         assertThat(inquiries).isEqualTo(report.hardInquiriesLast12Months());
+        assertThat(reports.isEmpty()).isFalse();
     }
 
     @Test
@@ -102,6 +111,29 @@ class BureauReportFormatterTest {
             assertThat(t.creditLimit()).isNull();
             assertThat(t.highCredit()).isEqualTo(300_000);
         });
+    }
+
+    @Test
+    void aBureauWithNothingReportedHasNoFile() {
+        CreditReport oneCard = new CreditReport("r-2", "***-**-6789", "Avery Patel", NOW,
+                List.of(new CreditAccount(AccountType.CREDIT_CARD, "Northwind Bank", AccountStatus.OPEN, 10, 1_000, 12, 0, 0, 0)),
+                0, 0, 0);
+        boolean sawMissingBureau = false;
+        for (int seed = 0; seed < 50 && !sawMissingBureau; seed++) {
+            BureauReports reports = new BureauReportFormatter(new Random(seed)).format(oneCard);
+            sawMissingBureau = reports.equifax() == null || reports.experian() == null || reports.transunion() == null;
+            assertThat(reports.isEmpty()).isFalse();
+        }
+        assertThat(sawMissingBureau).isTrue();
+    }
+
+    @Test
+    void anEmptyHistoryStillHasAFileAtEveryBureau() {
+        CreditReport empty = new CreditReport("r-3", "***-**-6789", "Avery Patel", NOW, List.of(), 0, 0, 0);
+        BureauReports reports = new BureauReportFormatter(new Random(1)).format(empty);
+        assertThat(reports.equifax()).isNotNull();
+        assertThat(reports.experian()).isNotNull();
+        assertThat(reports.transunion()).isNotNull();
     }
 
     @Test

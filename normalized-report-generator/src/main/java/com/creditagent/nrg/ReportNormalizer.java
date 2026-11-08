@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.ToLongFunction;
 
 /**
@@ -70,7 +69,7 @@ class ReportNormalizer {
         }
 
         return new CreditReport(
-                UUID.randomUUID().toString(),
+                reports.normalizedReportId(),
                 "***-**-" + lastFour,
                 views.stream().map(BureauView::fullName).filter(n -> !n.isBlank()).findFirst().orElse(""),
                 clock.instant(),

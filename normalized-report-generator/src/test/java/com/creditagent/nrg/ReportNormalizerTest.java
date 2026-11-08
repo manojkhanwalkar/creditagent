@@ -74,7 +74,7 @@ class ReportNormalizerTest {
                 // Same card at three bureaus: newest balance (Equifax), lates not double-counted.
                 new CreditAccount(AccountType.CREDIT_CARD, "Northwind Bank", AccountStatus.OPEN, 1_200, 5_000, 36, 1, 0, 0),
                 new CreditAccount(AccountType.MORTGAGE, "Adatum Mortgage", AccountStatus.OPEN, 250_000, 300_000, 120, 0, 0, 0),
-                new CreditAccount(AccountType.AUTO_LOAN, "PROSEWARE AUTO", AccountStatus.CHARGED_OFF, 9_000, 20_000, 40, 0, 1, 1));
+                new CreditAccount(AccountType.AUTO_LOAN, "Proseware Auto", AccountStatus.CHARGED_OFF, 9_000, 20_000, 40, 0, 1, 1));
         // Litware at Equifax and Experian is one pull; Contoso is older than 12 months.
         assertThat(report.hardInquiriesLast12Months()).isEqualTo(2);
         assertThat(report.collections()).isEqualTo(2);
@@ -112,6 +112,78 @@ class ReportNormalizerTest {
         assertThatThrownBy(() -> normalizer.normalize(new BureauReports(equifax(), null, other)))
                 .isInstanceOf(InvalidBureauReportException.class)
                 .hasMessage("Bureau reports are for different consumers");
+    }
+
+    @Test
+    void theSameFilesAlwaysNormalizeToTheSameId() {
+        BureauReports reports = new BureauReports(equifax(), experian(), transUnion());
+        assertThat(normalizer.normalize(reports).reportId())
+                .isEqualTo(normalizer.normalize(reports).reportId())
+                .isEqualTo(reports.normalizedReportId());
+        assertThat(normalizer.normalize(new BureauReports(equifax(), null, null)).reportId())
+                .isNotEqualTo(reports.normalizedReportId());
+    }
+
+    static ExperianReport experianWithStatus(String statusCode) {
+        return new ExperianReport("EXP-2", "20261107", new ExperianReport.Consumer("PATEL, AVERY", "XXXXX6789"),
+                List.of(new ExperianReport.Tradeline("NORTHWIND BANK", "XXXXXXXX1234", "18", "20231107", "20261020",
+                        "1000", "5000", statusCode, "0000")),
+                List.of(), null);
+    }
+
+    @Test
+    void derogatoryStatusCodesCountAsChargedOffAndPastDueStaysOpen() {
+        for (String code : List.of("93", "94", "95", "96", "97")) {
+            assertThat(normalizer.normalize(new BureauReports(null, experianWithStatus(code), null))
+                    .accounts().getFirst().status()).as(code).isEqualTo(AccountStatus.CHARGED_OFF);
+        }
+        for (String code : List.of("11", "71", "78", "80", "82", "83", "84")) {
+            assertThat(normalizer.normalize(new BureauReports(null, experianWithStatus(code), null))
+                    .accounts().getFirst().status()).as(code).isEqualTo(AccountStatus.OPEN);
+        }
+    }
+
+    @Test
+    void unknownStatusCodesAreRefusedNotReadAsCurrent() {
+        assertThatThrownBy(() -> normalizer.normalize(new BureauReports(null, experianWithStatus("42"), null)))
+                .isInstanceOf(InvalidBureauReportException.class)
+                .hasMessageContaining("statusCode");
+
+        EquifaxReport efx = equifax();
+        EquifaxReport.Trade t = efx.trades().getFirst();
+        for (String rate : List.of("I8", "R9")) {
+            EquifaxReport derogatory = new EquifaxReport(efx.reportNumber(), efx.dateOfReport(), efx.subject(),
+                    List.of(new EquifaxReport.Trade(t.memberName(), t.accountNumber(), t.portfolioType(), t.accountType(),
+                            t.dateOpened(), t.dateReported(), t.highCredit(), t.creditLimit(), t.balance(), rate,
+                            0, 0, 0, false)),
+                    List.of(), 0, 0);
+            assertThat(normalizer.normalize(new BureauReports(derogatory, null, null)).accounts().getFirst().status())
+                    .as(rate).isEqualTo(AccountStatus.CHARGED_OFF);
+        }
+        EquifaxReport unknown = new EquifaxReport(efx.reportNumber(), efx.dateOfReport(), efx.subject(),
+                List.of(new EquifaxReport.Trade(t.memberName(), t.accountNumber(), t.portfolioType(), t.accountType(),
+                        t.dateOpened(), t.dateReported(), t.highCredit(), t.creditLimit(), t.balance(), "R6",
+                        0, 0, 0, false)),
+                List.of(), 0, 0);
+        assertThatThrownBy(() -> normalizer.normalize(new BureauReports(unknown, null, null)))
+                .isInstanceOf(InvalidBureauReportException.class);
+
+        TransUnionReport tu = transUnion();
+        TransUnionReport.Trade card = tu.trades().getFirst();
+        TransUnionReport repossessed = new TransUnionReport(tu.fileNumber(), tu.reportDate(), tu.name(), tu.ssnMasked(),
+                List.of(new TransUnionReport.Trade(card.subscriberName(), card.accountNumber(), card.industryCode(),
+                        card.portfolioType(), card.dateOpened(), card.dateEffective(), card.currentBalance(),
+                        card.creditLimit(), card.highCredit(), "08", card.historicalCounters(), null)),
+                List.of(), 0, 0);
+        assertThat(normalizer.normalize(new BureauReports(null, null, repossessed)).accounts().getFirst().status())
+                .isEqualTo(AccountStatus.CHARGED_OFF);
+    }
+
+    @Test
+    void experianOnlyCreditorsAreTitleCased() {
+        CreditReport report = normalizer.normalize(new BureauReports(null, experian(), null));
+        assertThat(report.accounts()).extracting(CreditAccount::creditor)
+                .containsExactly("Northwind Bank", "Proseware Auto");
     }
 
     @Test
