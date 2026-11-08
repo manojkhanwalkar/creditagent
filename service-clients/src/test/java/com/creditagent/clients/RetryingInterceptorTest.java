@@ -59,6 +59,19 @@ class RetryingInterceptorTest {
     }
 
     @Test
+    void aRecoverableStatusOnTheRealLastTryReachesTheCallerAsAnHttpError() {
+        // Regression: tries that failed with I/O errors were not counted, so this 503 was thrown as
+        // an internal RetryableStatusException that the service clients do not catch.
+        RestClient client = client(FAST, true);
+        server.expect(requestTo(URL)).andRespond(withException(new java.io.IOException("connection reset")));
+        server.expect(requestTo(URL)).andRespond(withException(new java.io.IOException("connection reset")));
+        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+
+        assertThatThrownBy(() -> post(client)).isInstanceOf(HttpServerErrorException.ServiceUnavailable.class);
+        server.verify();
+    }
+
+    @Test
     void clientErrorsAreNotRetried() {
         RestClient client = client(FAST, true);
         server.expect(times(1), requestTo(URL)).andRespond(withStatus(HttpStatus.BAD_REQUEST));

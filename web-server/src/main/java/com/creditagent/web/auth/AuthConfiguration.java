@@ -41,8 +41,9 @@ class AuthConfiguration {
 
     /**
      * Bounded calls, and the SDK's standard retry mode: up to 3 attempts with exponential backoff and
-     * jitter on throttling, 5xx and connection errors. DynamoDB reads, conditional writes and deletes
-     * are safe to repeat.
+     * jitter on throttling, 5xx and connection errors, all within {@code timeout}. Each attempt may
+     * take half of it, so after one attempt that hangs to its limit only one more fits. DynamoDB
+     * reads, conditional writes and deletes are safe to repeat.
      */
     static ClientOverrideConfiguration overrides(AuthProperties.DynamoDb config) {
         return ClientOverrideConfiguration.builder()

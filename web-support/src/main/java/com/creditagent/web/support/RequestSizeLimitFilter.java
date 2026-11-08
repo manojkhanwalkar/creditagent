@@ -9,7 +9,6 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
-import org.springframework.core.Ordered;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -38,7 +37,7 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
         FilterRegistrationBean<RequestSizeLimitFilter> registration =
                 new FilterRegistrationBean<>(new RequestSizeLimitFilter(maxBytes));
         registration.addUrlPatterns(urlPatterns);
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 2);
+        registration.setOrder(WebSupportAutoConfiguration.INBOUND_LIMIT_ORDER + 1);
         return registration;
     }
 

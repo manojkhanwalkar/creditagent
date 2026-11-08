@@ -54,9 +54,9 @@ class InboundLimitFilterTest {
     void badSettingsAreRefused() {
         assertThatThrownBy(() -> new TokenBucket(0, 1)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new TokenBucket(1, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new InboundLimitProperties(true, -1.0, 1, 1)).isInstanceOf(IllegalArgumentException.class);
-        assertThat(new InboundLimitProperties(null, null, null, null))
-                .isEqualTo(new InboundLimitProperties(true, 50.0, 100, 32));
+        assertThatThrownBy(() -> new InboundLimitProperties(true, -1.0, 1, 1, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(new InboundLimitProperties(null, null, null, null, null))
+                .isEqualTo(new InboundLimitProperties(true, 50.0, 100, 32, java.util.List.of("/*")));
     }
 
     @Test
@@ -77,6 +77,15 @@ class InboundLimitFilterTest {
         run(filter, "/api/v1/scores");
         for (int i = 0; i < 5; i++) {
             assertThat(run(filter, "/actuator/health/readiness").getStatus()).isEqualTo(200);
+        }
+    }
+
+    @Test
+    void pathTricksCannotPassForAnActuatorPath() throws Exception {
+        InboundLimitFilter filter = new InboundLimitFilter(bucket(1, 1), 0);
+        run(filter, "/api/v1/scores");
+        for (String path : new String[] {"/actuator/..;/api/v1/scores", "/actuator/%2e%2e/api/v1/scores"}) {
+            assertThat(run(filter, path).getStatus()).as(path).isEqualTo(429);
         }
     }
 

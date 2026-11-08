@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.concurrent.Semaphore;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 /**
  * Protects a service from more work than it can take, before any of that work starts:
@@ -30,6 +31,14 @@ public class InboundLimitFilter extends OncePerRequestFilter {
     static final String BODY_503 =
             "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503,\"detail\":\"The service is busy. Please retry shortly.\"}";
 
+    private static final UrlPathHelper PATHS = new UrlPathHelper();
+
+    static {
+        PATHS.setAlwaysUseFullPath(true);
+        PATHS.setUrlDecode(true);
+        PATHS.setRemoveSemicolonContent(true);
+    }
+
     private final TokenBucket bucket;
     private final Semaphore inFlight;
 
@@ -41,8 +50,11 @@ public class InboundLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI().substring(request.getContextPath().length());
-        return path.startsWith("/actuator/");
+        // The decoded path without ;params, as Spring MVC sees it. A raw getRequestURI() prefix check
+        // would let /actuator/%2e%2e/api/... skip the limits; decoding alone still leaves
+        // /actuator/../api/..., so any path with a dot-dot segment is limited like any other.
+        String path = PATHS.getLookupPathForRequest(request);
+        return path.startsWith("/actuator/") && !path.contains("..");
     }
 
     @Override

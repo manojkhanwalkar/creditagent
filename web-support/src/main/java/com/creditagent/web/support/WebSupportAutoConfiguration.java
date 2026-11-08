@@ -17,8 +17,12 @@ import org.springframework.core.Ordered;
 @EnableConfigurationProperties(InboundLimitProperties.class)
 public class WebSupportAutoConfiguration {
 
-    /** Right after security headers (so refusals carry them), before any other work. */
-    static final int INBOUND_LIMIT_ORDER = Ordered.HIGHEST_PRECEDENCE + 1;
+    /**
+     * After security headers (so refusals carry them) and after any per-client limiter a service has
+     * (it must run first, or one client could use up the shared bucket for everyone), but before any
+     * other work.
+     */
+    public static final int INBOUND_LIMIT_ORDER = Ordered.HIGHEST_PRECEDENCE + 5;
 
     @Bean
     @ConditionalOnProperty(name = "credit.inbound.enabled", havingValue = "true", matchIfMissing = true)
@@ -26,7 +30,7 @@ public class WebSupportAutoConfiguration {
         TokenBucket bucket = new TokenBucket(properties.burst(), properties.ratePerSecond());
         FilterRegistrationBean<InboundLimitFilter> registration =
                 new FilterRegistrationBean<>(new InboundLimitFilter(bucket, properties.maxConcurrent()));
-        registration.addUrlPatterns("/*");
+        registration.addUrlPatterns(properties.urlPatterns().toArray(String[]::new));
         registration.setOrder(INBOUND_LIMIT_ORDER);
         return registration;
     }

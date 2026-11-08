@@ -100,13 +100,15 @@ class CreditAdviceClientTest {
     }
 
     @Test
-    void aHungAgentTimesOutInsteadOfBlockingForever() {
+    void aHungAgentTimesOutInsteadOfBlockingForever() throws InterruptedException {
         AtomicInteger calls = new AtomicInteger();
+        java.util.concurrent.CountDownLatch interrupted = new java.util.concurrent.CountDownLatch(1);
         CreditAdviceClient client = new CreditAdviceClient(ssn -> {
             calls.incrementAndGet();
             try {
                 Thread.sleep(60_000);
             } catch (InterruptedException e) {
+                interrupted.countDown();
                 Thread.currentThread().interrupt();
             }
             return ADVICE;
@@ -118,5 +120,7 @@ class CreditAdviceClientTest {
                 .hasMessageContaining("did not answer");
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(5));
         assertThat(calls).hasValue(1); // a timeout is not retried
+        // The abandoned call is interrupted, so its thread and connection are not left blocked.
+        assertThat(interrupted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
     }
 }

@@ -10,9 +10,9 @@ import org.springframework.core.retry.RetryPolicy;
  * backoff with jitter, using Spring Framework's {@link RetryPolicy}.
  *
  * <p>With the defaults, a call is tried at most 3 times. The waits before the 2nd and 3rd tries are
- * about 100 ms and 200 ms, each moved at random by up to ±50 ms (the jitter), and never more than
- * 1 s. Jitter spreads out the retries of many callers that failed at the same moment, so they do
- * not all hit the recovering service together.
+ * about 100 ms and 200 ms, each moved at random by up to 50 ms (the jitter) but never below the
+ * base delay (Spring's rule) nor above 1 s. Jitter spreads out the retries of many callers that
+ * failed at the same moment, so they do not all hit the recovering service together.
  *
  * @param maxAttempts tries in all, including the first; 1 turns retries off
  * @param initialDelay wait before the first retry

@@ -38,6 +38,9 @@ public class RetryingInterceptor implements ClientHttpRequestInterceptor {
         AtomicInteger attempt = new AtomicInteger();
         try {
             return Retries.call(settings, recoverable, () -> {
+                // Counted before the call, so attempts that failed with an I/O error count too:
+                // otherwise a recoverable status on the real last try would be thrown, not returned.
+                boolean lastAttempt = attempt.incrementAndGet() >= settings.maxAttempts();
                 ClientHttpResponse response;
                 int status;
                 try {
@@ -46,7 +49,7 @@ public class RetryingInterceptor implements ClientHttpRequestInterceptor {
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
-                if (attempt.incrementAndGet() < settings.maxAttempts() && retryStatuses.contains(status)) {
+                if (!lastAttempt && retryStatuses.contains(status)) {
                     response.close();
                     throw new Retries.RetryableStatusException(status);
                 }

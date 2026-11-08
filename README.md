@@ -109,7 +109,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `DYNAMODB_CREATE_TABLES` | web server | `false` (compose sets `true` for DynamoDB Local) |
 | `DYNAMODB_TIMEOUT` | web server | `5s` (longest DynamoDB call, retries included; the SDK's standard retry mode backs off with jitter) |
 | `CREDIT_RETRY_MAX_ATTEMPTS`, `CREDIT_RETRY_INITIAL_DELAY`, `CREDIT_RETRY_MULTIPLIER`, `CREDIT_RETRY_MAX_DELAY`, `CREDIT_RETRY_JITTER` | every service that calls another | `3`, `100ms`, `2`, `1s`, `50ms`: retries of recoverable failures with exponential backoff and jitter (see [architecture](docs/architecture.md#resilience)) |
-| `CREDIT_INBOUND_RATE_PER_SECOND`, `CREDIT_INBOUND_BURST`, `CREDIT_INBOUND_MAX_CONCURRENT`, `CREDIT_INBOUND_ENABLED` | every service | `50`, `100`, `32`, `true`: token-bucket rate limit and in-flight cap; excess requests get 429 or 503 with `Retry-After`. Health checks are exempt |
+| `CREDIT_INBOUND_RATE_PER_SECOND`, `CREDIT_INBOUND_BURST`, `CREDIT_INBOUND_MAX_CONCURRENT`, `CREDIT_INBOUND_ENABLED`, `CREDIT_INBOUND_URL_PATTERNS` | every service | `50`, `100`, `32`, `true`, `/*` (web server: `/api/*`): token-bucket rate limit and in-flight cap; excess requests get 429 or 503 with `Retry-After`. Health checks are exempt |
 
 ## CI/CD
 

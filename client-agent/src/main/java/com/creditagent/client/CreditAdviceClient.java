@@ -6,8 +6,8 @@ import com.creditagent.common.CreditAdvice;
 import com.creditagent.common.Ssn;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import tools.jackson.core.JacksonException;
@@ -57,8 +57,10 @@ public class CreditAdviceClient {
     }
 
     private String requestWithTimeout(String ssnDigits) {
-        CompletableFuture<String> call = CompletableFuture.supplyAsync(
-                () -> port.requestAdvice(ssnDigits), task -> Thread.ofVirtual().name("a2a-call").start(task));
+        // A FutureTask, not a CompletableFuture: only its cancel(true) interrupts the running call,
+        // so a timed-out request does not leave its thread blocked on the agent.
+        FutureTask<String> call = new FutureTask<>(() -> port.requestAdvice(ssnDigits));
+        Thread.ofVirtual().name("a2a-call").start(call);
         try {
             return call.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
