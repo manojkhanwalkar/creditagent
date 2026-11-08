@@ -35,16 +35,16 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-community-mcp-server</artifactId>
         </dependency>
+        <!-- MCP protocol types (McpImplementation, McpJsonRpcMessage) used by the handler;
+             also provides the real LangChain4j MCP client for the contract test -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-mcp</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- Contract test: the real LangChain4j MCP client against this server -->
-        <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-mcp</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

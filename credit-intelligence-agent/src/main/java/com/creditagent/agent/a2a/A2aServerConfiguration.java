@@ -72,8 +72,13 @@ class A2aServerConfiguration {
         return Executors.newVirtualThreadPerTaskExecutor();
     }
 
-    @Bean
-    RequestHandler a2aRequestHandler(
+    /**
+     * Deliberately not a Spring bean: {@link DefaultRequestHandler} carries CDI {@code @Inject}
+     * fields and a {@code @PostConstruct} that Spring would try to satisfy and run, failing on the
+     * missing {@code A2AConfigProvider} and overwriting what the builder set. The builder already
+     * produces a fully initialised handler.
+     */
+    private static RequestHandler a2aRequestHandler(
             AgentExecutor agentExecutor,
             InMemoryTaskStore taskStore,
             QueueManager queueManager,
@@ -87,6 +92,10 @@ class A2aServerConfiguration {
                 .executor(a2aExecutor)
                 .eventConsumerExecutor(a2aExecutor)
                 .pushNotificationsEnabled(false)
+                // The SDK fails closed (TaskNotFoundError) when authorization is required but no
+                // TaskAuthorizationProvider is set. Callers are not authenticated yet: see S-2 in
+                // docs/security-review.md. Replace this with a provider when S-2 is closed.
+                .authorizationRequired(false)
                 .build();
     }
 
@@ -96,7 +105,14 @@ class A2aServerConfiguration {
      */
     @Bean
     Supplier<JSONRPCHandler> a2aJsonRpcHandler(
-            AgentProperties properties, RequestHandler requestHandler, ExecutorService a2aExecutor) {
+            AgentProperties properties,
+            AgentExecutor agentExecutor,
+            InMemoryTaskStore taskStore,
+            QueueManager queueManager,
+            MainEventBusProcessor processor,
+            ExecutorService a2aExecutor) {
+        RequestHandler requestHandler =
+                a2aRequestHandler(agentExecutor, taskStore, queueManager, processor, a2aExecutor);
         return new Supplier<>() {
             private volatile JSONRPCHandler handler;
 
