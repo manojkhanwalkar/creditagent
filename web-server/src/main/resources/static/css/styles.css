@@ -76,3 +76,23 @@ figcaption { color: var(--muted); margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) {
   .ring-value { transition: none; }
 }
+
+/* ---------- account and sign-in ---------- */
+.page-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.account { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+.account b { color: var(--text); }
+.notice { margin: 16px 32px 0; padding: 12px 16px; border-radius: 8px; background: #e6ecf7; color: #1a3f91; }
+
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tabs button { background: transparent; color: var(--accent); }
+.tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+
+#login-form input, #register-form input { display: block; width: 100%; box-sizing: border-box; margin-bottom: 12px; letter-spacing: normal; }
+#register-form .help { margin-top: -6px; }
+
+[hidden] { display: none !important; }
+
+@media (max-width: 480px) {
+  .page-header, .widgets { padding-left: 16px; padding-right: 16px; }
+  .notice { margin-left: 16px; margin-right: 16px; }
+}

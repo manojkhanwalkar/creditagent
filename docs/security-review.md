@@ -12,7 +12,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
-| S-1 | High | No user authentication on the UI or API (as specified) | Open: by design for v0.1 |
+| S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups are not yet tied to the user's own SSN |
 | S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Open |
@@ -32,9 +32,9 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 
 ## Findings
 
-### S-1 No user authentication (High, open)
-Anyone who can reach port 8080 can look up any SSN's score. The spec says "for now the UI has no authentication".
-**Before real data:** add OIDC login (Spring Security `oauth2Login`), and authorize each look-up against the signed-in user's own SSN. Never let a user look up an arbitrary SSN. Swap `SecurityHeadersFilter` for Spring Security's header support at the same time.
+### S-1 User authentication (High, partly fixed)
+Users now register (BCrypt cost 12; 12–64 character passwords checked against a common-password list and the user id) and log in for an HS256 JWT. Every `/api/` call except register and login needs the token, and the token is accepted only while its DynamoDB session exists and was used in the last 5 minutes. Logout deletes the session. Login answers the same message, in about the same time, for a wrong password and an unknown user, and the per-IP rate limit covers login and registration.
+**Still open before real data:** any signed-in user can look up any SSN. Authorize each look-up against the user's own verified SSN. There is no account lockout, MFA or password recovery yet (email and phone are stored for recovery). The token is kept in `sessionStorage`, so an XSS bug could read it; the strict CSP is the mitigation. Consider OIDC instead of local passwords for production.
 
 ### S-2 No service-to-service authentication (High, open)
 The MCP server, score calculator, generator and A2A agent accept any caller on the network. Compose publishes only 8080 and 8086, and only on localhost, which limits exposure locally.

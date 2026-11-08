@@ -10,11 +10,56 @@
 <body>
   <header class="page-header">
     <h1>Credit Agent</h1>
+    <div class="account" id="account" hidden>
+      <span>Signed in as <b id="account-user"></b></span>
+      <button type="button" id="logout" class="secondary">Log out</button>
+    </div>
   </header>
 
+  <p id="notice" class="notice" role="status" hidden></p>
+
   <main class="widgets">
-    <!-- Widget: credit score. More widgets will be added to this grid later. -->
-    <section class="widget" aria-labelledby="score-title">
+    <!-- Widget: sign in / register. Shown while signed out. -->
+    <section class="widget" id="auth-widget" aria-labelledby="auth-title">
+      <h2 id="auth-title">Sign in</h2>
+      <div class="tabs" role="tablist" aria-label="Sign in or register">
+        <button type="button" role="tab" id="tab-login" aria-selected="true" aria-controls="login-form">Log in</button>
+        <button type="button" role="tab" id="tab-register" aria-selected="false" aria-controls="register-form">Register</button>
+      </div>
+
+      <form id="login-form" role="tabpanel" aria-labelledby="tab-login" novalidate>
+        <label for="login-user">User id</label>
+        <input id="login-user" name="userId" autocomplete="username" required maxlength="32" spellcheck="false">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="64">
+        <button type="submit" id="login-submit">Log in</button>
+        <p id="login-error" class="error" role="alert" hidden></p>
+      </form>
+
+      <form id="register-form" role="tabpanel" aria-labelledby="tab-register" novalidate hidden>
+        <label for="reg-user">User id</label>
+        <input id="reg-user" name="userId" autocomplete="username" required maxlength="32" spellcheck="false"
+               aria-describedby="reg-user-help">
+        <p id="reg-user-help" class="help">3–32 characters: letters, digits, '.', '_' or '-'.</p>
+        <label for="reg-password">Password</label>
+        <input id="reg-password" name="password" type="password" autocomplete="new-password" required maxlength="64"
+               aria-describedby="reg-password-help">
+        <p id="reg-password-help" class="help">At least 12 characters. A few unrelated words work well.</p>
+        <label for="reg-confirm">Confirm password</label>
+        <input id="reg-confirm" name="confirm" type="password" autocomplete="new-password" required maxlength="64">
+        <label for="reg-email">Email</label>
+        <input id="reg-email" name="email" type="email" autocomplete="email" required maxlength="254">
+        <label for="reg-phone">Phone</label>
+        <input id="reg-phone" name="phone" type="tel" autocomplete="tel" required maxlength="32"
+               placeholder="+1 415 555 0100" aria-describedby="reg-phone-help">
+        <p id="reg-phone-help" class="help">International form with country code. Used for password recovery.</p>
+        <button type="submit" id="register-submit">Create account</button>
+        <p id="register-error" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <!-- Widget: credit score. Shown while signed in. More widgets will be added to this grid later. -->
+    <section class="widget" id="score-widget" aria-labelledby="score-title" hidden>
       <h2 id="score-title">Credit score</h2>
 
       <form id="score-form" autocomplete="off" novalidate>

@@ -41,15 +41,30 @@ services:
     <<: *service
     build: { context: ., args: { MODULE: score-calculator } }
 
+  # Users and sessions. DynamoDB Local in memory: accounts are lost when the stack stops.
+  # In AWS, point DYNAMODB_ENDPOINT at nothing and give the web server an IAM role instead.
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.2
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
   web-server:
     <<: *service
     build: { context: ., args: { MODULE: web-server } }
     environment:
       CREDIT_MCP_URL: http://credit-report-mcp-server:8082/mcp
       SCORE_CALCULATOR_URL: http://score-calculator:8081
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      DYNAMODB_CREATE_TABLES: "true"
+      # DynamoDB Local accepts any credentials; real AWS uses the instance or task role.
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on: [credit-report-mcp-server, score-calculator]
+    depends_on: [credit-report-mcp-server, score-calculator, dynamodb]
 
   credit-intelligence-agent:
     <<: *service

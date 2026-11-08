@@ -40,6 +40,8 @@
         <langchain4j-beta.version>1.23.0-beta33</langchain4j-beta.version>
         <a2a-java-sdk.version>1.5.0.Final</a2a-java-sdk.version>
         <jacoco.version>0.8.16</jacoco.version>
+        <aws-sdk.version>2.57.0</aws-sdk.version>
+        <nimbus-jose-jwt.version>10.10</nimbus-jose-jwt.version>
     </properties>
 
     <dependencyManagement>
@@ -58,6 +60,18 @@
                 <groupId>com.creditagent</groupId>
                 <artifactId>web-support</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>${nimbus-jose-jwt.version}</version>
             </dependency>
             <dependency>
                 <groupId>dev.langchain4j</groupId>
