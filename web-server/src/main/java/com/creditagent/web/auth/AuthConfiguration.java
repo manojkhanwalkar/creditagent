@@ -54,6 +54,8 @@ class AuthConfiguration {
             UserRepository users, SessionRepository sessions, PasswordEncoder passwords, AuthProperties properties) {
         Clock clock = Clock.systemUTC();
         JwtService jwt = new JwtService(properties.jwtSecret(), properties.jwtIssuer(), properties.tokenTtl(), clock);
-        return new AuthService(users, sessions, passwords, jwt, properties.sessionIdleTimeout(), clock);
+        return new AuthService(
+                users, sessions, passwords, new SsnHasher(properties.ssnHmacKey()), jwt,
+                properties.sessionIdleTimeout(), clock);
     }
 }

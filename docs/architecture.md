@@ -90,21 +90,24 @@ sequenceDiagram
     participant WS as web-server :8080
     participant U as DynamoDB users
     participant S as DynamoDB sessions
-    UI->>WS: POST /api/v1/auth/register {userId, password, email, phone}
-    WS->>U: PutItem if userId not exists (BCrypt hash)
-    WS-->>UI: 201, or 409 if taken
+    UI->>WS: POST /api/v1/auth/register {userId, password, email, phone, ssn}
+    WS->>U: TransactWriteItems: user (BCrypt hash, SSN HMAC) + ssn#hash claim, both if not exists
+    WS-->>UI: 201, or 409 if the user id or the SSN is taken
     UI->>WS: POST /api/v1/auth/login {userId, password}
     WS->>U: GetItem userId
-    WS->>S: PutItem session (expiresAt = now + 5 min)
+    WS->>S: PutItem session (SSN hash, expiresAt = now + 5 min)
     WS-->>UI: JWT (sub = userId, jti = sessionId)
-    UI->>WS: POST /api/v1/credit-score, Authorization: Bearer JWT
+    UI->>WS: POST /api/v1/credit-score {ssn}, Authorization: Bearer JWT
     WS->>S: GetItem jti; refuse if missing or idle 5 min; else refresh expiresAt
+    WS->>WS: HMAC(ssn) == session SSN hash? else 403
     WS-->>UI: score (flow 2–10)
     UI->>WS: POST /api/v1/auth/logout
     WS->>S: DeleteItem session
 ```
 
-**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone and creation time. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone, the SSN's HMAC (`ssnHash`) and last four digits, and creation time. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+
+**Own report only.** `CreditScoreController` hashes the requested SSN with the same key and compares it, in constant time, with the session's hash. A mismatch is 403 "You can only look up your own credit report." and happens before the MCP server is called.
 
 **Session end.** A session ends on logout, when a request arrives after 5 idle minutes (the session is deleted and the request refused), or when `SessionSweeper` finds it expired (every minute). DynamoDB's TTL is a last resort, since it can take days. The JWT itself also expires after 1 hour, whatever the activity. To save writes, `lastActivityAt` is refreshed at most every 30 seconds.
 

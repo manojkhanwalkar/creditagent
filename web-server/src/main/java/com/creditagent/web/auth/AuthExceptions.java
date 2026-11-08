@@ -23,6 +23,15 @@ final class AuthExceptions {
         }
     }
 
+    /** 409: the SSN already belongs to an account. */
+    static final class SsnAlreadyRegisteredException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        SsnAlreadyRegisteredException() {
+            super("An account already exists for that SSN.");
+        }
+    }
+
     /** 401: wrong credentials, or a missing, invalid or expired token or session. */
     static final class UnauthenticatedException extends RuntimeException {
         private static final long serialVersionUID = 1L;

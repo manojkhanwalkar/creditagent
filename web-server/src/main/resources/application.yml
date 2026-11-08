@@ -20,6 +20,9 @@ credit:
   auth:
     # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
     jwt-secret: ${JWT_SECRET}
+    # Required. Key for the keyed hash (HMAC-SHA256) of each user's SSN; at least 32 characters.
+    # Changing it orphans every registered SSN. No default on purpose.
+    ssn-hmac-key: ${SSN_HMAC_KEY}
     jwt-issuer: credit-agent
     # Hard cap on a token's life; the session also ends after session-idle-timeout without use.
     token-ttl: ${JWT_TTL:1h}

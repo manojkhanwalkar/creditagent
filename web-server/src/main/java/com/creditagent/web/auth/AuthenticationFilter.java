@@ -45,20 +45,29 @@ class AuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (header == null || !header.regionMatches(true, 0, BEARER, 0, BEARER.length())) {
-            reject(response, "Log in to continue.");
-            return;
-        }
+        // Always authenticate: a missing or non-Bearer header yields an empty token, which
+        // AuthService refuses. No request reaches the chain without passing authenticate().
         AuthenticatedUser user;
         try {
-            user = auth.authenticate(header.substring(BEARER.length()).strip());
+            user = auth.authenticate(bearerToken(request.getHeader(HttpHeaders.AUTHORIZATION)));
         } catch (UnauthenticatedException e) {
             reject(response, e.getMessage());
             return;
         }
+        if (user == null) {
+            // Fail closed: never let a request through without a resolved user.
+            reject(response, "Log in to continue.");
+            return;
+        }
         request.setAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE, user);
         chain.doFilter(request, response);
+    }
+
+    static String bearerToken(String header) {
+        if (header == null || !header.regionMatches(true, 0, BEARER, 0, BEARER.length())) {
+            return "";
+        }
+        return header.substring(BEARER.length()).strip();
     }
 
     private void reject(HttpServletResponse response, String message) throws IOException {

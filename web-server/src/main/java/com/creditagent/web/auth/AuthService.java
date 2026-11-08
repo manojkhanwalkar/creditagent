@@ -1,5 +1,9 @@
 package com.creditagent.web.auth;
 
+import com.creditagent.common.InvalidSsnException;
+import com.creditagent.common.Ssn;
+import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
+import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
 import java.security.SecureRandom;
@@ -28,11 +32,12 @@ public class AuthService {
     static final String BAD_CREDENTIALS = "User id or password is incorrect.";
 
     /** What a successful login returns. */
-    public record LoginResult(String token, String userId, Duration idleTimeout) {}
+    public record LoginResult(String token, String userId, String ssnMasked, Duration idleTimeout) {}
 
     private final UserRepository users;
     private final SessionRepository sessions;
     private final PasswordEncoder passwords;
+    private final SsnHasher ssnHasher;
     private final JwtService jwt;
     private final Duration idleTimeout;
     private final Duration touchInterval;
@@ -45,12 +50,14 @@ public class AuthService {
             UserRepository users,
             SessionRepository sessions,
             PasswordEncoder passwords,
+            SsnHasher ssnHasher,
             JwtService jwt,
             Duration idleTimeout,
             Clock clock) {
         this.users = Objects.requireNonNull(users);
         this.sessions = Objects.requireNonNull(sessions);
         this.passwords = Objects.requireNonNull(passwords);
+        this.ssnHasher = Objects.requireNonNull(ssnHasher);
         this.jwt = Objects.requireNonNull(jwt);
         this.idleTimeout = Objects.requireNonNull(idleTimeout);
         Duration tenth = idleTimeout.dividedBy(10);
@@ -65,21 +72,31 @@ public class AuthService {
      * @return the stored (lower-case) user id
      * @throws AuthExceptions.InvalidRegistrationException if a field breaks a rule
      * @throws UserAlreadyExistsException if the id is taken
+     * @throws SsnAlreadyRegisteredException if another account already has this SSN
      */
-    public String register(String userId, String password, String email, String phone) {
+    public String register(String userId, String password, String email, String phone, String ssn) {
         String id = RegistrationPolicy.normaliseUserId(userId);
         RegistrationPolicy.checkPassword(password, id);
+        Ssn parsed;
+        try {
+            parsed = Ssn.parse(ssn);
+        } catch (InvalidSsnException e) {
+            throw new InvalidRegistrationException(e.getMessage());
+        }
         User user = new User(
                 id,
                 passwords.encode(password),
                 RegistrationPolicy.normaliseEmail(email),
                 RegistrationPolicy.normalisePhone(phone),
+                ssnHasher.hash(parsed),
+                parsed.digits().substring(5),
                 clock.instant());
-        // The conditional write is the real uniqueness check; there is no read-then-write race.
-        if (!users.createIfAbsent(user)) {
-            throw new UserAlreadyExistsException();
+        // The conditional transaction is the real uniqueness check; there is no read-then-write race.
+        switch (users.create(user)) {
+            case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
+            case SSN_TAKEN -> throw new SsnAlreadyRegisteredException();
+            case CREATED -> log.info("Registered user {}", id);
         }
-        log.info("Registered user {}", id);
         return id;
     }
 
@@ -95,10 +112,13 @@ public class AuthService {
             throw new UnauthenticatedException(BAD_CREDENTIALS);
         }
         Instant now = clock.instant();
-        Session session = new Session(randomId(), id, now, now, now.plus(idleTimeout));
+        User found = user.get();
+        Session session = new Session(
+                randomId(), id, found.ssnHash(), found.ssnLastFour(), now, now, now.plus(idleTimeout));
         sessions.save(session);
         log.info("User {} logged in", id);
-        return new LoginResult(jwt.issue(id, session.sessionId()), id, idleTimeout);
+        AuthenticatedUser signedIn = new AuthenticatedUser(id, session.sessionId(), found.ssnHash(), found.ssnLastFour());
+        return new LoginResult(jwt.issue(id, session.sessionId()), id, signedIn.ssnMasked(), idleTimeout);
     }
 
     /**
@@ -106,6 +126,9 @@ public class AuthService {
      * records the activity.
      */
     public AuthenticatedUser authenticate(String token) {
+        if (token == null || token.isBlank()) {
+            throw new UnauthenticatedException("Log in to continue.");
+        }
         JwtService.Claims claims = jwt.verify(token);
         Instant now = clock.instant();
         Session session = sessions.find(claims.sessionId())
@@ -118,7 +141,20 @@ public class AuthService {
         if (Duration.between(session.lastActivityAt(), now).compareTo(touchInterval) >= 0) {
             sessions.save(session.touchedAt(now, idleTimeout));
         }
-        return new AuthenticatedUser(session.userId(), session.sessionId());
+        return new AuthenticatedUser(session.userId(), session.sessionId(), session.ssnHash(), session.ssnLastFour());
+    }
+
+    /**
+     * Allows a credit look-up only for the signed-in user's own SSN. Called before any report is
+     * fetched, so a refusal says nothing about whether the other SSN has a report.
+     *
+     * @throws NotOwnSsnException if {@code ssn} is not the user's registered SSN
+     */
+    public void requireOwnSsn(AuthenticatedUser user, Ssn ssn) {
+        if (!ssnHasher.matches(ssn, user.ssnHash())) {
+            log.warn("User {} asked for a credit report that is not theirs", user.userId());
+            throw new NotOwnSsnException();
+        }
     }
 
     public void logout(AuthenticatedUser user) {

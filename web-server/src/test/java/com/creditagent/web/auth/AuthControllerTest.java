@@ -43,7 +43,7 @@ class AuthControllerTest {
 
     static final String PASSWORD = "correct horse battery staple";
     static final String REGISTER = """
-            {"userId":"Avery","password":"%s","email":"avery@example.com","phone":"+1 415 555 0100"}
+            {"userId":"Avery","password":"%s","email":"avery@example.com","phone":"+1 415 555 0100","ssn":"123-45-6789"}
             """.formatted(PASSWORD);
 
     @TestConfiguration
@@ -56,8 +56,8 @@ class AuthControllerTest {
         @Bean
         AuthService authService() {
             return new AuthService(
-                    new InMemoryRepositories.Users(), SESSIONS, new BCryptPasswordEncoder(4),
-                    new JwtService("controller-test-secret-0123456789abcdef012345", "credit-agent", Duration.ofHours(1), CLOCK),
+                    new InMemoryRepositories.Users(), SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")),
+                    new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), CLOCK),
                     Duration.ofMinutes(5), CLOCK);
         }
     }
@@ -77,19 +77,26 @@ class AuthControllerTest {
 
         mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON).content(REGISTER))
                 .andExpect(status().isConflict());
+        // Same SSN under another user id: also refused.
+        mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content(REGISTER.replace("Avery", "imposter")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("An account already exists for that SSN."));
 
         String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"avery\",\"password\":\"" + PASSWORD + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.idleTimeoutSeconds").value(300))
+                .andExpect(jsonPath("$.ssnMasked").value("***-**-6789"))
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andReturn().getResponse().getContentAsString();
         String bearer = "Bearer " + JsonPath.read(login, "$.token");
 
         mvc.perform(get("/api/v1/auth/session").header("Authorization", bearer))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.userId").value("avery"));
+                .andExpect(jsonPath("$.userId").value("avery"))
+                .andExpect(jsonPath("$.ssnMasked").value("***-**-6789"));
 
         mvc.perform(post("/api/v1/auth/logout").header("Authorization", bearer))
                 .andExpect(status().isNoContent());
@@ -111,7 +118,7 @@ class AuthControllerTest {
     @Test
     void weakPasswordIs400WithoutEchoingIt() throws Exception {
         mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"blake\",\"password\":\"Password1234\",\"email\":\"b@example.com\",\"phone\":\"+14155550101\"}"))
+                        .content("{\"userId\":\"blake\",\"password\":\"Password1234\",\"email\":\"b@example.com\",\"phone\":\"+14155550101\",\"ssn\":\"234-56-7890\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string(Matchers.not(Matchers.containsString("Password1234"))));
     }
@@ -128,7 +135,7 @@ class AuthControllerTest {
     @Test
     void sessionTimesOutAfterFiveIdleMinutes() throws Exception {
         mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content(REGISTER.replace("Avery", "casey")));
+                .content(REGISTER.replace("Avery", "casey").replace("123-45-6789", "345-67-8901")));
         String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"casey\",\"password\":\"" + PASSWORD + "\"}"))
                 .andReturn().getResponse().getContentAsString();

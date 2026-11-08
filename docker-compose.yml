@@ -57,6 +57,7 @@ services:
       CREDIT_MCP_URL: http://credit-report-mcp-server:8082/mcp
       SCORE_CALCULATOR_URL: http://score-calculator:8081
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      SSN_HMAC_KEY: ${SSN_HMAC_KEY:?Set SSN_HMAC_KEY in .env}
       DYNAMODB_ENDPOINT: http://dynamodb:8000
       DYNAMODB_CREATE_TABLES: "true"
       # DynamoDB Local accepts any credentials; real AWS uses the instance or task role.

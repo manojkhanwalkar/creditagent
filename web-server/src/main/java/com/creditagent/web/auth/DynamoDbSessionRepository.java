@@ -29,12 +29,17 @@ public class DynamoDbSessionRepository implements SessionRepository {
 
     @Override
     public void save(Session session) {
-        dynamo.putItem(r -> r.tableName(table).item(Map.of(
-                KEY, AttributeValue.fromS(session.sessionId()),
-                "userId", AttributeValue.fromS(session.userId()),
-                "createdAt", AttributeValue.fromS(session.createdAt().toString()),
-                "lastActivityAt", AttributeValue.fromS(session.lastActivityAt().toString()),
-                TTL_ATTRIBUTE, AttributeValue.fromN(Long.toString(session.expiresAt().getEpochSecond())))));
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(KEY, AttributeValue.fromS(session.sessionId()));
+        item.put("userId", AttributeValue.fromS(session.userId()));
+        if (session.ssnHash() != null) {
+            item.put("ssnHash", AttributeValue.fromS(session.ssnHash()));
+            item.put("ssnLastFour", AttributeValue.fromS(session.ssnLastFour()));
+        }
+        item.put("createdAt", AttributeValue.fromS(session.createdAt().toString()));
+        item.put("lastActivityAt", AttributeValue.fromS(session.lastActivityAt().toString()));
+        item.put(TTL_ATTRIBUTE, AttributeValue.fromN(Long.toString(session.expiresAt().getEpochSecond())));
+        dynamo.putItem(r -> r.tableName(table).item(item));
     }
 
     @Override
@@ -48,6 +53,8 @@ public class DynamoDbSessionRepository implements SessionRepository {
         return Optional.of(new Session(
                 item.get(KEY).s(),
                 item.get("userId").s(),
+                DynamoDbUserRepository.text(item, "ssnHash"),
+                DynamoDbUserRepository.text(item, "ssnLastFour"),
                 Instant.parse(item.get("createdAt").s()),
                 Instant.parse(item.get("lastActivityAt").s()),
                 Instant.ofEpochSecond(Long.parseLong(item.get(TTL_ATTRIBUTE).n()))));

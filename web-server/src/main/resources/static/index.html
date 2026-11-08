@@ -53,6 +53,10 @@
         <input id="reg-phone" name="phone" type="tel" autocomplete="tel" required maxlength="32"
                placeholder="+1 415 555 0100" aria-describedby="reg-phone-help">
         <p id="reg-phone-help" class="help">International form with country code. Used for password recovery.</p>
+        <label for="reg-ssn">Social Security Number</label>
+        <input id="reg-ssn" name="ssn" type="password" inputmode="numeric" autocomplete="off" required maxlength="11"
+               placeholder="AAA-GG-SSSS" spellcheck="false" aria-describedby="reg-ssn-help">
+        <p id="reg-ssn-help" class="help">Yours only. You will be able to see the credit report for this SSN and no other.</p>
         <button type="submit" id="register-submit">Create account</button>
         <p id="register-error" class="error" role="alert" hidden></p>
       </form>
@@ -71,7 +75,7 @@
                  autocomplete="off" spellcheck="false">
           <button id="toggle-ssn" type="button" class="secondary" aria-pressed="false">Show</button>
         </div>
-        <p id="ssn-help" class="help">9 digits, with or without dashes.</p>
+        <p id="ssn-help" class="help">Your own SSN<span id="ssn-hint"></span>. You can only look up your own report.</p>
         <button type="submit" id="submit">Get score</button>
         <p id="form-error" class="error" role="alert" hidden></p>
       </form>

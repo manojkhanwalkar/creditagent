@@ -17,8 +17,15 @@ final class InMemoryRepositories {
         final Map<String, User> byId = new ConcurrentHashMap<>();
 
         @Override
-        public boolean createIfAbsent(User user) {
-            return byId.putIfAbsent(user.userId(), user) == null;
+        public synchronized CreateResult create(User user) {
+            if (byId.containsKey(user.userId())) {
+                return CreateResult.USER_ID_TAKEN;
+            }
+            if (byId.values().stream().anyMatch(u -> user.ssnHash().equals(u.ssnHash()))) {
+                return CreateResult.SSN_TAKEN;
+            }
+            byId.put(user.userId(), user);
+            return CreateResult.CREATED;
         }
 
         @Override

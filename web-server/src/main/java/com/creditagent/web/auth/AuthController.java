@@ -1,6 +1,7 @@
 package com.creditagent.web.auth;
 
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
+import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
 import jakarta.validation.Valid;
@@ -40,10 +41,11 @@ class AuthController {
             @NotNull @Size(max = 64) String userId,
             @NotNull @Size(max = 256) String password,
             @NotNull @Size(max = 254) String email,
-            @NotNull @Size(max = 32) String phone) {
+            @NotNull @Size(max = 32) String phone,
+            @NotNull @Size(max = 20) String ssn) {
         @Override
         public String toString() {
-            return "RegisterRequest[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>]";
+            return "RegisterRequest[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, ssn=<redacted>]";
         }
     }
 
@@ -56,20 +58,22 @@ class AuthController {
         }
     }
 
-    record LoginResponse(String token, String tokenType, String userId, long idleTimeoutSeconds) {}
+    record LoginResponse(String token, String tokenType, String userId, String ssnMasked, long idleTimeoutSeconds) {}
 
-    record SessionResponse(String userId) {}
+    record SessionResponse(String userId, String ssnMasked) {}
 
     @PostMapping(path = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
-        String userId = auth.register(request.userId(), request.password(), request.email(), request.phone());
+        String userId = auth.register(
+                request.userId(), request.password(), request.email(), request.phone(), request.ssn());
         return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId));
     }
 
     @PostMapping(path = "/login", consumes = MediaType.APPLICATION_JSON_VALUE)
     LoginResponse login(@Valid @RequestBody LoginRequest request) {
         AuthService.LoginResult result = auth.login(request.userId(), request.password());
-        return new LoginResponse(result.token(), "Bearer", result.userId(), result.idleTimeout().toSeconds());
+        return new LoginResponse(
+                result.token(), "Bearer", result.userId(), result.ssnMasked(), result.idleTimeout().toSeconds());
     }
 
     @PostMapping("/logout")
@@ -80,7 +84,7 @@ class AuthController {
 
     @GetMapping("/session")
     SessionResponse session(@RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
-        return new SessionResponse(user.userId());
+        return new SessionResponse(user.userId(), user.ssnMasked());
     }
 
     @ExceptionHandler(InvalidRegistrationException.class)
@@ -90,6 +94,11 @@ class AuthController {
 
     @ExceptionHandler(UserAlreadyExistsException.class)
     ProblemDetail exists(UserAlreadyExistsException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(SsnAlreadyRegisteredException.class)
+    ProblemDetail ssnTaken(SsnAlreadyRegisteredException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 

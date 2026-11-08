@@ -1,5 +1,5 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
-import { authHeaders, checkRegistration, createSession } from './auth.js';
+import { authHeaders, checkRegistration, createSession, ssnHint } from './auth.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -14,8 +14,9 @@ const scoreWidget = $('score-widget');
 
 // ---------- signed-in / signed-out view ----------
 
-function showSignedIn(userId) {
+function showSignedIn(userId, ssnMasked) {
   accountUser.textContent = userId;
+  $('ssn-hint').textContent = ssnHint(ssnMasked || session.ssnMasked());
   account.hidden = false;
   authWidget.hidden = true;
   scoreWidget.hidden = false;
@@ -95,8 +96,8 @@ async function logIn(userId, password, errorElement) {
     showFormError(errorElement, messageFor(response.status, data));
     return false;
   }
-  session.save(data.token, data.userId);
-  showSignedIn(data.userId);
+  session.save(data.token, data.userId, data.ssnMasked);
+  showSignedIn(data.userId, data.ssnMasked);
   return true;
 }
 
@@ -128,6 +129,7 @@ registerForm.addEventListener('submit', async (event) => {
     confirm: $('reg-confirm').value,
     email: $('reg-email').value.trim(),
     phone: $('reg-phone').value.trim(),
+    ssn: $('reg-ssn').value.trim(),
   };
   const problem = checkRegistration(form);
   showFormError(error, problem || '');
@@ -137,7 +139,7 @@ registerForm.addEventListener('submit', async (event) => {
   button.disabled = true;
   try {
     const { response, data } = await api('/api/v1/auth/register', {
-      body: { userId: form.userId, password: form.password, email: form.email, phone: form.phone },
+      body: { userId: form.userId, password: form.password, email: form.email, phone: form.phone, ssn: form.ssn },
     });
     if (!response.ok) {
       showFormError(error, messageFor(response.status, data));
@@ -239,7 +241,7 @@ function render({ score, ssnMasked }) {
   try {
     const { response, data } = await api('/api/v1/auth/session', { method: 'GET' });
     if (response.ok) {
-      showSignedIn(data.userId);
+      showSignedIn(data.userId, data.ssnMasked);
     } else {
       showSignedOut(response.status === 401 ? messageFor(401, data) : undefined);
     }

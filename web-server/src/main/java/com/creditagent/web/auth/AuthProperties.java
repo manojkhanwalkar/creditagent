@@ -10,6 +10,7 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * @param jwtSecret HMAC-SHA256 key for signing JWTs (at least 32 characters)
+ * @param ssnHmacKey key for the keyed hash of each user's SSN (at least 32 characters)
  * @param jwtIssuer {@code iss} claim written and required on every token
  * @param tokenTtl hard cap on a token's life
  * @param sessionIdleTimeout a session with no authenticated request for this long is ended
@@ -19,6 +20,7 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties("credit.auth")
 public record AuthProperties(
         @NotBlank @Size(min = 32) String jwtSecret,
+        @NotBlank @Size(min = 32) String ssnHmacKey,
         @NotBlank String jwtIssuer,
         @NotNull Duration tokenTtl,
         @NotNull Duration sessionIdleTimeout,
@@ -37,7 +39,7 @@ public record AuthProperties(
 
     @Override
     public String toString() {
-        return "AuthProperties[jwtSecret=<redacted>, jwtIssuer=" + jwtIssuer + ", tokenTtl=" + tokenTtl
+        return "AuthProperties[jwtSecret=<redacted>, ssnHmacKey=<redacted>, jwtIssuer=" + jwtIssuer + ", tokenTtl=" + tokenTtl
                 + ", sessionIdleTimeout=" + sessionIdleTimeout + ", dynamodb=" + dynamodb + "]";
     }
 }

@@ -2,7 +2,7 @@
 
 A web app that shows a credit score as a coloured ring, plus a pair of A2A agents that turn a credit report into recommendations for raising the score.
 
-* **Login:** users register and log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. Sessions end on logout or after 5 idle minutes.
+* **Login:** users register with their SSN and log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
 * **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server (reads the Equifax, Experian and TransUnion reports; the **Normalized Report Generator** merges them) → Score Calculator → score ring.
 * **Agent flow:** Client Agent → (**A2A**) → Credit Intelligence Agent → MCP server + Score Calculator → recommendations.
 
@@ -21,7 +21,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 
 | Module | Port | What it does |
 |---|---|---|
-| `web-server` | 8080 | UI, `POST /api/v1/auth/{register,login,logout}`, `GET /api/v1/auth/session`, and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`) |
+| `web-server` | 8080 | UI, `POST /api/v1/auth/{register,login,logout}`, `GET /api/v1/auth/session`, and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
@@ -41,13 +41,13 @@ mvn -B verify                 # compile, unit tests, MCP and A2A contract tests,
 
 ```bash
 mvn -B package -DskipTests
-cp .env.example .env          # set CREDIT_FILE_HMAC_KEY and JWT_SECRET (openssl rand -hex 32 each)
+cp .env.example .env          # set CREDIT_FILE_HMAC_KEY, JWT_SECRET and SSN_HMAC_KEY (openssl rand -hex 32 each)
 docker compose up --build
 ```
 
 Then:
 
-* open http://localhost:8080, register and log in, then enter one of the demo SSNs from `.env` (for example `123-45-6789`);
+* open http://localhost:8080, register with one of the demo SSNs from `.env` (for example `123-45-6789`), log in, and look up that SSN;
 * get recommendations through the agents:
   ```bash
   curl -s localhost:8086/api/v1/advice -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
@@ -59,7 +59,7 @@ Start each service with `mvn -pl <module> spring-boot:run`. The web server needs
 
 ```bash
 docker run -d -p 8000:8000 amazon/dynamodb-local:3.3.2 -jar DynamoDBLocal.jar -inMemory -sharedDb
-JWT_SECRET=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true \
+JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true \
   AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local mvn -pl web-server spring-boot:run
 ```
 
@@ -89,6 +89,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
+| `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
 | `JWT_TTL`, `SESSION_IDLE_TIMEOUT` | web server | `1h`, `5m` |
 | `DYNAMODB_ENDPOINT` | web server | empty = AWS; `http://localhost:8000` for DynamoDB Local |
 | `AWS_REGION`, `USERS_TABLE`, `SESSIONS_TABLE` | web server | `us-east-1`, `credit-agent-users`, `credit-agent-sessions` |

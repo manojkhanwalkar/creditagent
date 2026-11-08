@@ -4,8 +4,13 @@ import java.util.Optional;
 
 public interface UserRepository {
 
-    /** Stores the user unless the id is taken. @return false if a user with this id already exists */
-    boolean createIfAbsent(User user);
+    enum CreateResult { CREATED, USER_ID_TAKEN, SSN_TAKEN }
+
+    /**
+     * Stores the user only if neither the user id nor the SSN (by its hash) is registered yet. Both
+     * checks and the write happen atomically.
+     */
+    CreateResult create(User user);
 
     Optional<User> find(String userId);
 }

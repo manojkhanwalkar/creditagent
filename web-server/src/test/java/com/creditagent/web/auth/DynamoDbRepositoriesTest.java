@@ -48,20 +48,30 @@ class DynamoDbRepositoriesTest {
         client.close();
     }
 
+    static User user(String id, String ssnHash) {
+        return new User(id, "$2a$hash", id + "@example.com", "+14155550100", ssnHash, "6789",
+                Instant.parse("2026-11-08T12:00:00Z"));
+    }
+
     @Test
-    void userIdsAreUnique() {
-        User user = new User("avery", "$2a$hash", "avery@example.com", "+14155550100", Instant.parse("2026-11-08T12:00:00Z"));
-        assertThat(users.createIfAbsent(user)).isTrue();
-        assertThat(users.createIfAbsent(user)).isFalse();
-        assertThat(users.find("avery")).contains(user);
+    void userIdsAndSsnsAreUnique() {
+        User avery = user("avery", "hash-a");
+        assertThat(users.create(avery)).isEqualTo(UserRepository.CreateResult.CREATED);
+        assertThat(users.create(user("avery", "hash-b"))).isEqualTo(UserRepository.CreateResult.USER_ID_TAKEN);
+        assertThat(users.create(user("blake", "hash-a"))).isEqualTo(UserRepository.CreateResult.SSN_TAKEN);
+        assertThat(users.find("avery")).contains(avery);
+        assertThat(users.find("blake")).isEmpty();
         assertThat(users.find("nobody")).isEmpty();
+        assertThat(users.find("ssn#hash-a")).isEmpty();
     }
 
     @Test
     void sessionsRoundTripAndExpire() {
-        Instant now = Instant.parse("2026-11-08T12:00:00Z");
-        Session live = new Session("live", "avery", now, now, now.plusSeconds(300));
-        Session stale = new Session("stale", "avery", now.minusSeconds(900), now.minusSeconds(600), now.minusSeconds(300));
+        // Relative to the real clock: DynamoDB Local applies the TTL and would remove a "live"
+        // session whose expiresAt is already in the past.
+        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Session live = new Session("live", "avery", "hash-a", "6789", now, now, now.plusSeconds(300));
+        Session stale = new Session("stale", "avery", "hash-a", "6789", now.minusSeconds(900), now.minusSeconds(600), now.minusSeconds(300));
         sessions.save(live);
         sessions.save(stale);
 

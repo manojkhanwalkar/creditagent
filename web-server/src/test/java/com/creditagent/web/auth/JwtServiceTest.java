@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 class JwtServiceTest {
 
-    static final String SECRET = "jwt-test-secret-0123456789abcdef0123456789";
+    static final String SECRET = TestSecrets.of("jwt");
     final InMemoryRepositories.MutableClock clock = new InMemoryRepositories.MutableClock(Instant.parse("2026-11-08T12:00:00Z"));
     final JwtService jwt = new JwtService(SECRET, "credit-agent", Duration.ofHours(1), clock);
 
@@ -31,7 +31,7 @@ class JwtServiceTest {
 
     @Test
     void rejectsAnotherKeyOrIssuer() {
-        String foreign = new JwtService("another-secret-0123456789abcdef0123456789", "credit-agent", Duration.ofHours(1), clock)
+        String foreign = new JwtService(TestSecrets.of("other"), "credit-agent", Duration.ofHours(1), clock)
                 .issue("avery", "s");
         assertThatThrownBy(() -> jwt.verify(foreign)).isInstanceOf(UnauthenticatedException.class);
 

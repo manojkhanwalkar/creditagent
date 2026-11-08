@@ -2,6 +2,7 @@ package com.creditagent.web;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -15,6 +16,7 @@ import com.creditagent.common.CreditScore;
 import com.creditagent.common.Ssn;
 import com.creditagent.web.auth.AuthService;
 import com.creditagent.web.auth.AuthenticatedUser;
+import com.creditagent.web.auth.NotOwnSsnException;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +57,21 @@ class CreditScoreControllerTest {
 
     @BeforeEach
     void signedIn() {
-        given(auth.authenticate("test-token")).willReturn(new AuthenticatedUser("avery", "session-1"));
+        given(auth.authenticate("test-token")).willReturn(AVERY);
+    }
+
+    static final AuthenticatedUser AVERY = new AuthenticatedUser("avery", "session-1", "hash", "6789");
+
+    @Test
+    void someoneElsesSsnIs403AndNoReportIsFetched() throws Exception {
+        willThrow(new NotOwnSsnException()).given(auth).requireOwnSsn(AVERY, Ssn.parse("234-56-7890"));
+
+        mvc.perform(post("/api/v1/credit-score").header("Authorization", BEARER)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"234-56-7890\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.detail").value(NotOwnSsnException.MESSAGE))
+                .andExpect(content().string(Matchers.not(Matchers.containsString("7890"))));
+        verifyNoInteractions(service);
     }
 
     @Test
