@@ -1,0 +1,213 @@
+package com.creditagent.web.auth;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
+import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
+import java.time.Duration;
+import java.time.Instant;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+
+class AuthServiceTest {
+
+    static final String PASSWORD = "correct horse battery staple";
+    static final String AVERY_SSN = "123-45-6789";
+    static final SsnHasher HASHER = new SsnHasher(TestSecrets.of("ssn"));
+
+    final InMemoryRepositories.Users users = new InMemoryRepositories.Users();
+    final InMemoryRepositories.Sessions sessions = new InMemoryRepositories.Sessions();
+    final InMemoryRepositories.MutableClock clock = new InMemoryRepositories.MutableClock(Instant.parse("2026-11-08T12:00:00Z"));
+    final AuthService auth = new AuthService(
+            users, sessions, new BCryptPasswordEncoder(4), HASHER,
+            new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
+            Duration.ofMinutes(5), clock);
+
+    String register() {
+        return auth.register("Avery", PASSWORD, "avery@example.com", "+1 415 555 0100", AVERY_SSN);
+    }
+
+    @Test
+    void registersWithAHashedPasswordAndNormalisedFields() {
+        assertThat(register()).isEqualTo("avery");
+        User user = users.find("avery").orElseThrow();
+        assertThat(user.passwordHash()).startsWith("$2").doesNotContain(PASSWORD);
+        assertThat(user.phone()).isEqualTo("+14155550100");
+        assertThat(user.toString()).doesNotContain("$2").doesNotContain("example.com").doesNotContain("6789");
+        // The SSN itself is never stored: only its keyed hash and last four digits.
+        assertThat(user.ssnHash()).isEqualTo(HASHER.hash(com.creditagent.common.Ssn.parse(AVERY_SSN)))
+                .doesNotContain("123456789");
+        assertThat(user.ssnLastFour()).isEqualTo("6789");
+    }
+
+    @Test
+    void anSsnCanOnlyBelongToOneAccount() {
+        register();
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "123456789"))
+                .isInstanceOf(AuthExceptions.SsnAlreadyRegisteredException.class);
+        assertThat(users.find("blake")).isEmpty();
+    }
+
+    @Test
+    void registrationNeedsAValidSsn() {
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "000-12-3456"))
+                .isInstanceOf(AuthExceptions.InvalidRegistrationException.class)
+                .hasMessageNotContaining("3456");
+    }
+
+    @Test
+    void usersMayOnlyLookUpTheirOwnSsn() {
+        register();
+        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        assertThat(avery.ssnMasked()).isEqualTo("***-**-6789");
+        auth.requireOwnSsn(avery, com.creditagent.common.Ssn.parse("123456789"));
+        assertThatThrownBy(() -> auth.requireOwnSsn(avery, com.creditagent.common.Ssn.parse("234-56-7890")))
+                .isInstanceOf(NotOwnSsnException.class)
+                .hasMessage(NotOwnSsnException.MESSAGE);
+    }
+
+    @Test
+    void aMissingTokenIsRefused() {
+        assertThatThrownBy(() -> auth.authenticate("")).isInstanceOf(UnauthenticatedException.class);
+        assertThatThrownBy(() -> auth.authenticate(null)).isInstanceOf(UnauthenticatedException.class);
+    }
+
+    @Test
+    void duplicateUserIdFailsRegardlessOfCase() {
+        register();
+        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", "+14155550101", "234-56-7890"))
+                .isInstanceOf(UserAlreadyExistsException.class);
+    }
+
+    @Test
+    void loginIssuesATokenThatAuthenticates() {
+        register();
+        AuthService.LoginResult login = auth.login("avery", PASSWORD);
+        assertThat(login.idleTimeout()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(auth.authenticate(login.token()).userId()).isEqualTo("avery");
+        assertThat(sessions.byId).hasSize(1);
+    }
+
+    @Test
+    void wrongPasswordAndUnknownUserGetTheSameAnswer() {
+        register();
+        assertThatThrownBy(() -> auth.login("avery", "wrong password here"))
+                .isInstanceOf(UnauthenticatedException.class).hasMessage(AuthService.BAD_CREDENTIALS);
+        assertThatThrownBy(() -> auth.login("nobody", PASSWORD))
+                .isInstanceOf(UnauthenticatedException.class).hasMessage(AuthService.BAD_CREDENTIALS);
+        assertThat(sessions.byId).isEmpty();
+    }
+
+    @Test
+    void sessionEndsAfterFiveIdleMinutes() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        clock.advance(Duration.ofMinutes(5));
+        assertThatThrownBy(() -> auth.authenticate(token))
+                .isInstanceOf(UnauthenticatedException.class).hasMessageContaining("timed out");
+        assertThat(sessions.byId).isEmpty();
+    }
+
+    @Test
+    void activityKeepsTheSessionAlive() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        for (int i = 0; i < 6; i++) {
+            clock.advance(Duration.ofMinutes(4));
+            auth.authenticate(token);
+        }
+        assertThat(auth.authenticate(token).userId()).isEqualTo("avery");
+    }
+
+    @Test
+    void frequentRequestsDoNotRewriteTheSessionEveryTime() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        Session before = sessions.byId.values().iterator().next();
+        clock.advance(Duration.ofSeconds(10));
+        auth.authenticate(token);
+        assertThat(sessions.byId.values().iterator().next()).isEqualTo(before);
+        clock.advance(AuthService.TOUCH_INTERVAL);
+        auth.authenticate(token);
+        assertThat(sessions.byId.values().iterator().next().lastActivityAt()).isEqualTo(clock.instant());
+    }
+
+    @Test
+    void aShortIdleTimeoutStillCountsActivity() {
+        AuthService quick = new AuthService(
+                users, sessions, new BCryptPasswordEncoder(4), HASHER,
+                new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
+                Duration.ofSeconds(20), clock);
+        quick.register("quinn", PASSWORD, "q@example.com", "+14155550102", "345-67-8901");
+        String token = quick.login("quinn", PASSWORD).token();
+        clock.advance(Duration.ofSeconds(12));
+        quick.authenticate(token);
+        clock.advance(Duration.ofSeconds(16));
+        assertThat(quick.authenticate(token).userId()).isEqualTo("quinn");
+    }
+
+    @Test
+    void aRequestInFlightDuringLogoutDoesNotBringTheSessionBack() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        // The request has read the session; logout deletes it before the request records activity.
+        InMemoryRepositories.Sessions racing = new InMemoryRepositories.Sessions() {
+            @Override
+            public java.util.Optional<Session> find(String sessionId) {
+                java.util.Optional<Session> found = sessions.find(sessionId);
+                sessions.delete(sessionId);
+                return found;
+            }
+
+            @Override
+            public boolean touch(String sessionId, Instant last, Instant expires) {
+                return sessions.touch(sessionId, last, expires);
+            }
+        };
+        AuthService racy = new AuthService(users, racing, new BCryptPasswordEncoder(4), HASHER,
+                new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
+                Duration.ofMinutes(5), clock);
+        clock.advance(Duration.ofMinutes(1));
+        assertThatThrownBy(() -> racy.authenticate(token)).isInstanceOf(UnauthenticatedException.class);
+        assertThat(sessions.byId).isEmpty();
+    }
+
+    @Test
+    void loginIgnoresCaseAndSpaces() {
+        register();
+        assertThat(auth.login("  AVERY ", PASSWORD).userId()).isEqualTo("avery");
+    }
+
+    @Test
+    void logoutEndsTheSession() {
+        register();
+        String token = auth.login("avery", PASSWORD).token();
+        auth.logout(auth.authenticate(token));
+        assertThatThrownBy(() -> auth.authenticate(token))
+                .isInstanceOf(UnauthenticatedException.class).hasMessageContaining("ended");
+    }
+
+    @Test
+    void sweeperRemovesOnlyExpiredSessions() {
+        register();
+        auth.login("avery", PASSWORD);
+        clock.advance(Duration.ofMinutes(3));
+        auth.login("avery", PASSWORD);
+        clock.advance(Duration.ofMinutes(3));
+        assertThat(auth.cleanUpExpiredSessions()).isEqualTo(1);
+        assertThat(sessions.byId).hasSize(1);
+    }
+
+    @Test
+    void aTokenForAnotherUsersSessionIsRejected() {
+        register();
+        auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", "234-56-7890");
+        String averySession = sessions.byId.isEmpty() ? auth.login("avery", PASSWORD).token() : null;
+        String sessionId = sessions.byId.keySet().iterator().next();
+        String forged = new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock)
+                .issue("blake", sessionId);
+        assertThat(averySession).isNotNull();
+        assertThatThrownBy(() -> auth.authenticate(forged)).isInstanceOf(UnauthenticatedException.class);
+    }
+}

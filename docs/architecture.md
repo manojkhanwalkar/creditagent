@@ -52,7 +52,7 @@ flowchart LR
 | `credit-report-generator` | Creates a synthetic credit history and writes one report per bureau, each in that bureau's format | Spring Boot |
 | `normalized-report-generator` | NRG: `POST /api/v1/normalized-reports`, three bureau reports in, one `CreditReport` out | Spring Boot |
 | `credit-report-mcp-server` | MCP server over the file store; reads all three bureau files and has NRG merge them | LangChain4j `McpServer` (tools) plus resources, Streamable HTTP |
-| `web-server` | Serves the UI and orchestrates flow 1–10 | Spring Boot |
+| `web-server` | Serves the UI, registers and logs in users (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
 
@@ -81,3 +81,34 @@ The generator writes each consumer's history three times, to `~/Reports/Equifax/
 The views differ the way real files do: each lender reports to each bureau with 85% probability (always at least one), bureaus last updated an account on different days so older views show older balances, and each hard inquiry appears at exactly one bureau.
 
 **NRG merge rules.** Every report must carry the same SSN last four, or NRG answers 422. Accounts are matched across bureaus by type, creditor (case and punctuation ignored) and account number last four. The balance comes from the newest update. Limit, age and each late counter take the highest value. Status is charged off if any bureau says so, otherwise the newest bureau's status. Inquiries are combined, de-duplicated by subscriber and date, and counted over the 12 months before the newest report. Collections and public records take the highest count. A consumer missing at some bureaus is merged from the ones that have a file.
+
+## User registration and login
+
+```mermaid
+sequenceDiagram
+    participant UI as Web UI
+    participant WS as web-server :8080
+    participant U as DynamoDB users
+    participant S as DynamoDB sessions
+    UI->>WS: POST /api/v1/auth/register {userId, password, email, phone, ssn}
+    WS->>U: TransactWriteItems: user (BCrypt hash, SSN HMAC) + ssn#hash claim, both if not exists
+    WS-->>UI: 201, or 409 if the user id or the SSN is taken
+    UI->>WS: POST /api/v1/auth/login {userId, password}
+    WS->>U: GetItem userId
+    WS->>S: PutItem session (SSN hash, expiresAt = now + 5 min)
+    WS-->>UI: JWT (sub = userId, jti = sessionId)
+    UI->>WS: POST /api/v1/credit-score {ssn}, Authorization: Bearer JWT
+    WS->>S: GetItem jti; refuse if missing or idle 5 min; else refresh expiresAt
+    WS->>WS: HMAC(ssn) == session SSN hash? else 403
+    WS-->>UI: score (flow 2–10)
+    UI->>WS: POST /api/v1/auth/logout
+    WS->>S: DeleteItem session
+```
+
+**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone, the SSN's HMAC (`ssnHash`) and last four digits, and creation time. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+
+**Own report only.** `CreditScoreController` hashes the requested SSN with the same key and compares it, in constant time, with the session's hash. A mismatch is 403 "You can only look up your own credit report." and happens before the MCP server is called.
+
+**Session end.** A session ends on logout, when a request arrives after 5 idle minutes (the session is deleted and the request refused), or when `SessionSweeper` finds it expired (every minute). DynamoDB's TTL is a last resort, since it can take days. The JWT itself also expires after 1 hour, whatever the activity. To save writes, `lastActivityAt` is refreshed at most every 30 seconds.
+
+**Why not Spring Security.** The app needs one bearer-token filter and a password hasher, so it uses `spring-security-crypto` and Nimbus JOSE directly. Moving to Spring Security's resource server (and OIDC) is the natural next step for production.

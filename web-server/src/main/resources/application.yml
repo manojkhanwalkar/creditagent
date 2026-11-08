@@ -17,6 +17,25 @@ credit:
     score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}
     rate-limit-per-minute: ${RATE_LIMIT_PER_MINUTE:20}
+  auth:
+    # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
+    jwt-secret: ${JWT_SECRET}
+    # Required. Key for the keyed hash (HMAC-SHA256) of each user's SSN; at least 32 characters.
+    # Changing it orphans every registered SSN. No default on purpose.
+    ssn-hmac-key: ${SSN_HMAC_KEY}
+    jwt-issuer: credit-agent
+    # Hard cap on a token's life; the session also ends after session-idle-timeout without use.
+    token-ttl: ${JWT_TTL:1h}
+    session-idle-timeout: ${SESSION_IDLE_TIMEOUT:5m}
+    dynamodb:
+      # Empty = the real AWS endpoint for the region. Set to http://localhost:8000 for DynamoDB Local.
+      endpoint: ${DYNAMODB_ENDPOINT:}
+      region: ${AWS_REGION:us-east-1}
+      users-table: ${USERS_TABLE:credit-agent-users}
+      sessions-table: ${SESSIONS_TABLE:credit-agent-sessions}
+      # Create the tables (and the sessions TTL) at start-up if they are missing. Off for production,
+      # where tables belong to infrastructure code.
+      create-tables: ${DYNAMODB_CREATE_TABLES:false}
 
 management:
   endpoints:

@@ -12,7 +12,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
-| S-1 | High | No user authentication on the UI or API (as specified) | Open: by design for v0.1 |
+| S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups limited to the user's own SSN; SSN ownership is not verified at registration |
 | S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Open |
@@ -32,9 +32,10 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 
 ## Findings
 
-### S-1 No user authentication (High, open)
-Anyone who can reach port 8080 can look up any SSN's score. The spec says "for now the UI has no authentication".
-**Before real data:** add OIDC login (Spring Security `oauth2Login`), and authorize each look-up against the signed-in user's own SSN. Never let a user look up an arbitrary SSN. Swap `SecurityHeadersFilter` for Spring Security's header support at the same time.
+### S-1 User authentication (High, partly fixed)
+Users now register (BCrypt cost 12; 12–64 character passwords checked against a common-password list and the user id) and log in for an HS256 JWT. Every `/api/` call except register and login needs the token, and the token is accepted only while its DynamoDB session exists and was used in the last 5 minutes. Logout deletes the session. Login answers the same message, in about the same time, for a wrong password and an unknown user, and the per-IP rate limit covers login and registration.
+Registration takes the user's SSN. The users table stores only an HMAC-SHA256 of it (key `SSN_HMAC_KEY`) and its last four digits, and a second item, `ssn#<hash>`, written in the same conditional transaction as the user, so one SSN can belong to only one account. Login copies the hash into the session, and `POST /api/v1/credit-score` answers 403 for any SSN whose hash differs, before any report is fetched, so a refusal reveals nothing about the other SSN.
+**Still open before real data:** registration does not prove the person owns the SSN they enter, so whoever registers an SSN first can read its report. Verify identity (KYC: knowledge-based questions, document check, or a bureau identity service) before binding an SSN. Registration answers 409 for an SSN already in use, which tells a caller that someone registered it; the rate limit slows but does not stop that. There is no account lockout, MFA or password recovery yet (email and phone are stored for recovery). The agent flow (`client-agent` `/api/v1/advice`) is not authenticated and can still ask about any SSN. The token is kept in `sessionStorage`, so an XSS bug could read it; the strict CSP is the mitigation. Consider OIDC instead of local passwords for production.
 
 ### S-2 No service-to-service authentication (High, open)
 The MCP server, score calculator, generator and A2A agent accept any caller on the network. Compose publishes only 8080 and 8086, and only on localhost, which limits exposure locally.

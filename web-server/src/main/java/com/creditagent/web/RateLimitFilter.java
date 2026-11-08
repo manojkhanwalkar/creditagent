@@ -10,18 +10,21 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Fixed-window, per-IP limit on score look-ups. With no authentication yet, this is the only thing
- * slowing down someone trying to enumerate SSNs against the API.
+ * Fixed-window, per-IP limit on every API call, including login and registration. It runs before
+ * authentication, so it also slows password guessing and SSN enumeration by a logged-in user.
  *
  * <p>In-memory and per-instance: good enough for a single node. Behind a load balancer, move this
  * to the gateway (and configure {@code server.forward-headers-strategy} so the client IP is real).
  */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 10)
 class RateLimitFilter extends OncePerRequestFilter {
 
     private static final long WINDOW_MILLIS = 60_000;
@@ -43,7 +46,7 @@ class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !RequestPaths.isApi(request);
     }
 
     @Override
