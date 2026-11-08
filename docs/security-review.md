@@ -24,7 +24,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-10 | Medium | Personal data sent to a third-party LLM, plus prompt injection | Mitigated |
 | S-11 | Low | Browser hardening (XSS, clickjacking, caching) | Fixed |
 | S-12 | Low | The MCP tool `get_credit_report` hands full reports to any MCP host, including LLM apps | Accepted, documented |
-| S-13 | Low | Request bodies have no global size limit | Open |
+| S-13 | Low | Request bodies have no global size limit | Partly fixed (MCP, score calculator) |
 | S-14 | Low | The generator API can overwrite any report | Open: internal only |
 | S-15 | Low | CI supply chain (unpinned actions, broad token permissions) | Fixed |
 | S-16 | Low | Container runtime privileges | Fixed |
@@ -88,8 +88,8 @@ Check the model provider's data-retention terms before enabling it.
 ### S-12 MCP tool exposes full reports (Accepted)
 `get_credit_report` exists so generic MCP hosts can use the server. If one of those hosts is an LLM app, the report goes to that model. Remove the tool (`McpServerConfiguration`) if this server will be exposed beyond trusted callers.
 
-### S-13 No global body-size limit (Low, open)
-`/mcp` rejects bodies over 64 KiB after reading them. Other endpoints rely on JSON binding.
+### S-13 No global body-size limit (Low, partly fixed)
+`/mcp` rejects bodies over 64 KiB after reading them. The score calculator caps `/api/*` bodies at 256 KiB (`SCORE_MAX_REQUEST_BYTES`): a larger declared `Content-Length` gets 413, and a chunked body is cut off at the limit (400). Other endpoints rely on JSON binding.
 **Fix:** cap request size at the gateway or ingress.
 
 ### S-14 Generator overwrites reports (Low, open)

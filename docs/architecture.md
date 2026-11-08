@@ -15,7 +15,7 @@ flowchart LR
     end
     FS[(Credit files<br/>HMAC-named JSON)]
     GEN[credit-report-generator :8083]
-    SC[score-calculator :8081<br/>stub: random 400–850]
+    SC[score-calculator :8081<br/>five-factor scorecard 300–850]
     subgraph Agents["Agents · LangChain4j · A2A"]
         CA[client-agent :8086]
         CIA[credit-intelligence-agent :8085]

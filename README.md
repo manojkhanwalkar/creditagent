@@ -21,7 +21,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | Module | Port | What it does |
 |---|---|---|
 | `web-server` | 8080 | UI and `POST /api/v1/credit-score` |
-| `score-calculator` | 8081 | `POST /api/v1/scores` (stub: random 400–850) |
+| `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report` |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes credit files |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
@@ -70,6 +70,7 @@ CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
 | `CREDIT_MCP_URL` | web server, agent | `http://localhost:8082/mcp` |
 | `SCORE_CALCULATOR_URL` | web server, agent | `http://localhost:8081` |
 | `RATE_LIMIT_PER_MINUTE` | web server | `20` |
+| `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
