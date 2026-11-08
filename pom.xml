@@ -36,7 +36,7 @@
 
         <langchain4j.version>1.23.0</langchain4j.version>
         <langchain4j-beta.version>1.23.0-beta33</langchain4j-beta.version>
-        <a2a-java-sdk.version>1.4.0.Final</a2a-java-sdk.version>
+        <a2a-java-sdk.version>1.5.0.Final</a2a-java-sdk.version>
         <jacoco.version>0.8.16</jacoco.version>
     </properties>
 

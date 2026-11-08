@@ -62,9 +62,8 @@ class A2aServerConfiguration {
     @Bean(initMethod = "start")
     MainEventBusProcessor a2aMainEventBusProcessor(
             MainEventBus bus, InMemoryTaskStore taskStore, QueueManager queueManager) {
-        // Push notifications are not offered (see the agent card), so this sender is a no-op.
-        PushNotificationSender noPush = (event, taskSnapshot) -> {};
-        return new MainEventBusProcessor(bus, taskStore, noPush, queueManager);
+        // Push notifications are not offered (see the agent card), so use the SDK's no-op sender.
+        return new MainEventBusProcessor(bus, taskStore, PushNotificationSender.NOOP, queueManager);
     }
 
     @Bean(destroyMethod = "shutdown")
