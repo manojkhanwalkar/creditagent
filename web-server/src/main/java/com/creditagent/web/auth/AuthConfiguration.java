@@ -1,5 +1,6 @@
 package com.creditagent.web.auth;
 
+import com.creditagent.web.kyc.IdentityVerifier;
 import java.net.URI;
 import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -51,11 +52,15 @@ class AuthConfiguration {
 
     @Bean
     AuthService authService(
-            UserRepository users, SessionRepository sessions, PasswordEncoder passwords, AuthProperties properties) {
+            UserRepository users,
+            SessionRepository sessions,
+            PasswordEncoder passwords,
+            IdentityVerifier identity,
+            AuthProperties properties) {
         Clock clock = Clock.systemUTC();
         JwtService jwt = new JwtService(properties.jwtSecret(), properties.jwtIssuer(), properties.tokenTtl(), clock);
         return new AuthService(
-                users, sessions, passwords, new SsnHasher(properties.ssnHmacKey()), jwt,
+                users, sessions, passwords, new SsnHasher(properties.ssnHmacKey()), identity, jwt,
                 properties.sessionIdleTimeout(), clock);
     }
 }

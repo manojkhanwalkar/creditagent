@@ -2,13 +2,13 @@
 
 A web app that shows a credit score as a coloured ring, plus a pair of A2A agents that turn a credit report into recommendations for raising the score.
 
-* **Login:** users register with their SSN and log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
+* **Login:** users register by uploading a photo of their Social Security card, which a (dummy) **KYC service** checks and reads the SSN from; a blurred photo is refused with a request to retry. They then log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
 * **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server (reads the Equifax, Experian and TransUnion reports; the **Normalized Report Generator** merges them) → Score Calculator → score ring.
 * **Agent flow:** Client Agent → (**A2A**) → Credit Intelligence Agent → MCP server + Score Calculator → recommendations.
 
 See [docs/architecture.md](docs/architecture.md) for the diagram and design notes, and [docs/security-review.md](docs/security-review.md) before putting real data anywhere near this.
 
-> ⚠️ **Demo only.** Users log in to the web UI, but the services behind it, and the agent flow, have no authentication, and everything talks over plain HTTP. Use synthetic SSNs only.
+> ⚠️ **Demo only.** The KYC service is a stand-in: it reads the SSN from a label in its own sample cards, not by OCR, so it proves nothing about identity. Users log in to the web UI, but the services behind it, and the agent flow, have no authentication, and everything talks over plain HTTP. Use synthetic SSNs only.
 
 ## Stack
 
@@ -21,13 +21,14 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 
 | Module | Port | What it does |
 |---|---|---|
-| `web-server` | 8080 | UI, `POST /api/v1/auth/{register,login,logout}`, `GET /api/v1/auth/session`, and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
+| `web-server` | 8080 | UI, `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
 | `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
+| `kyc-service` | 8087 | Dummy KYC provider: `POST /api/v1/ssn-verifications` (multipart `document`) refuses blurred or non-card photos and returns the SSN on the card; `GET /api/v1/sample-cards/{ssn}?blur=N` makes demo cards when enabled |
 | `common`, `service-clients`, `web-support` | — | Shared libraries |
 
 ## Build and test
@@ -47,7 +48,12 @@ docker compose up --build
 
 Then:
 
-* open http://localhost:8080, register with one of the demo SSNs from `.env` (for example `123-45-6789`), log in, and look up that SSN;
+* download a sample SSN card for one of the demo SSNs from `.env`, and a blurred one to see the retry:
+  ```bash
+  curl -o card.png localhost:8087/api/v1/sample-cards/123-45-6789
+  curl -o blurry.png 'localhost:8087/api/v1/sample-cards/123-45-6789?blur=4'
+  ```
+* open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN;
 * get recommendations through the agents:
   ```bash
   curl -s localhost:8086/api/v1/advice -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
@@ -55,7 +61,7 @@ Then:
 
 ## Run without Docker
 
-Start each service with `mvn -pl <module> spring-boot:run`. The web server needs DynamoDB, for example DynamoDB Local:
+Start each service with `mvn -pl <module> spring-boot:run`. Registration needs the KYC service (`KYC_SAMPLE_CARDS_ENABLED=true mvn -pl kyc-service spring-boot:run`). The web server needs DynamoDB, for example DynamoDB Local:
 
 ```bash
 docker run -d -p 8000:8000 amazon/dynamodb-local:3.3.2 -jar DynamoDBLocal.jar -inMemory -sharedDb
@@ -88,6 +94,11 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
+| `KYC_URL`, `KYC_TIMEOUT` | web server | `http://localhost:8087`, `10s` |
+| `SSN_CARD_MAX_BYTES` | web server | `5MB` (larger card photos get 413) |
+| `KYC_MIN_SHARPNESS` | KYC service | `100` (variance of the Laplacian; lower scores are refused as blurred) |
+| `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
+| `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
 | `JWT_TTL`, `SESSION_IDLE_TIMEOUT` | web server | `1h`, `5m` |

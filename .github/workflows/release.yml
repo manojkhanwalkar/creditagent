@@ -39,6 +39,7 @@ jobs:
       matrix:
         service:
           - score-calculator
+          - kyc-service
           - credit-report-generator
           - normalized-report-generator
           - credit-report-mcp-server

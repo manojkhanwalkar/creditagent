@@ -1,13 +1,20 @@
 package com.creditagent.web.auth;
 
+import com.creditagent.clients.ServiceUnavailableException;
+import com.creditagent.common.SafeLogging;
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
 import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
+import com.creditagent.web.kyc.DocumentRejectedException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -15,15 +22,21 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * Register, log in, log out and check the current session. Register and login are open; logout and
  * session need the bearer token (see {@link AuthenticationFilter}).
+ *
+ * <p>Registration is {@code multipart/form-data} with a photo of the user's Social Security card in
+ * the {@code ssnCard} part. There is no SSN field: the SSN is what the KYC provider reads from the
+ * card, so a user cannot claim someone else's number by typing it.
  */
 @RestController
 @RequestMapping(path = AuthController.BASE, produces = MediaType.APPLICATION_JSON_VALUE)
@@ -31,21 +44,24 @@ class AuthController {
 
     static final String BASE = "/api/v1/auth";
 
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
     private final AuthService auth;
 
     AuthController(AuthService auth) {
         this.auth = auth;
     }
 
-    record RegisterRequest(
+    /** The registration form. Bound from multipart fields; an {@code ssn} field, if sent, is ignored. */
+    record RegisterForm(
             @NotNull @Size(max = 64) String userId,
             @NotNull @Size(max = 256) String password,
             @NotNull @Size(max = 254) String email,
             @NotNull @Size(max = 32) String phone,
-            @NotNull @Size(max = 20) String ssn) {
+            @NotNull MultipartFile ssnCard) {
         @Override
         public String toString() {
-            return "RegisterRequest[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, ssn=<redacted>]";
+            return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, ssnCard=<redacted>]";
         }
     }
 
@@ -62,11 +78,18 @@ class AuthController {
 
     record SessionResponse(String userId, String ssnMasked) {}
 
-    @PostMapping(path = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
-        String userId = auth.register(
-                request.userId(), request.password(), request.email(), request.phone(), request.ssn());
+    @PostMapping(path = "/register", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    ResponseEntity<RegisterResponse> register(@Valid @ModelAttribute RegisterForm form) {
+        String userId = auth.register(form.userId(), form.password(), form.email(), form.phone(), bytes(form.ssnCard()));
         return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId));
+    }
+
+    private static byte[] bytes(MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     @PostMapping(path = "/login", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -100,6 +123,21 @@ class AuthController {
     @ExceptionHandler(SsnAlreadyRegisteredException.class)
     ProblemDetail ssnTaken(SsnAlreadyRegisteredException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    /** 422 with {@code reason}, e.g. {@code IMAGE_BLURRY}, so the UI can ask for a new photo. */
+    @ExceptionHandler(DocumentRejectedException.class)
+    ProblemDetail documentRejected(DocumentRejectedException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, e.getMessage());
+        problem.setProperty("reason", e.reason());
+        return problem;
+    }
+
+    @ExceptionHandler(ServiceUnavailableException.class)
+    ProblemDetail kycUnavailable(ServiceUnavailableException e) {
+        log.warn("KYC provider failure: {}", SafeLogging.describe(e));
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "We could not check your Social Security card just now. Please try again in a few minutes.");
     }
 
     @ExceptionHandler(UnauthenticatedException.class)

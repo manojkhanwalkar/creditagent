@@ -1,0 +1,38 @@
+server:
+  port: ${PORT:8087}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: kyc-service
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: ${KYC_MAX_IMAGE_BYTES:10485760}
+      max-request-size: ${KYC_MAX_REQUEST_BYTES:10551296}
+
+# Dummy identity provider. See SsnDocumentVerifier: it does not prove identity.
+kyc:
+  # Variance of the Laplacian below which a photo is refused as blurred. Sample cards score about
+  # 1,450 sharp, 140 at blur 2 and 48 at blur 3. 100 is the usual starting point; raise it to be stricter.
+  min-sharpness: ${KYC_MIN_SHARPNESS:100}
+  max-image-bytes: ${KYC_MAX_IMAGE_BYTES:10485760}
+  max-pixels: ${KYC_MAX_PIXELS:40000000}
+  min-width: 600
+  min-height: 360
+  # Serves sample cards at GET /api/v1/sample-cards/{ssn}?blur=N. Demo only: it makes a card for any SSN.
+  sample-cards-enabled: ${KYC_SAMPLE_CARDS_ENABLED:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

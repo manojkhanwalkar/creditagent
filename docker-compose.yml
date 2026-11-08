@@ -1,7 +1,8 @@
 # Local stack. Build the jars first: mvn -B package -DskipTests
 # Then: cp .env.example .env  (and set CREDIT_FILE_HMAC_KEY), docker compose up --build
 #
-# Only the web UI (8080) and the client agent (8086) are published, and only on localhost.
+# Only the web UI (8080), the client agent (8086) and the dummy KYC provider's sample cards (8087)
+# are published, and only on localhost.
 # Everything else talks over the private compose network.
 
 x-service: &service
@@ -41,6 +42,18 @@ services:
     <<: *service
     build: { context: ., args: { MODULE: score-calculator } }
 
+  # Dummy KYC provider: checks the SSN card photo uploaded at registration and reads the SSN from it.
+  # Published on localhost only so you can download sample cards:
+  #   curl -o card.png localhost:8087/api/v1/sample-cards/123-45-6789          (sharp)
+  #   curl -o blurry.png 'localhost:8087/api/v1/sample-cards/123-45-6789?blur=4' (refused as blurred)
+  kyc-service:
+    <<: *service
+    build: { context: ., args: { MODULE: kyc-service } }
+    environment:
+      KYC_SAMPLE_CARDS_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8087:8087"
+
   # Users and sessions. DynamoDB Local in memory: accounts are lost when the stack stops.
   # In AWS, point DYNAMODB_ENDPOINT at nothing and give the web server an IAM role instead.
   dynamodb:
@@ -56,6 +69,7 @@ services:
     environment:
       CREDIT_MCP_URL: http://credit-report-mcp-server:8082/mcp
       SCORE_CALCULATOR_URL: http://score-calculator:8081
+      KYC_URL: http://kyc-service:8087
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       SSN_HMAC_KEY: ${SSN_HMAC_KEY:?Set SSN_HMAC_KEY in .env}
       DYNAMODB_ENDPOINT: http://dynamodb:8000
@@ -65,7 +79,7 @@ services:
       AWS_SECRET_ACCESS_KEY: local
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on: [credit-report-mcp-server, score-calculator, dynamodb]
+    depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb]
 
   credit-intelligence-agent:
     <<: *service

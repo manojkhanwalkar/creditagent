@@ -65,6 +65,7 @@ jobs:
           name: service-jars
           path: |
             score-calculator/target/*.jar
+            kyc-service/target/*.jar
             credit-report-generator/target/*.jar
             normalized-report-generator/target/*.jar
             credit-report-mcp-server/target/*.jar
@@ -102,6 +103,7 @@ jobs:
       matrix:
         service:
           - score-calculator
+          - kyc-service
           - credit-report-generator
           - normalized-report-generator
           - credit-report-mcp-server

@@ -23,6 +23,7 @@
         <module>service-clients</module>
         <module>web-support</module>
         <module>score-calculator</module>
+        <module>kyc-service</module>
         <module>credit-report-generator</module>
         <module>normalized-report-generator</module>
         <module>credit-report-mcp-server</module>

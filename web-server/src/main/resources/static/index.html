@@ -53,11 +53,12 @@
         <input id="reg-phone" name="phone" type="tel" autocomplete="tel" required maxlength="32"
                placeholder="+1 415 555 0100" aria-describedby="reg-phone-help">
         <p id="reg-phone-help" class="help">International form with country code. Used for password recovery.</p>
-        <label for="reg-ssn">Social Security Number</label>
-        <input id="reg-ssn" name="ssn" type="password" inputmode="numeric" autocomplete="off" required maxlength="11"
-               placeholder="AAA-GG-SSSS" spellcheck="false" aria-describedby="reg-ssn-help">
-        <p id="reg-ssn-help" class="help">Yours only. You will be able to see the credit report for this SSN and no other.</p>
-        <button type="submit" id="register-submit">Create account</button>
+        <label for="reg-ssn-card">Photo of your Social Security card</label>
+        <input id="reg-ssn-card" name="ssnCard" type="file" accept="image/png,image/jpeg" required
+               aria-describedby="reg-ssn-card-help">
+        <p id="reg-ssn-card-help" class="help">A clear, well-lit photo of the front of the card (PNG or JPEG, up to 5 MB).
+          Our identity provider reads your SSN from it; you will see the credit report for that SSN and no other.</p>
+        <button type="submit" id="register-submit">Verify card and create account</button>
         <p id="register-error" class="error" role="alert" hidden></p>
       </form>
     </section>
