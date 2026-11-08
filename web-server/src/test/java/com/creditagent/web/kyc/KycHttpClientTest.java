@@ -88,6 +88,17 @@ class KycHttpClientTest {
     }
 
     @Test
+    void aRejectionWithoutAReasonGetsTheGenericMessage() {
+        provider("""
+                {"decision":"REJECTED"}
+                """);
+        assertThatThrownBy(() -> client.verifySsnCard(PNG))
+                .isInstanceOfSatisfying(DocumentRejectedException.class,
+                        e -> assertThat(e.reason()).isEqualTo(DocumentRejectedException.DOCUMENT_REJECTED))
+                .hasMessageContaining("could not be verified");
+    }
+
+    @Test
     void anythingButPngOrJpegNeverReachesTheProvider() {
         assertThatThrownBy(() -> client.verifySsnCard("GIF89a....".getBytes(StandardCharsets.US_ASCII)))
                 .isInstanceOfSatisfying(DocumentRejectedException.class,

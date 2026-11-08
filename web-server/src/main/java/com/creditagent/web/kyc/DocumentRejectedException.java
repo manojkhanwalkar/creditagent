@@ -1,7 +1,6 @@
 package com.creditagent.web.kyc;
 
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * 422: the KYC provider refused the SSN card image. {@link #reason()} tells the UI what to do;
@@ -32,12 +31,13 @@ public class DocumentRejectedException extends RuntimeException {
     }
 
     public DocumentRejectedException(String reason, Throwable cause) {
-        super(message(reason), cause);
-        this.reason = MESSAGES.containsKey(reason) ? reason : DOCUMENT_REJECTED;
+        super(MESSAGES.get(known(reason)), cause);
+        this.reason = known(reason);
     }
 
-    private static String message(String reason) {
-        return MESSAGES.getOrDefault(Objects.requireNonNullElse(reason, DOCUMENT_REJECTED), MESSAGES.get(DOCUMENT_REJECTED));
+    /** {@code reason} if it has a message, else {@code DOCUMENT_REJECTED}. Map.of rejects a null key. */
+    private static String known(String reason) {
+        return reason != null && MESSAGES.containsKey(reason) ? reason : DOCUMENT_REJECTED;
     }
 
     /** A known reason code, or {@code DOCUMENT_REJECTED}. */
