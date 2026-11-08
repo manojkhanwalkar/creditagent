@@ -9,8 +9,13 @@ LABEL \
       org.opencontainers.image.description="CreditAgent ${MODULE}" \
       org.opencontainers.image.licenses="UNLICENSED"
 
-# Unprivileged user; /data is pre-created with the right owner so a fresh named volume inherits it.
-RUN groupadd --system --gid 10001 app \
+# Apply OS security fixes released after the base image was built (the CI image scan fails on
+# fixable HIGH/CRITICAL findings), then create an unprivileged user; /data is pre-created with
+# the right owner so a fresh named volume inherits it.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
  && mkdir -p /app /data/credit-files \
  && chown -R app:app /app /data \
