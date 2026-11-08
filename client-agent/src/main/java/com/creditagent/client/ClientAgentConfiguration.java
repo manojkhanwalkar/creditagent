@@ -1,5 +1,6 @@
 package com.creditagent.client;
 
+import com.creditagent.clients.RetrySettings;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -15,7 +16,8 @@ class ClientAgentConfiguration {
     }
 
     @Bean
-    CreditAdviceClient creditAdviceClient(CreditAdvisorPort port, JsonMapper jsonMapper) {
-        return new CreditAdviceClient(port, jsonMapper);
+    CreditAdviceClient creditAdviceClient(
+            CreditAdvisorPort port, JsonMapper jsonMapper, ClientAgentProperties properties, RetrySettings retry) {
+        return new CreditAdviceClient(port, jsonMapper, properties.timeout(), retry);
     }
 }

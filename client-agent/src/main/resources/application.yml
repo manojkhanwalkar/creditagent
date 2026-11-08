@@ -11,6 +11,7 @@ spring:
 credit:
   client:
     intelligence-agent-url: ${INTELLIGENCE_AGENT_URL:http://localhost:8085}
+    timeout: ${INTELLIGENCE_AGENT_TIMEOUT:60s}
 
 management:
   endpoints:

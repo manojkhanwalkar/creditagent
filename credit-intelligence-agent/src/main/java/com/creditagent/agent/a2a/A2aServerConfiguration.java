@@ -2,6 +2,7 @@ package com.creditagent.agent.a2a;
 
 import com.creditagent.agent.AgentProperties;
 import com.creditagent.agent.CreditIntelligenceService;
+import com.creditagent.web.support.RequestSizeLimitFilter;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
@@ -17,6 +18,7 @@ import org.a2aproject.sdk.server.tasks.PushNotificationSender;
 import org.a2aproject.sdk.spec.AgentCard;
 import org.a2aproject.sdk.transport.jsonrpc.handler.JSONRPCHandler;
 import org.springframework.boot.web.server.context.WebServerInitializedEvent;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
@@ -32,11 +34,20 @@ class A2aServerConfiguration {
 
     static final String AGENT_VERSION = "0.1.0";
 
+    /** An A2A request carries one short text message; anything near this size is not one. */
+    static final long MAX_REQUEST_BYTES = 64 * 1024;
+
     private volatile int localPort = -1;
 
     @EventListener
     void onWebServerReady(WebServerInitializedEvent event) {
         localPort = event.getWebServer().getPort();
+    }
+
+    /** Refuses an oversized JSON-RPC body before it is read into memory. */
+    @Bean
+    FilterRegistrationBean<RequestSizeLimitFilter> a2aRequestSizeLimitFilter() {
+        return RequestSizeLimitFilter.registration(MAX_REQUEST_BYTES, "/*");
     }
 
     @Bean

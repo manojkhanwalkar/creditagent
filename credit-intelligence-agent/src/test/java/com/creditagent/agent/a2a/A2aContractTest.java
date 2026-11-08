@@ -92,4 +92,24 @@ class A2aContractTest {
         JsonNode reply = json.readTree(advisor.advise("hello"));
         assertThat(reply.has("error")).isTrue();
     }
+
+    @Test
+    void anUnexpectedFailureStillGetsAnErrorReply() {
+        given(reports.findReport(any())).willReturn(Optional.of(TestReports.troubled()));
+        given(scores.score(any())).willThrow(new IllegalStateException("malformed score"));
+        JsonNode reply = json.readTree(advisor.advise("123-45-6789"));
+        assertThat(reply.get("error").asString()).contains("analysis failed");
+    }
+
+    @Test
+    void anOversizedRequestIsRefusedBeforeItIsRead() {
+        String huge = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"SendMessage\",\"params\":{\"pad\":\""
+                + "x".repeat((int) A2aServerConfiguration.MAX_REQUEST_BYTES) + "\"}}";
+        int status = RestClient.create().post()
+                .uri("http://localhost:" + port + "/")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(huge)
+                .exchange((request, response) -> response.getStatusCode().value());
+        assertThat(status).isEqualTo(413);
+    }
 }

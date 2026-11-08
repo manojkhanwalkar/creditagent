@@ -3,6 +3,7 @@ package com.creditagent.web;
 import com.creditagent.clients.CreditReportSource;
 import com.creditagent.clients.HttpClients;
 import com.creditagent.clients.McpCreditReportSource;
+import com.creditagent.clients.RetrySettings;
 import com.creditagent.clients.ScoreCalculatorHttpClient;
 import com.creditagent.clients.ScoreService;
 import org.springframework.context.annotation.Configuration;
@@ -16,14 +17,14 @@ import tools.jackson.databind.json.JsonMapper;
 class WebServerConfiguration {
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper) {
-        return new McpCreditReportSource(properties.mcpUrl(), "web-server", properties.timeout(), jsonMapper);
+    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
+        return new McpCreditReportSource(properties.mcpUrl(), "web-server", properties.timeout(), retry, jsonMapper);
     }
 
     @Bean
-    ScoreService scoreService(RestClient.Builder builder, WebServerProperties properties) {
+    ScoreService scoreService(RestClient.Builder builder, WebServerProperties properties, RetrySettings retry) {
         return new ScoreCalculatorHttpClient(
-                HttpClients.restClient(builder, properties.scoreCalculatorUrl(), properties.timeout()));
+                HttpClients.restClient(builder, properties.scoreCalculatorUrl(), properties.timeout(), retry));
     }
 
     @Bean

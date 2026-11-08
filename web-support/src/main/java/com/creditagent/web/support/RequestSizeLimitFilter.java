@@ -8,6 +8,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.core.Ordered;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -25,6 +27,19 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
             throw new IllegalArgumentException("maxBytes must be positive");
         }
         this.maxBytes = maxBytes;
+    }
+
+    /**
+     * The filter registered for {@code urlPatterns}, running right after the inbound limits. Every
+     * service that takes untrusted bodies uses this, so the size check is set up the same way
+     * everywhere.
+     */
+    public static FilterRegistrationBean<RequestSizeLimitFilter> registration(long maxBytes, String... urlPatterns) {
+        FilterRegistrationBean<RequestSizeLimitFilter> registration =
+                new FilterRegistrationBean<>(new RequestSizeLimitFilter(maxBytes));
+        registration.addUrlPatterns(urlPatterns);
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 2);
+        return registration;
     }
 
     @Override

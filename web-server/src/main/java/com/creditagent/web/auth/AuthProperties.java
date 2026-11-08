@@ -29,13 +29,22 @@ public record AuthProperties(
     /**
      * @param endpoint override, e.g. {@code http://localhost:8000} for DynamoDB Local; blank = AWS
      * @param createTables create missing tables at start-up (local and test only)
+     * @param timeout longest a DynamoDB call may take, retries included; each attempt gets half of
+     *     it. Defaults to 5 s. Without it the SDK can wait for minutes on a hung connection, holding
+     *     a request thread the whole time.
      */
     public record DynamoDb(
             String endpoint,
             @NotBlank String region,
             @NotBlank String usersTable,
             @NotBlank String sessionsTable,
-            boolean createTables) {}
+            boolean createTables,
+            Duration timeout) {
+
+        public DynamoDb {
+            timeout = timeout == null ? Duration.ofSeconds(5) : timeout;
+        }
+    }
 
     @Override
     public String toString() {

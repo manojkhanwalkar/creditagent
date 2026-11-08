@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>com.creditagent</groupId>
+            <artifactId>web-support</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.creditagent</groupId>
             <artifactId>common</artifactId>
         </dependency>
         <dependency>

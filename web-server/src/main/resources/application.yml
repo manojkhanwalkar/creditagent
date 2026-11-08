@@ -45,6 +45,8 @@ credit:
       # Create the tables (and the sessions TTL) at start-up if they are missing. Off for production,
       # where tables belong to infrastructure code.
       create-tables: ${DYNAMODB_CREATE_TABLES:false}
+      # Longest a DynamoDB call may take, retries included (each attempt gets half).
+      timeout: ${DYNAMODB_TIMEOUT:5s}
 
 management:
   endpoints:

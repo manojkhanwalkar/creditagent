@@ -31,7 +31,14 @@ class McpCreditReportSourceTest {
             """;
 
     final JsonMapper json = JsonMapper.builder().build();
+    /** Three tries, with millisecond waits so the tests stay fast. */
+    static final RetrySettings FAST_RETRY =
+            new RetrySettings(3, Duration.ofMillis(1), 2.0, Duration.ofMillis(5), Duration.ofMillis(1));
+
     final AtomicBoolean failing = new AtomicBoolean();
+    /** The next this many requests fail with 500, then the server recovers. */
+    final java.util.concurrent.atomic.AtomicInteger failNext = new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
     HttpServer server;
     McpCreditReportSource source;
 
@@ -41,7 +48,8 @@ class McpCreditReportSourceTest {
         server.createContext("/mcp", this::handle);
         server.start();
         source = new McpCreditReportSource(
-                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5), json);
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5),
+                FAST_RETRY, json);
     }
 
     @AfterEach
@@ -81,13 +89,31 @@ class McpCreditReportSourceTest {
     }
 
     @Test
+    void aBriefOutageIsRetriedWithBackoffAndRecovers() {
+        failNext.set(2); // the first two tries fail, the third succeeds
+        assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
+    }
+
+    @Test
+    void anOutageLongerThanTheRetriesFails() {
+        failNext.set(1_000);
+        assertThatThrownBy(() -> source.findReport(Ssn.parse("123-45-6789"))).isInstanceOf(ServiceUnavailableException.class);
+    }
+
+    @Test
+    void anMcpErrorAnswerIsNotRetried() {
+        assertThat(source.findReport(Ssn.parse("234-56-7890"))).isEmpty();
+        assertThat(reads).hasValue(1);
+    }
+
+    @Test
     void resourceUriUsesTheDigits() {
         assertThat(McpCreditReportSource.resourceUri(Ssn.parse("123-45-6789"))).isEqualTo("credit-report://ssn/123456789");
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
-            if (failing.get()) {
+            if (failing.get() || failNext.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 exchange.sendResponseHeaders(500, -1);
                 return;
             }
@@ -111,6 +137,7 @@ class McpCreditReportSourceTest {
                     result.putObject("serverInfo").put("name", "fake").put("version", "1");
                 }
                 case "resources/read" -> {
+                    reads.incrementAndGet();
                     String uri = request.at("/params/uri").asString();
                     if (uri.equals("credit-report://ssn/123456789")) {
                         response.putObject("result").putArray("contents").addObject()

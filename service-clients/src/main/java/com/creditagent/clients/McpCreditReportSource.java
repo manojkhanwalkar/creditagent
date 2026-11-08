@@ -22,7 +22,9 @@ import tools.jackson.databind.json.JsonMapper;
  * the {@code credit-report://ssn/{ssn}} resource.
  *
  * <p>The MCP connection is opened lazily on first use and re-opened after a transport failure, so a
- * caller can start before the MCP server is up.
+ * caller can start before the MCP server is up. A read is idempotent, so a transport failure is
+ * retried with backoff ({@link RetrySettings}). An MCP error answer (not found, internal error) is
+ * not: the server already retried its own downstream call, and retrying here would multiply them.
  */
 public class McpCreditReportSource implements CreditReportSource, AutoCloseable {
 
@@ -36,14 +38,17 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private final String mcpUrl;
     private final String clientKey;
     private final Duration timeout;
+    private final RetrySettings retry;
     private final JsonMapper jsonMapper;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile McpClient client;
 
-    public McpCreditReportSource(String mcpUrl, String clientKey, Duration timeout, JsonMapper jsonMapper) {
+    public McpCreditReportSource(
+            String mcpUrl, String clientKey, Duration timeout, RetrySettings retry, JsonMapper jsonMapper) {
         this.mcpUrl = Objects.requireNonNull(mcpUrl, "mcpUrl");
         this.clientKey = Objects.requireNonNull(clientKey, "clientKey");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
+        this.retry = Objects.requireNonNull(retry, "retry");
         this.jsonMapper = Objects.requireNonNull(jsonMapper, "jsonMapper");
     }
 
@@ -55,15 +60,11 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     public Optional<CreditReport> findReport(Ssn ssn) {
         McpReadResourceResult result;
         try {
-            result = client().readResource(resourceUri(ssn));
+            result = Retries.call(retry, McpCreditReportSource::isTransportFailure, () -> read(ssn));
         } catch (RuntimeException e) {
             McpException mcpError = findMcpException(e);
             if (mcpError != null && mcpError.errorCode() == RESOURCE_NOT_FOUND) {
                 return Optional.empty();
-            }
-            if (mcpError == null) {
-                // Transport-level failure: drop the client so the next call reconnects.
-                reset();
             }
             // Message deliberately generic: the underlying exception may contain the resource URI.
             throw new ServiceUnavailableException("Credit Report MCP server request failed", e);
@@ -74,6 +75,23 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
                 .map(McpTextResourceContents::text)
                 .findFirst()
                 .map(this::parse);
+    }
+
+    private McpReadResourceResult read(Ssn ssn) {
+        try {
+            return client().readResource(resourceUri(ssn));
+        } catch (RuntimeException e) {
+            if (isTransportFailure(e)) {
+                // Drop the client so the next try reconnects.
+                reset();
+            }
+            throw e;
+        }
+    }
+
+    /** No MCP error answer anywhere in the chain: the request or connection itself failed. */
+    static boolean isTransportFailure(Throwable e) {
+        return findMcpException(e) == null;
     }
 
     private CreditReport parse(String json) {

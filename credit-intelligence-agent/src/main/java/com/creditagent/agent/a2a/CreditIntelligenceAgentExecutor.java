@@ -58,6 +58,11 @@ public class CreditIntelligenceAgentExecutor implements AgentExecutor {
         } catch (ServiceUnavailableException e) {
             log.warn("Downstream failure: {}", SafeLogging.describe(e));
             emitter.sendMessage(error("The credit service is temporarily unavailable. Please try again."));
+        } catch (RuntimeException e) {
+            // Anything else is a bug or a malformed downstream answer. Still reply with the promised
+            // JSON, rather than leave the client with a failed task and no explanation.
+            log.error("Credit analysis failed: {}", SafeLogging.describe(e));
+            emitter.sendMessage(error("The credit analysis failed. Please try again later."));
         }
     }
 

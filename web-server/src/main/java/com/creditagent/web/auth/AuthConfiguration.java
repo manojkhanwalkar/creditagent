@@ -9,6 +9,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.retry.RetryMode;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
@@ -24,7 +26,9 @@ class AuthConfiguration {
     @Bean(destroyMethod = "close")
     DynamoDbClient dynamoDbClient(AuthProperties properties) {
         AuthProperties.DynamoDb config = properties.dynamodb();
-        DynamoDbClientBuilder builder = DynamoDbClient.builder().region(Region.of(config.region()));
+        DynamoDbClientBuilder builder = DynamoDbClient.builder()
+                .region(Region.of(config.region()))
+                .overrideConfiguration(overrides(config));
         if (config.endpoint() != null && !config.endpoint().isBlank()) {
             builder.endpointOverride(URI.create(config.endpoint()));
         }
@@ -33,6 +37,19 @@ class AuthConfiguration {
             DynamoDbTables.ensure(client, config.usersTable(), config.sessionsTable());
         }
         return client;
+    }
+
+    /**
+     * Bounded calls, and the SDK's standard retry mode: up to 3 attempts with exponential backoff and
+     * jitter on throttling, 5xx and connection errors. DynamoDB reads, conditional writes and deletes
+     * are safe to repeat.
+     */
+    static ClientOverrideConfiguration overrides(AuthProperties.DynamoDb config) {
+        return ClientOverrideConfiguration.builder()
+                .apiCallTimeout(config.timeout())
+                .apiCallAttemptTimeout(config.timeout().dividedBy(2))
+                .retryStrategy(RetryMode.STANDARD)
+                .build();
     }
 
     @Bean

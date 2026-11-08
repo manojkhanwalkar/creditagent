@@ -124,4 +124,16 @@ class McpClientContractTest {
         }
         throw new AssertionError("No McpException in cause chain", t);
     }
+
+    @Test
+    void anOversizedBodyIsRefusedBeforeItIsRead() {
+        String huge = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{\"pad\":\""
+                + "x".repeat((int) McpHttpController.MAX_BODY_BYTES) + "\"}}";
+        int status = org.springframework.web.client.RestClient.create().post()
+                .uri("http://localhost:" + port + "/mcp")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(huge)
+                .exchange((request, response) -> response.getStatusCode().value());
+        assertThat(status).isEqualTo(413);
+    }
 }
