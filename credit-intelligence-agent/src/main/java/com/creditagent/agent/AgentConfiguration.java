@@ -6,6 +6,7 @@ import com.creditagent.agent.advice.RuleBasedCreditAdvisor;
 import com.creditagent.clients.CreditReportSource;
 import com.creditagent.clients.HttpClients;
 import com.creditagent.clients.McpCreditReportSource;
+import com.creditagent.clients.RetrySettings;
 import com.creditagent.clients.ScoreCalculatorHttpClient;
 import com.creditagent.clients.ScoreService;
 import dev.langchain4j.model.anthropic.AnthropicChatModel;
@@ -24,15 +25,15 @@ class AgentConfiguration {
     private static final Logger log = LoggerFactory.getLogger(AgentConfiguration.class);
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(AgentProperties properties, JsonMapper jsonMapper) {
+    McpCreditReportSource creditReportSource(AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
         return new McpCreditReportSource(
-                properties.mcpUrl(), "credit-intelligence-agent", properties.timeout(), jsonMapper);
+                properties.mcpUrl(), "credit-intelligence-agent", properties.timeout(), retry, jsonMapper);
     }
 
     @Bean
-    ScoreService scoreService(RestClient.Builder builder, AgentProperties properties) {
+    ScoreService scoreService(RestClient.Builder builder, AgentProperties properties, RetrySettings retry) {
         return new ScoreCalculatorHttpClient(
-                HttpClients.restClient(builder, properties.scoreCalculatorUrl(), properties.timeout()));
+                HttpClients.restClient(builder, properties.scoreCalculatorUrl(), properties.timeout(), retry));
     }
 
     @Bean

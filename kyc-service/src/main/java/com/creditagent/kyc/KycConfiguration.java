@@ -5,7 +5,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(KycProperties.class)
@@ -21,10 +20,6 @@ class KycConfiguration {
 
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilter(KycProperties properties) {
-        FilterRegistrationBean<RequestSizeLimitFilter> registration = new FilterRegistrationBean<>(
-                new RequestSizeLimitFilter(properties.maxImageBytes() + MULTIPART_OVERHEAD_BYTES));
-        registration.addUrlPatterns("/api/*");
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
-        return registration;
+        return RequestSizeLimitFilter.registration(properties.maxImageBytes() + MULTIPART_OVERHEAD_BYTES, "/api/*");
     }
 }

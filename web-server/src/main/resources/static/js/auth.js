@@ -46,7 +46,10 @@ const PHONE_SEPARATORS = /[\s().-]/g;
 const PHONE = /^\+[1-9]\d{7,14}$/;
 const EMAIL = /^[^@\s]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
-/** Largest SSN card photo the server accepts (spring.servlet.multipart.max-file-size). */
+/**
+ * Largest SSN card photo the server accepts. Must match the server's SSN_CARD_MAX_BYTES
+ * (spring.servlet.multipart.max-file-size); the server is authoritative and answers 413 above it.
+ */
 export const MAX_CARD_BYTES = 5 * 1024 * 1024;
 const CARD_TYPES = new Set(['image/png', 'image/jpeg']);
 

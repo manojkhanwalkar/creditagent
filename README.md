@@ -93,11 +93,13 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
+| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `60s` (longest wait for the agent's answer, which may include an LLM call) |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
 | `KYC_URL`, `KYC_TIMEOUT` | web server | `http://localhost:8087`, `10s` |
-| `SSN_CARD_MAX_BYTES` | web server | `5MB` (larger card photos get 413) |
+| `SSN_CARD_MAX_BYTES`, `SSN_CARD_MAX_REQUEST_BYTES` | web server | `5MB`, `6MB` (larger card photos or form bodies get 413). The UI checks the same 5 MB before uploading (`MAX_CARD_BYTES` in `auth.js`); change both together |
 | `KYC_MIN_SHARPNESS` | KYC service | `100` (variance of the Laplacian; lower scores are refused as blurred) |
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
+| `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
@@ -105,6 +107,9 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `DYNAMODB_ENDPOINT` | web server | empty = AWS; `http://localhost:8000` for DynamoDB Local |
 | `AWS_REGION`, `USERS_TABLE`, `SESSIONS_TABLE` | web server | `us-east-1`, `credit-agent-users`, `credit-agent-sessions` |
 | `DYNAMODB_CREATE_TABLES` | web server | `false` (compose sets `true` for DynamoDB Local) |
+| `DYNAMODB_TIMEOUT` | web server | `5s` (longest DynamoDB call, retries included; the SDK's standard retry mode backs off with jitter) |
+| `CREDIT_RETRY_MAX_ATTEMPTS`, `CREDIT_RETRY_INITIAL_DELAY`, `CREDIT_RETRY_MULTIPLIER`, `CREDIT_RETRY_MAX_DELAY`, `CREDIT_RETRY_JITTER` | every service that calls another | `3`, `100ms`, `2`, `1s`, `50ms`: retries of recoverable failures with exponential backoff and jitter (see [architecture](docs/architecture.md#resilience)) |
+| `CREDIT_INBOUND_RATE_PER_SECOND`, `CREDIT_INBOUND_BURST`, `CREDIT_INBOUND_MAX_CONCURRENT`, `CREDIT_INBOUND_ENABLED`, `CREDIT_INBOUND_URL_PATTERNS` | every service | `50`, `100`, `32`, `true`, `/*` (web server: `/api/*`): token-bucket rate limit and in-flight cap; excess requests get 429 or 503 with `Retry-After`. Health checks are exempt |
 
 ## CI/CD
 

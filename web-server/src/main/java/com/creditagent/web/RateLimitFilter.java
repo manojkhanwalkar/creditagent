@@ -24,8 +24,15 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * to the gateway (and configure {@code server.forward-headers-strategy} so the client IP is real).
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+@Order(RateLimitFilter.ORDER)
 class RateLimitFilter extends OncePerRequestFilter {
+
+    /**
+     * Before the shared inbound limits ({@code WebSupportAutoConfiguration.INBOUND_LIMIT_ORDER}): a
+     * client over its own limit is stopped here, so it cannot use up the shared token bucket and
+     * get every other user refused.
+     */
+    static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 4;
 
     private static final long WINDOW_MILLIS = 60_000;
     private static final int MAX_TRACKED_CLIENTS = 100_000;

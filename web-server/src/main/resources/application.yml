@@ -26,6 +26,9 @@ credit:
     # KYC provider that checks the SSN card photo and reads the SSN from it (kyc-service locally).
     url: ${KYC_URL:http://localhost:8087}
     timeout: ${KYC_TIMEOUT:10s}
+  inbound:
+    # Shared limits cover the API only: page loads (HTML, CSS, JS) must not use up the bucket.
+    url-patterns: /api/*
   auth:
     # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
     jwt-secret: ${JWT_SECRET}
@@ -45,6 +48,8 @@ credit:
       # Create the tables (and the sessions TTL) at start-up if they are missing. Off for production,
       # where tables belong to infrastructure code.
       create-tables: ${DYNAMODB_CREATE_TABLES:false}
+      # Longest a DynamoDB call may take, retries included (each attempt gets half).
+      timeout: ${DYNAMODB_TIMEOUT:5s}
 
 management:
   endpoints:

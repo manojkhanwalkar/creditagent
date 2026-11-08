@@ -27,6 +27,11 @@ kyc:
   # Serves sample cards at GET /api/v1/sample-cards/{ssn}?blur=N. Demo only: it makes a card for any SSN.
   sample-cards-enabled: ${KYC_SAMPLE_CARDS_ENABLED:false}
 
+credit:
+  inbound:
+    # Each check decodes an image of up to 4 megapixels in memory, so admit only a few at once.
+    max-concurrent: ${KYC_MAX_CONCURRENT:4}
+
 management:
   endpoints:
     web:

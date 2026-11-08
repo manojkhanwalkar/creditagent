@@ -24,7 +24,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-10 | Medium | Personal data sent to a third-party LLM, plus prompt injection | Mitigated |
 | S-11 | Low | Browser hardening (XSS, clickjacking, caching) | Fixed |
 | S-12 | Low | The MCP tool `get_credit_report` hands full reports to any MCP host, including LLM apps | Accepted, documented |
-| S-13 | Low | Request bodies have no global size limit | Partly fixed (MCP, score calculator) |
+| S-13 | Low | Request bodies have no global size limit | Mostly fixed: every untrusted-body endpoint is capped before reading; services also refuse excess load (token bucket, in-flight cap) |
 | S-14 | Low | The generator API can overwrite any report | Open: internal only |
 | S-15 | Low | CI supply chain (unpinned actions, broad token permissions) | Fixed |
 | S-16 | Low | Container runtime privileges | Fixed |
@@ -96,9 +96,20 @@ Check the model provider's data-retention terms before enabling it.
 ### S-12 MCP tool exposes full reports (Accepted)
 `get_credit_report` exists so generic MCP hosts can use the server. If one of those hosts is an LLM app, the report goes to that model. Remove the tool (`McpServerConfiguration`) if this server will be exposed beyond trusted callers.
 
-### S-13 No global body-size limit (Low, partly fixed)
-`/mcp` rejects bodies over 64 KiB after reading them. The score calculator caps `/api/*` bodies at 256 KiB (`SCORE_MAX_REQUEST_BYTES`): a larger declared `Content-Length` gets 413, and a chunked body is cut off at the limit (400). Other endpoints rely on JSON binding.
-**Fix:** cap request size at the gateway or ingress.
+### S-13 No global body-size limit (Low, mostly fixed)
+Every endpoint that reads an untrusted body caps it with `RequestSizeLimitFilter` before the body is read: a larger declared `Content-Length` gets 413, and a chunked body is cut off at the limit.
+
+| Service | Limit |
+|---|---|
+| score calculator `/api/*` | 256 KiB (`SCORE_MAX_REQUEST_BYTES`) |
+| NRG `/api/*` | 3.2 MB (`NRG_MAX_REQUEST_BYTES`) |
+| KYC `/api/*` | 10 MB plus multipart framing |
+| MCP `/mcp` | 64 KiB. Before the deep review, the whole body was buffered into a String first and only then checked |
+| intelligence agent (A2A) | 64 KiB |
+| web server | multipart 5 MB / 6 MB; JSON bodies rely on binding |
+
+Every service also refuses excess load before doing any work: a token bucket (429) and an in-flight cap (503), both with `Retry-After` (`credit.inbound.*`, see the architecture's Resilience section).
+**Remaining:** cap request size at the gateway or ingress as well.
 
 ### S-14 Generator overwrites reports (Low, open)
 `POST /api/v1/reports` replaces any existing file. It is an internal tool and is not published in compose. Keep it unexposed; once S-2 is in place, give it its own credentials.
