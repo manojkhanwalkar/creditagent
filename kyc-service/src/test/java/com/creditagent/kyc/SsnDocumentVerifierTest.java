@@ -8,9 +8,12 @@ import com.creditagent.kyc.Verification.Reason;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.zip.CRC32;
+import java.util.zip.DeflaterOutputStream;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 
@@ -123,5 +126,72 @@ class SsnDocumentVerifierTest {
     void largeImagesAreScaledBeforeScoring() {
         BufferedImage wide = new BufferedImage(4000, 2500, BufferedImage.TYPE_INT_RGB);
         assertThat(BlurDetector.sharpness(wide)).isZero();
+    }
+
+    @Test
+    void largeImagesAreDecodedSubsampled() throws Exception {
+        assertThat(DocumentImage.subsampling(856, 540)).isEqualTo(1);
+        assertThat(DocumentImage.subsampling(2000, 2000)).isEqualTo(1);
+        assertThat(DocumentImage.subsampling(4000, 3000)).isEqualTo(2);
+        assertThat(DocumentImage.subsampling(6300, 6300)).isEqualTo(4);
+        assertThat(DocumentImage.subsampling(360, 110_000)).isEqualTo(4);
+
+        // About 40 KB on disk, 40 megapixels: decoded in full it would be 40 MB of grey (and 320 MB
+        // as 16-bit RGBA). It must come out no bigger than MAX_DECODED_PIXELS.
+        byte[] png = greyPng(6300, 6300);
+        DocumentImage image = DocumentImage.decode(png, DEFAULTS);
+        assertThat((long) image.pixels().getWidth() * image.pixels().getHeight())
+                .isLessThanOrEqualTo(DocumentImage.MAX_DECODED_PIXELS);
+        assertThat(verifier.verify(png).reason()).isEqualTo(Reason.IMAGE_BLURRY);
+    }
+
+    @Test
+    void aLargeSharpCardIsStillVerified() throws Exception {
+        BufferedImage card = ImageIO.read(new ByteArrayInputStream(SsnCardRenderer.render(Ssn.parse("123-45-6789"), 0)));
+        BufferedImage large = new BufferedImage(card.getWidth() * 5, card.getHeight() * 5, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = large.createGraphics();
+        g.drawImage(card, 0, 0, large.getWidth(), large.getHeight(), null);
+        g.dispose();
+        assertThat(BlurDetector.sharpness(DocumentImage.decode(png(large), DEFAULTS).pixels()))
+                .isGreaterThan(DEFAULTS.minSharpness());
+    }
+
+    private static byte[] png(BufferedImage image) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", out);
+        return out.toByteArray();
+    }
+
+    /** An 8-bit grey PNG of zeros, written by hand so the test never holds the full bitmap. */
+    private static byte[] greyPng(int width, int height) throws IOException {
+        ByteArrayOutputStream idat = new ByteArrayOutputStream();
+        try (DeflaterOutputStream deflate = new DeflaterOutputStream(idat)) {
+            byte[] row = new byte[width + 1]; // filter byte 0, then the pixels
+            for (int y = 0; y < height; y++) {
+                deflate.write(row);
+            }
+        }
+        ByteArrayOutputStream ihdr = new ByteArrayOutputStream();
+        DataOutputStream header = new DataOutputStream(ihdr);
+        header.writeInt(width);
+        header.writeInt(height);
+        header.write(new byte[] {8, 0, 0, 0, 0}); // 8-bit grey, deflate, adaptive filter, no interlace
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        png.write(new byte[] {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'});
+        chunk(png, "IHDR", ihdr.toByteArray());
+        chunk(png, "IDAT", idat.toByteArray());
+        chunk(png, "IEND", new byte[0]);
+        return png.toByteArray();
+    }
+
+    private static void chunk(ByteArrayOutputStream png, String type, byte[] data) throws IOException {
+        DataOutputStream out = new DataOutputStream(png);
+        out.writeInt(data.length);
+        out.writeBytes(type);
+        out.write(data);
+        CRC32 crc = new CRC32();
+        crc.update(type.getBytes(StandardCharsets.US_ASCII));
+        crc.update(data);
+        out.writeInt((int) crc.getValue());
     }
 }

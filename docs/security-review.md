@@ -89,7 +89,7 @@ Check the model provider's data-retention terms before enabling it.
 
 ### S-18 Uploaded SSN card images (Mitigated)
 - The web server caps uploads at 5 MB (`spring.servlet.multipart.max-file-size`; 413 above it), never decodes the image, and forwards only files whose magic bytes are PNG or JPEG. The user's file name is not forwarded.
-- `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, and treats any decoder error as an unsupported image.
+- `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
 
