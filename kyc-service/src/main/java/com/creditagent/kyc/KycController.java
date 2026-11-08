@@ -4,11 +4,8 @@ import com.creditagent.common.InvalidSsnException;
 import com.creditagent.common.Ssn;
 import java.io.IOException;
 import org.springframework.http.CacheControl;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,13 +13,16 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
  * {@code POST /api/v1/ssn-verifications}: a photo of a Social Security card in (multipart part
  * {@code document}), a {@link Verification} out. Document problems, a blurred photo among them, are
  * a 200 with {@code decision: REJECTED} and a reason; only a malformed request is an HTTP error.
+ *
+ * <p>An upload over the multipart limit is a 413 from Spring's problem-details handler. It cannot be
+ * handled here: the multipart body is parsed, and the limit hit, before a handler is chosen, so a
+ * controller's own {@code @ExceptionHandler} is never consulted (see {@code UploadLimitTest}).
  */
 @RestController
 @RequestMapping(path = "/api/v1")
@@ -61,10 +61,5 @@ class KycController {
             return ResponseEntity.badRequest().build();
         }
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(SsnCardRenderer.render(parsed, blur));
-    }
-
-    @ExceptionHandler(MaxUploadSizeExceededException.class)
-    ProblemDetail tooLarge(MaxUploadSizeExceededException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.CONTENT_TOO_LARGE, "The image is too large.");
     }
 }
