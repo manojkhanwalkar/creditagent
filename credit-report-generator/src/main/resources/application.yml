@@ -10,7 +10,7 @@ spring:
 
 credit:
   files:
-    directory: ${CREDIT_FILES_DIR:./data/credit-files}
+    directory: ${CREDIT_REPORTS_DIR:${user.home}/Reports}
     # Required. Must be the same value the MCP server uses. No default on purpose.
     hmac-key: ${CREDIT_FILE_HMAC_KEY}
     # Comma-separated demo SSNs to generate at start-up, e.g. 123-45-6789,234-56-7890

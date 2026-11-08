@@ -66,6 +66,7 @@ jobs:
           path: |
             score-calculator/target/*.jar
             credit-report-generator/target/*.jar
+            normalized-report-generator/target/*.jar
             credit-report-mcp-server/target/*.jar
             web-server/target/*.jar
             credit-intelligence-agent/target/*.jar
@@ -102,6 +103,7 @@ jobs:
         service:
           - score-calculator
           - credit-report-generator
+          - normalized-report-generator
           - credit-report-mcp-server
           - web-server
           - credit-intelligence-agent

@@ -2,7 +2,7 @@
 
 A web app that shows a credit score as a coloured ring, plus a pair of A2A agents that turn a credit report into recommendations for raising the score.
 
-* **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server → Score Calculator → score ring.
+* **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server (reads the Equifax, Experian and TransUnion reports; the **Normalized Report Generator** merges them) → Score Calculator → score ring.
 * **Agent flow:** Client Agent → (**A2A**) → Credit Intelligence Agent → MCP server + Score Calculator → recommendations.
 
 See [docs/architecture.md](docs/architecture.md) for the diagram and design notes, and [docs/security-review.md](docs/security-review.md) before putting real data anywhere near this.
@@ -22,11 +22,12 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 |---|---|---|
 | `web-server` | 8080 | UI and `POST /api/v1/credit-score` |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
-| `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report` |
-| `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes credit files |
+| `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
+| `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
+| `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
-| `common`, `service-clients` | — | Shared libraries |
+| `common`, `service-clients`, `web-support` | — | Shared libraries |
 
 ## Build and test
 
@@ -53,11 +54,13 @@ Then:
 
 ## Run without Docker
 
-Start each service with `mvn -pl <module> spring-boot:run`. The generator and the MCP server need the same key and directory:
+Start each service with `mvn -pl <module> spring-boot:run`. The generator and the MCP server need the same key and reports directory (default `~/Reports`), and the MCP server needs NRG running:
 
 ```bash
-export CREDIT_FILE_HMAC_KEY=$(openssl rand -hex 32) CREDIT_FILES_DIR=$PWD/data/credit-files
+export CREDIT_FILE_HMAC_KEY=$(openssl rand -hex 32) CREDIT_REPORTS_DIR=$HOME/Reports
 CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
+mvn -pl normalized-report-generator spring-boot:run
+mvn -pl credit-report-mcp-server spring-boot:run
 ```
 
 ## Configuration
@@ -65,7 +68,9 @@ CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
 | Variable | Used by | Default |
 |---|---|---|
 | `CREDIT_FILE_HMAC_KEY` | generator, MCP server | **required**, at least 32 characters |
-| `CREDIT_FILES_DIR` | generator, MCP server | `./data/credit-files` |
+| `CREDIT_REPORTS_DIR` | generator, MCP server | `~/Reports` (bureau files in `Equifax/`, `Experian/`, `TransUnion/`) |
+| `NRG_URL` | MCP server | `http://localhost:8084` |
+| `NRG_MAX_REQUEST_BYTES` | NRG | `3200000` (larger bodies get 413) |
 | `CREDIT_SEED_SSNS` | generator | none |
 | `CREDIT_MCP_URL` | web server, agent | `http://localhost:8082/mcp` |
 | `SCORE_CALCULATOR_URL` | web server, agent | `http://localhost:8081` |

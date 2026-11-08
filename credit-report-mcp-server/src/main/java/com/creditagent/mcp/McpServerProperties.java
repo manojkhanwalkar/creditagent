@@ -9,7 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * @param directory directory holding the credit files (the "file system resource")
+ * @param directory reports root holding {@code Equifax/}, {@code Experian/} and {@code TransUnion/}
+ *     (the "file system resource")
  * @param hmacKey must match the credit report generator's key
  * @param allowedOrigins browser origins allowed to call {@code /mcp}; requests without an Origin
  *     header (server-to-server) are always allowed. Guards against DNS-rebinding.

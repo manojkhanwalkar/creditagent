@@ -1,12 +1,13 @@
 package com.creditagent.generator;
 
-import com.creditagent.common.CreditReport;
 import com.creditagent.common.InvalidSsnException;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
+import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -35,15 +36,17 @@ class ReportController {
         }
     }
 
-    /** Deliberately excludes account details: the caller only needs to know a file now exists. */
-    record GenerateReportResponse(String reportId, String ssnMasked) {}
+    /** Deliberately excludes account details: the caller only needs to know which files now exist. */
+    record GenerateReportResponse(String reportId, String ssnMasked, List<String> bureaus) {}
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<GenerateReportResponse> generate(@Valid @RequestBody GenerateReportRequest request) {
         Ssn ssn = Ssn.parse(request.ssn());
-        CreditReport report = service.generate(ssn, request.fullName());
-        return ResponseEntity.created(URI.create("/api/v1/reports/" + report.reportId()))
-                .body(new GenerateReportResponse(report.reportId(), report.ssnMasked()));
+        CreditReportService.GeneratedReports generated = service.generate(ssn, request.fullName());
+        String reportId = generated.report().reportId();
+        List<String> bureaus = generated.bureaus().stream().map(Bureau::directoryName).toList();
+        return ResponseEntity.created(URI.create("/api/v1/reports/" + reportId))
+                .body(new GenerateReportResponse(reportId, generated.report().ssnMasked(), bureaus));
     }
 
     @ExceptionHandler(InvalidSsnException.class)

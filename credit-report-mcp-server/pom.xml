@@ -11,7 +11,7 @@
 
     <artifactId>credit-report-mcp-server</artifactId>
     <name>CreditAgent :: Credit Report MCP Server</name>
-    <description>MCP server (Streamable HTTP) exposing credit files as a resource and a tool</description>
+    <description>MCP server (Streamable HTTP): reads the three bureau reports, has NRG merge them, and serves the result as a resource and a tool</description>
 
     <dependencies>
         <dependency>
@@ -19,8 +19,16 @@
             <artifactId>common</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.creditagent</groupId>
+            <artifactId>service-clients</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

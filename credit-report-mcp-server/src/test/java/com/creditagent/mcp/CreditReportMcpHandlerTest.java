@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.creditagent.common.CreditFileNames;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.community.mcp.server.McpServer;
@@ -12,7 +13,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,21 +24,32 @@ class CreditReportMcpHandlerTest {
 
     static final String KEY = "test-key-0123456789abcdef0123456789abcdef";
     static final String REPORT = "{\"reportId\":\"r-1\",\"ssnMasked\":\"***-**-6789\"}";
+    static final String EQUIFAX = "{\"reportNumber\":\"EFX-1\"}";
+    static final String TRANSUNION = "{\"fileNumber\":\"TU-1\"}";
 
     @TempDir
     Path dir;
 
     final ObjectMapper mapper = new ObjectMapper();
     CreditReportMcpHandler handler;
+    final AtomicReference<Map<Bureau, String>> sentToNrg = new AtomicReference<>();
 
     @BeforeEach
     void setUp() throws IOException {
         CreditFileNames names = new CreditFileNames(KEY);
-        Files.writeString(dir.resolve(names.fileNameFor(Ssn.parse("123-45-6789"))), REPORT);
+        String fileName = names.fileNameFor(Ssn.parse("123-45-6789"));
+        Files.createDirectories(dir.resolve("Equifax"));
+        Files.createDirectories(dir.resolve("TransUnion"));
+        Files.writeString(dir.resolve("Equifax").resolve(fileName), EQUIFAX);
+        Files.writeString(dir.resolve("TransUnion").resolve(fileName), TRANSUNION);
         CreditFileRepository repository = new CreditFileRepository(new McpServerProperties(dir, KEY, List.of()), names);
+        CreditReportService reports = new CreditReportService(repository, bureauReports -> {
+            sentToNrg.set(bureauReports);
+            return REPORT;
+        });
         McpImplementation info = new McpImplementation("credit-report-mcp", "test");
         handler = new CreditReportMcpHandler(
-                new McpServer(List.of(new CreditReportTools(repository)), info), info, repository);
+                new McpServer(List.of(new CreditReportTools(reports)), info), info, reports);
     }
 
     JsonNode call(String json) throws IOException {
@@ -68,12 +82,14 @@ class CreditReportMcpHandlerTest {
     }
 
     @Test
-    void readsAReportByResourceUri() throws IOException {
+    void readsEveryBureauFileAndReturnsTheNormalizedReport() throws IOException {
         JsonNode content = call("""
                 {"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"credit-report://ssn/123456789"}}
                 """).at("/result/contents/0");
         assertThat(content.get("text").asText()).isEqualTo(REPORT);
         assertThat(content.get("mimeType").asText()).isEqualTo("application/json");
+        assertThat(sentToNrg.get()).containsExactly(
+                Map.entry(Bureau.EQUIFAX, EQUIFAX), Map.entry(Bureau.TRANSUNION, TRANSUNION));
     }
 
     @Test
@@ -87,6 +103,7 @@ class CreditReportMcpHandlerTest {
         JsonNode response = call("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"resources/read\",\"params\":{\"uri\":\"credit-report://ssn/234567890\"}}");
         assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.RESOURCE_NOT_FOUND);
         assertThat(response.toString()).doesNotContain("234567890");
+        assertThat(sentToNrg.get()).isNull();
     }
 
     @Test

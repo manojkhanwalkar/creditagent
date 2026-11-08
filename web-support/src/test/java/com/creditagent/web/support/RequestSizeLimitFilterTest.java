@@ -1,4 +1,4 @@
-package com.creditagent.score;
+package com.creditagent.web.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

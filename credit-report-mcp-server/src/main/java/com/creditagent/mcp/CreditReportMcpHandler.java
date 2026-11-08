@@ -28,6 +28,9 @@ import org.springframework.stereotype.Component;
  * <em>resource</em>, so this class answers {@code initialize} itself (to advertise both
  * capabilities), implements {@code resources/*}, and delegates {@code tools/*} to LangChain4j.
  *
+ * <p>A read fetches the consumer's Equifax, Experian and TransUnion files and returns the single
+ * report the Normalized Report Generator merges them into.
+ *
  * <p>Resource URIs have the form {@code credit-report://ssn/{ssn}}. {@code resources/list} is
  * intentionally empty: enumerating credit files would enumerate people.
  */
@@ -54,12 +57,12 @@ public class CreditReportMcpHandler {
     private final JsonNodeFactory nodes = JsonNodeFactory.instance;
     private final McpServer toolServer;
     private final McpImplementation serverInfo;
-    private final CreditFileRepository repository;
+    private final CreditReportService reports;
 
-    public CreditReportMcpHandler(McpServer toolServer, McpImplementation serverInfo, CreditFileRepository repository) {
+    public CreditReportMcpHandler(McpServer toolServer, McpImplementation serverInfo, CreditReportService reports) {
         this.toolServer = toolServer;
         this.serverInfo = serverInfo;
-        this.repository = repository;
+        this.reports = reports;
     }
 
     /**
@@ -130,7 +133,7 @@ public class CreditReportMcpHandler {
                 .put("uriTemplate", URI_TEMPLATE)
                 .put("name", "credit-report")
                 .put("title", "Credit report")
-                .put("description", "Credit report for a US Social Security Number, read from the credit file store.")
+                .put("description", "Normalized credit report for a US Social Security Number, merged from the Equifax, Experian and TransUnion reports.")
                 .put("mimeType", MIME_TYPE);
         ArrayNode templates = nodes.arrayNode().add(template);
         return nodes.objectNode().set("resourceTemplates", templates);
@@ -148,7 +151,7 @@ public class CreditReportMcpHandler {
         } catch (InvalidSsnException e) {
             return error(id, INVALID_PARAMS, e.getMessage());
         }
-        Optional<String> report = repository.findReportJson(ssn);
+        Optional<String> report = reports.findNormalizedReport(ssn);
         if (report.isEmpty()) {
             // Do not echo the URI: it contains the SSN.
             return error(id, RESOURCE_NOT_FOUND, "Resource not found");

@@ -2,15 +2,21 @@ package com.creditagent.mcp;
 
 import com.creditagent.common.CreditFileNames;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;
 
-/** Read-only access to the credit files directory. */
+/**
+ * Read-only access to the reports root. Each bureau's files live in
+ * {@code <reports-root>/<Bureau>/<hmac(ssn)>.json}.
+ */
 @Repository
 public class CreditFileRepository {
 
@@ -24,11 +30,20 @@ public class CreditFileRepository {
         this.fileNames = fileNames;
     }
 
-    /** The raw JSON of the credit report for this SSN, if one exists. */
-    public Optional<String> findReportJson(Ssn ssn) {
-        Path file = directory.resolve(fileNames.fileNameFor(ssn)).normalize();
+    /** The raw JSON of each bureau's report for this SSN; bureaus without a file are absent. */
+    public Map<Bureau, String> findBureauReports(Ssn ssn) {
+        Map<Bureau, String> reports = new EnumMap<>(Bureau.class);
+        for (Bureau bureau : Bureau.values()) {
+            read(bureau, ssn).ifPresent(json -> reports.put(bureau, json));
+        }
+        return reports;
+    }
+
+    private Optional<String> read(Bureau bureau, Ssn ssn) {
+        Path bureauDirectory = directory.resolve(bureau.directoryName());
+        Path file = bureauDirectory.resolve(fileNames.fileNameFor(ssn)).normalize();
         // File names are hex by construction; this is defence in depth.
-        if (!file.getParent().equals(directory)) {
+        if (!file.getParent().equals(bureauDirectory)) {
             return Optional.empty();
         }
         // Never follow a symlink planted in the directory to somewhere else.

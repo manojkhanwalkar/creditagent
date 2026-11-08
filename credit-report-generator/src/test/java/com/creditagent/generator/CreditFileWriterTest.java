@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import com.creditagent.common.CreditFileNames;
 import com.creditagent.common.CreditReport;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -38,12 +39,13 @@ class CreditFileWriterTest {
     }
 
     @Test
-    void writesTheReportUnderAKeyedHashName() throws IOException {
-        Path dir = tmp.resolve("files");
+    void writesTheReportUnderTheBureauDirectoryWithAKeyedHashName() throws IOException {
+        Path dir = tmp.resolve("Reports");
         CreditReport report = report();
 
-        Path file = writer(dir).write(SSN, report);
+        Path file = writer(dir).write(SSN, Bureau.TRANSUNION, report);
 
+        assertThat(file.getParent()).isEqualTo(dir.resolve("TransUnion"));
         assertThat(file.getFileName().toString()).isEqualTo(new CreditFileNames(KEY).fileNameFor(SSN));
         assertThat(file.getFileName().toString()).doesNotContain("6789");
         assertThat(json.readValue(Files.readString(file), CreditReport.class)).isEqualTo(report);
@@ -52,9 +54,9 @@ class CreditFileWriterTest {
     @Test
     void leavesNoTempFilesBehindAndOverwritesInPlace() throws IOException {
         Path dir = tmp.resolve("files");
-        writer(dir).write(SSN, report());
-        writer(dir).write(SSN, report());
-        try (Stream<Path> files = Files.list(dir)) {
+        writer(dir).write(SSN, Bureau.EQUIFAX, report());
+        writer(dir).write(SSN, Bureau.EQUIFAX, report());
+        try (Stream<Path> files = Files.list(dir.resolve("Equifax"))) {
             assertThat(files).hasSize(1);
         }
     }
@@ -63,8 +65,9 @@ class CreditFileWriterTest {
     void filesAreOwnerOnly() throws IOException {
         assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
         Path dir = tmp.resolve("private");
-        Path file = writer(dir).write(SSN, report());
+        Path file = writer(dir).write(SSN, Bureau.EXPERIAN, report());
         assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(file))).isEqualTo("rw-------");
         assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(dir))).isEqualTo("rwx------");
+        assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(file.getParent()))).isEqualTo("rwx------");
     }
 }

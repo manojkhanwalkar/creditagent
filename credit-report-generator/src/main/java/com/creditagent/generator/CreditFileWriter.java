@@ -1,8 +1,8 @@
 package com.creditagent.generator;
 
 import com.creditagent.common.CreditFileNames;
-import com.creditagent.common.CreditReport;
 import com.creditagent.common.Ssn;
+import com.creditagent.common.bureau.Bureau;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -18,7 +18,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Writes a credit report to {@code <directory>/<hmac(ssn)>.json}, atomically and owner-only readable. */
+/**
+ * Writes a bureau's credit report to {@code <reports-root>/<Bureau>/<hmac(ssn)>.json}, atomically and
+ * owner-only readable.
+ */
 @Component
 public class CreditFileWriter {
 
@@ -37,11 +40,13 @@ public class CreditFileWriter {
         this.jsonMapper = jsonMapper;
     }
 
-    public Path write(Ssn ssn, CreditReport report) {
+    public Path write(Ssn ssn, Bureau bureau, Object report) {
         try {
-            ensureDirectory();
-            Path target = directory.resolve(fileNames.fileNameFor(ssn));
-            Path temp = Files.createTempFile(directory, ".report-", ".tmp");
+            ensureDirectory(directory);
+            Path bureauDirectory = directory.resolve(bureau.directoryName());
+            ensureDirectory(bureauDirectory);
+            Path target = bureauDirectory.resolve(fileNames.fileNameFor(ssn));
+            Path temp = Files.createTempFile(bureauDirectory, ".report-", ".tmp");
             if (posix) {
                 Files.setPosixFilePermissions(temp, OWNER_READ_WRITE);
             }
@@ -51,18 +56,18 @@ public class CreditFileWriter {
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
-            log.info("Wrote credit report {} for {}", report.reportId(), ssn.masked());
+            log.info("Wrote {} credit report for {}", bureau.directoryName(), ssn.masked());
             return target;
         } catch (IOException e) {
             throw new UncheckedIOException("Could not write credit file", e);
         }
     }
 
-    private void ensureDirectory() throws IOException {
-        if (Files.notExists(directory)) {
-            Files.createDirectories(directory);
+    private void ensureDirectory(Path dir) throws IOException {
+        if (Files.notExists(dir)) {
+            Files.createDirectories(dir);
             if (posix) {
-                Files.setPosixFilePermissions(directory, OWNER_ONLY_DIR);
+                Files.setPosixFilePermissions(dir, OWNER_ONLY_DIR);
             }
         }
     }
