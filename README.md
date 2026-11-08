@@ -21,7 +21,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | Module | Port | What it does |
 |---|---|---|
 | `web-server` | 8080 | UI and `POST /api/v1/credit-score` |
-| `score-calculator` | 8081 | `POST /api/v1/scores` (stub: random 400–850) |
+| `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report` |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes credit files |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
