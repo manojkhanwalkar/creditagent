@@ -95,6 +95,12 @@ class DynamoDbRepositoriesTest {
         // Touching a deleted session must not re-create it.
         assertThat(sessions.touch("live", now, now.plusSeconds(300))).isFalse();
         assertThat(sessions.find("live")).isEmpty();
+
+        // create() is single use per id: the second write of a grant is refused.
+        Session grant = new Session("grant", "avery", "hash-a", "6789", now, now, now.plusSeconds(3600));
+        assertThat(sessions.create(grant)).isTrue();
+        assertThat(sessions.create(grant)).isFalse();
+        assertThat(sessions.find("grant")).contains(grant);
     }
 
     @Test

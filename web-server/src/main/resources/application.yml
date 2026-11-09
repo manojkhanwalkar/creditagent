@@ -30,11 +30,25 @@ credit:
     timeout: ${KYC_TIMEOUT:10s}
   inbound:
     # Shared limits cover the API only: page loads (HTML, CSS, JS) must not use up the bucket.
-    url-patterns: /api/*,/internal/*
+    url-patterns: /api/*,/internal/*,/oauth/*,/.well-known/*
   internal:
     # Shared token other services present to call /internal/** (the report-lock check). At least
     # 32 characters. Empty = the internal API is off (404), and third-party report pulls are refused.
     token: ${INTERNAL_API_TOKEN:}
+  oauth:
+    # OAuth 2.1 server for the Claude connector (claude-connector). At least 32 characters; keys for
+    # signing client ids and encrypting codes and tokens are derived from it. Empty = OAuth is off
+    # (every /oauth endpoint answers 404).
+    token-key: ${OAUTH_TOKEN_KEY:}
+    # This server's public URL, exactly as browsers and Claude reach it (it is the token issuer).
+    issuer: ${OAUTH_ISSUER:http://localhost:8080}
+    # The connector's public MCP URL: the only audience tokens are issued for.
+    resource: ${CONNECTOR_RESOURCE_URL:http://localhost:8088/mcp}
+    # Claude's connector callbacks are allowed by default; loopback URLs serve Claude Code and Desktop.
+    allow-loopback-redirects: ${OAUTH_ALLOW_LOOPBACK_REDIRECTS:true}
+    # No refresh tokens: after this the user reconnects. Revoking ends it sooner.
+    access-token-ttl: ${OAUTH_ACCESS_TOKEN_TTL:1h}
+    code-ttl: 60s
   auth:
     # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
     jwt-secret: ${JWT_SECRET}

@@ -236,6 +236,20 @@ class DynamoDbRepositoriesUnitTest {
     }
 
     @Test
+    void createWritesOnlyANewSession() {
+        doReturn(null).when(dynamo).putItem(any(PutItemRequest.class));
+        Session grant = new Session("g1", "avery", "hash-a", "6789", NOW, NOW, NOW.plusSeconds(3600));
+        assertThat(sessions.create(grant)).isTrue();
+        ArgumentCaptor<PutItemRequest> sent = ArgumentCaptor.forClass(PutItemRequest.class);
+        verify(dynamo).putItem(sent.capture());
+        assertThat(sent.getValue().conditionExpression()).isEqualTo("attribute_not_exists(#id)");
+        assertThat(sent.getValue().item()).containsEntry("sessionId", AttributeValue.fromS("g1"));
+
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).putItem(any(PutItemRequest.class));
+        assertThat(sessions.create(grant)).isFalse();
+    }
+
+    @Test
     void touchUpdatesOnlyAnExistingSession() {
         doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
         assertThat(sessions.touch("s1", NOW, NOW.plusSeconds(300))).isTrue();

@@ -35,6 +35,25 @@ public class DynamoDbSessionRepository implements SessionRepository {
 
     @Override
     public void save(Session session) {
+        Map<String, AttributeValue> item = item(session);
+        dynamo.putItem(r -> r.tableName(table).item(item));
+    }
+
+    @Override
+    public boolean create(Session session) {
+        Map<String, AttributeValue> item = item(session);
+        try {
+            dynamo.putItem(r -> r.tableName(table)
+                    .item(item)
+                    .conditionExpression("attribute_not_exists(#id)")
+                    .expressionAttributeNames(Map.of("#id", KEY)));
+            return true;
+        } catch (ConditionalCheckFailedException taken) {
+            return false;
+        }
+    }
+
+    private static Map<String, AttributeValue> item(Session session) {
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(KEY, AttributeValue.fromS(session.sessionId()));
         item.put("userId", AttributeValue.fromS(session.userId()));
@@ -45,7 +64,7 @@ public class DynamoDbSessionRepository implements SessionRepository {
         item.put("createdAt", AttributeValue.fromS(session.createdAt().toString()));
         item.put("lastActivityAt", AttributeValue.fromS(session.lastActivityAt().toString()));
         item.put(TTL_ATTRIBUTE, AttributeValue.fromN(Long.toString(session.expiresAt().getEpochSecond())));
-        dynamo.putItem(r -> r.tableName(table).item(item));
+        return item;
     }
 
     @Override

@@ -30,6 +30,7 @@
         <module>web-server</module>
         <module>credit-intelligence-agent</module>
         <module>client-agent</module>
+        <module>claude-connector</module>
     </modules>
 
     <properties>

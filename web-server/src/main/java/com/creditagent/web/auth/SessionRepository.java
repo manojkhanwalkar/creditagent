@@ -7,6 +7,13 @@ public interface SessionRepository {
 
     void save(Session session);
 
+    /**
+     * Stores the session only if none with its id exists yet, atomically.
+     *
+     * @return false if the id is taken
+     */
+    boolean create(Session session);
+
     Optional<Session> find(String sessionId);
 
     /**

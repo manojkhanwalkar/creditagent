@@ -5,6 +5,7 @@ A web app that shows a credit score as a coloured ring, plus a pair of A2A agent
 * **Login:** users register by uploading a photo of their Social Security card, which a (dummy) **KYC service** checks and reads the SSN from; a blurred photo is refused with a request to retry. They then log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
 * **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server (reads the Equifax, Experian and TransUnion reports; the **Normalized Report Generator** merges them) → Score Calculator → score ring.
 * **Agent flow:** Client Agent → (**A2A**) → Credit Intelligence Agent → MCP server + Score Calculator → recommendations.
+* **Claude connector:** Claude → (**MCP**, OAuth 2.1) → `claude-connector` → the same services. A user connects CreditAgent in Claude, signs in on the web server, and Claude can then read *their own* score, report and advice, and lock or unlock their report. See [Use it from Claude](#use-it-from-claude).
 
 See [docs/architecture.md](docs/architecture.md) for the diagram and design notes, and [docs/security-review.md](docs/security-review.md) before putting real data anywhere near this.
 
@@ -28,6 +29,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
+| `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
 | `kyc-service` | 8087 | Dummy KYC provider: `POST /api/v1/ssn-verifications` (multipart `document`) refuses blurred or non-card photos and returns the SSN on the card; `GET /api/v1/sample-cards/{ssn}?blur=N` makes demo cards when enabled |
 | `common`, `service-clients`, `web-support` | — | Shared libraries |
 
@@ -81,6 +83,37 @@ mvn -pl normalized-report-generator spring-boot:run
 mvn -pl credit-report-mcp-server spring-boot:run
 ```
 
+## Use it from Claude
+
+`claude-connector` is a [custom connector](https://support.claude.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp): a remote MCP server that Claude calls on a signed-in user's behalf.
+
+```
+Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──> MCP server, Score Calculator, client agent
+   │                                              │ introspects the token
+   └──(OAuth 2.1: register, sign in, token)──> web-server :8080 (authorization server)
+```
+
+**How sign-in works.** Claude calls `/mcp`, gets `401` with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource`, finds the web server there, registers itself (dynamic client registration) and opens the web server's sign-in page. The user enters their user id, password **and SSN**: the server stores only a keyed hash of the SSN, and the connector needs the SSN itself to fetch the report. The SSN goes inside the access token, which is encrypted, so Claude never sees it. No tool takes an SSN, so Claude can only ever reach the signed-in user's own data. Tokens last `OAUTH_ACCESS_TOKEN_TTL` (1 hour); there are no refresh tokens, so the user reconnects after that.
+
+| Tool | Arguments | Returns | Fails when |
+|---|---|---|---|
+| `get_credit_score` | none | masked SSN, score (300–850), band | no report on file; a service is down |
+| `get_credit_report` | none | the merged report (accounts, inquiries, collections, public records; SSN masked) | as above |
+| `get_credit_advice` | none | prioritised recommendations from the Credit Intelligence Agent | the report is **locked** (the agent is a third party); as above |
+| `get_report_lock_status` | none | `LOCKED` or `UNLOCKED` | the connection was revoked |
+| `set_report_lock` | `locked` (boolean) | the new status | as above |
+
+**Run it locally.** Set `OAUTH_TOKEN_KEY` in `.env` (`openssl rand -hex 32`) and start the stack (`docker compose up --build`). The connector is at `http://localhost:8088/mcp`.
+
+* **Claude Code** (talks to localhost directly; sign-in opens your browser):
+  ```bash
+  claude mcp add --transport http creditagent http://localhost:8088/mcp
+  ```
+  then run `/mcp` in Claude Code and choose *Authenticate*.
+* **claude.ai and Claude Desktop** call connectors from Anthropic's cloud, so both the connector and the web server need **public HTTPS URLs**. For a demo, run two tunnels (for example `cloudflared tunnel --url http://localhost:8088` and `... :8080`), put their URLs in `.env` as `CONNECTOR_PUBLIC_URL` and `OAUTH_ISSUER`, restart, then add `<CONNECTOR_PUBLIC_URL>/mcp` under **Settings → Connectors → Add custom connector**. Leave the OAuth client fields empty: Claude registers itself. One host also works: route `/mcp` and `/.well-known/oauth-protected-resource*` to 8088 and everything else to 8080, and set both URLs to that host.
+
+> ⚠️ Connecting puts the user's credit data into their Claude conversations. Use synthetic SSNs only. Read [docs/security-review.md](docs/security-review.md) before exposing anything publicly.
+
 ## Configuration
 
 | Variable | Used by | Default |
@@ -106,7 +139,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
 | `REPORT_LOCK_URL` | agent, MCP server | `http://localhost:8080` (the web server, which owns the users table) |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
@@ -116,7 +149,15 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `DYNAMODB_CREATE_TABLES` | web server | `false` (compose sets `true` for DynamoDB Local) |
 | `DYNAMODB_TIMEOUT` | web server | `5s` (longest DynamoDB call, retries included; the SDK's standard retry mode backs off with jitter) |
 | `CREDIT_RETRY_MAX_ATTEMPTS`, `CREDIT_RETRY_INITIAL_DELAY`, `CREDIT_RETRY_MULTIPLIER`, `CREDIT_RETRY_MAX_DELAY`, `CREDIT_RETRY_JITTER` | every service that calls another | `3`, `100ms`, `2`, `1s`, `50ms`: retries of recoverable failures with exponential backoff and jitter (see [architecture](docs/architecture.md#resilience)) |
-| `CREDIT_INBOUND_RATE_PER_SECOND`, `CREDIT_INBOUND_BURST`, `CREDIT_INBOUND_MAX_CONCURRENT`, `CREDIT_INBOUND_ENABLED`, `CREDIT_INBOUND_URL_PATTERNS` | every service | `50`, `100`, `32`, `true`, `/*` (web server: `/api/*`): token-bucket rate limit and in-flight cap; excess requests get 429 or 503 with `Retry-After`. Health checks are exempt |
+| `OAUTH_TOKEN_KEY` | web server | empty = OAuth (and so the Claude connector's sign-in) is off. At least 32 characters; signs client ids and encrypts codes and access tokens |
+| `OAUTH_ISSUER` | web server, connector | `http://localhost:8080`: the web server's public URL, exactly as Claude and browsers reach it |
+| `CONNECTOR_RESOURCE_URL` | web server | `http://localhost:8088/mcp`: the only audience tokens are issued for; must equal the connector's `<CONNECTOR_PUBLIC_URL>/mcp` |
+| `OAUTH_ACCESS_TOKEN_TTL`, `OAUTH_ALLOW_LOOPBACK_REDIRECTS` | web server | `1h`, `true` (loopback redirects serve Claude Code and Desktop; Claude's two web callbacks are always allowed) |
+| `CONNECTOR_PUBLIC_URL` | connector | `http://localhost:8088` |
+| `WEB_SERVER_URL`, `CLIENT_AGENT_URL` | connector | `http://localhost:8080`, `http://localhost:8086` (internal URLs) |
+| `ADVICE_TIMEOUT` | connector | `95s` (longer than the client agent's own 90 s) |
+| `CONNECTOR_REQUESTS_PER_USER_PER_MINUTE` | connector | `60` (per-user limit; over it, 429 with `Retry-After`) |
+| `CREDIT_INBOUND_RATE_PER_SECOND`, `CREDIT_INBOUND_BURST`, `CREDIT_INBOUND_MAX_CONCURRENT`, `CREDIT_INBOUND_ENABLED`, `CREDIT_INBOUND_URL_PATTERNS` | every service | `50`, `100`, `32`, `true`, `/*` (web server: `/api/*`, `/internal/*`, `/oauth/*`, `/.well-known/*`): token-bucket rate limit and in-flight cap; excess requests get 429 or 503 with `Retry-After`. Health checks are exempt |
 
 ## CI/CD
 
