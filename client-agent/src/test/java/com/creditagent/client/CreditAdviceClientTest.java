@@ -123,4 +123,39 @@ class CreditAdviceClientTest {
         // The abandoned call is interrupted, so its thread and connection are not left blocked.
         assertThat(interrupted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
     }
+
+    @Test
+    void aCheckedFailureFromTheAgentIsWrapped() {
+        CreditAdviceClient client = client(ssn -> {
+            throw sneaky(new java.io.IOException("broken pipe"));
+        }, json);
+        assertThatThrownBy(() -> client.adviceFor(Ssn.parse("123-45-6789")))
+                .isInstanceOf(CreditAdviceClient.AgentCallException.class);
+    }
+
+    @Test
+    void anInterruptedWaitGivesUpAndKeepsTheInterrupt() {
+        CreditAdviceClient client = client(ssn -> {
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return ADVICE;
+        }, json);
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> client.adviceFor(Ssn.parse("123-45-6789")))
+                    .isInstanceOf(CreditAdviceClient.AgentCallException.class)
+                    .hasMessageContaining("Interrupted");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static <E extends Throwable> RuntimeException sneaky(Throwable e) throws E {
+        throw (E) e;
+    }
 }

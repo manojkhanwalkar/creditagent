@@ -87,6 +87,7 @@ class McpHttpControllerTest {
     @Test
     void noServerSentEventStream() throws Exception {
         mvc.perform(get("/mcp")).andExpect(status().isMethodNotAllowed());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/mcp")).andExpect(status().isMethodNotAllowed());
     }
 
     @Test

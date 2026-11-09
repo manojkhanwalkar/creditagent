@@ -26,4 +26,11 @@ class CreditIntelligenceAgentExecutorTest {
     void returnsEmptyWhenThereIsNoSsn(String text) {
         assertThat(CreditIntelligenceAgentExecutor.extractSsn(text)).isEmpty();
     }
+
+    @org.junit.jupiter.api.Test
+    void cancellingIsNotSupported() {
+        CreditIntelligenceAgentExecutor executor = new CreditIntelligenceAgentExecutor(null, tools.jackson.databind.json.JsonMapper.builder().build());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> executor.cancel(null, null))
+                .isInstanceOf(org.a2aproject.sdk.spec.UnsupportedOperationError.class);
+    }
 }

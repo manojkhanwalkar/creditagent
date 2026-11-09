@@ -132,4 +132,11 @@ class A2aContractTest {
         assertThat(reply.get("error").asString()).contains("temporarily unavailable");
         org.mockito.Mockito.verifyNoInteractions(reports, scores);
     }
+
+    @Test
+    void anSsnTheSsaNeverIssuesGetsAnErrorReply() {
+        JsonNode reply = json.readTree(advisor.advise("000-12-3456"));
+        assertThat(reply.get("error").asString()).contains("area number");
+        org.mockito.Mockito.verifyNoInteractions(reports, scores, locks);
+    }
 }

@@ -36,7 +36,10 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 ```bash
 mvn -B verify                 # compile, unit tests, MCP and A2A contract tests, coverage
 (cd web-server && npm test)   # score-ring unit tests
+.github/scripts/coverage.sh   # line coverage per module and in total
 ```
+
+**Coverage.** The target is 95% line coverage for the project. `mvn verify` fails if any module drops below 90% (`coverage.module.minimum`), and CI fails if the project as a whole drops below 95%, with a per-module table in the job summary. Spring Boot `*Application` launchers are excluded. The DynamoDB Local tests need Docker, so local figures for `web-server` are a little lower than CI's.
 
 ## Run locally with Docker
 
