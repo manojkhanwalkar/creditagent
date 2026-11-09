@@ -231,10 +231,16 @@ class McpCreditReportSourceTest {
     void aFailedLookupDoesNotCancelOtherLookupsOnTheSameConnection() throws Exception {
         source.findReport(Ssn.parse("123-45-6789")); // one shared connection, initialised
         slowReadMillis = 1_500;
+        int readsBefore = reads.get();
 
         java.util.concurrent.CompletableFuture<Optional<CreditReport>> slow =
                 java.util.concurrent.CompletableFuture.supplyAsync(() -> source.findReport(Ssn.parse("123-45-6789")));
-        Thread.sleep(300); // the slow read is now in flight on the shared connection
+        // Wait until the server has the slow read, so it is surely in flight on the shared connection.
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (reads.get() == readsBefore) {
+            assertThat(System.nanoTime()).as("the slow read reached the server").isLessThan(deadline);
+            Thread.sleep(10);
+        }
 
         // Another user's look-up fails at the transport level, which retires its connection.
         assertThatThrownBy(() -> source.findReport(Ssn.parse("345-67-8901"))).isInstanceOf(ServiceUnavailableException.class);
@@ -244,6 +250,18 @@ class McpCreditReportSourceTest {
         // And later look-ups work, on a fresh connection.
         slowReadMillis = 0;
         assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
+    }
+
+    @Test
+    void closeRetiresTheConnectionAndOpensNoNewOne() {
+        assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
+        int initsBefore = initializes.get();
+
+        source.close();
+
+        assertThatThrownBy(() -> source.findReport(Ssn.parse("123-45-6789")))
+                .isInstanceOf(ServiceUnavailableException.class);
+        assertThat(initializes.get()).as("no connection opened after close()").isEqualTo(initsBefore);
     }
 
     private void handle(HttpExchange exchange) throws IOException {

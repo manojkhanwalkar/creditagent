@@ -76,6 +76,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private final ReentrantLock lock = new ReentrantLock();
     /** The connection new reads use; replaced after a transport failure. Null until first use. */
     private volatile Connection connection;
+    /** Set by {@link #close()}, under {@link #lock}: no connection is opened after it. */
+    private boolean shutDown;
 
     /**
      * @param timeout longest wait for one look-up, reconnects and retries included; make it longer than
@@ -142,8 +144,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
 
     /**
      * Runs {@code call} on a virtual thread and waits at most {@code timeout} for it. A FutureTask,
-     * not a CompletableFuture: its cancel(true) interrupts the abandoned call, which then drops its
-     * connection instead of staying blocked on the server.
+     * not a CompletableFuture: its cancel(true) interrupts the abandoned call, which then retires its
+     * connection instead of staying blocked on the server (other reads on it still finish).
      */
     private <T> T withinTimeout(Callable<T> call) {
         FutureTask<T> task = new FutureTask<>(call);
@@ -215,6 +217,9 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
             if (current == null) {
                 lock.lock();
                 try {
+                    if (shutDown) {
+                        throw new IllegalStateException("Credit Report MCP source is closed");
+                    }
                     if (connection == null) {
                         connection = new Connection(open());
                         log.info("Connected to Credit Report MCP server at {}", mcpUrl);
@@ -288,11 +293,24 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
         }
     }
 
+    /**
+     * Stops new reads and retires the current connection: it is closed once the reads still using
+     * it have finished. Under the lock, so a connection being opened right now is retired too, and
+     * none is opened afterwards.
+     */
     @Override
     public void close() {
-        Connection current = connection;
+        Connection current;
+        lock.lock();
+        try {
+            shutDown = true;
+            current = connection;
+            connection = null;
+        } finally {
+            lock.unlock();
+        }
         if (current != null) {
-            retire(current);
+            current.retire();
         }
     }
 
