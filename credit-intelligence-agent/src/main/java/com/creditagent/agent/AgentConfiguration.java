@@ -27,7 +27,7 @@ class AgentConfiguration {
     @Bean // AutoCloseable: Spring closes it on shutdown
     McpCreditReportSource creditReportSource(AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
         return new McpCreditReportSource(
-                properties.mcpUrl(), "credit-intelligence-agent", properties.timeout(), retry, jsonMapper);
+                properties.mcpUrl(), "credit-intelligence-agent", properties.mcpTimeout(), retry, jsonMapper);
     }
 
     @Bean
@@ -49,7 +49,10 @@ class AgentConfiguration {
                 .apiKey(llm.apiKey())
                 .modelName(llm.model())
                 .maxTokens(2048)
-                .timeout(properties.timeout().multipliedBy(6))
+                .timeout(llm.timeout())
+                // No retries: a slow model is not retried after a timeout, and any failure falls
+                // back to the rules at once (LangChain4j would otherwise make up to 3 tries).
+                .maxRetries(0)
                 .logRequests(false)
                 .logResponses(false)
                 .build();

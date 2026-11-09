@@ -84,4 +84,17 @@ class RegisterUploadLimitTest {
         HttpResponse<String> response = register(BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(body)));
         assertThat(response.statusCode()).isEqualTo(413);
     }
+
+    @Test
+    void anOversizedJsonBodyIs413BeforeItIsRead() throws Exception {
+        String huge = "{\"userId\":\"avery\",\"password\":\"" + "x".repeat(70_000) + "\"}";
+        for (String path : new String[] {"/api/v1/auth/login", "/api/v1/credit-score"}) {
+            HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                            .header("Content-Type", "application/json")
+                            .POST(BodyPublishers.ofString(huge))
+                            .build(),
+                    BodyHandlers.ofString());
+            assertThat(response.statusCode()).as(path).isEqualTo(413);
+        }
+    }
 }

@@ -6,6 +6,7 @@ import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.UnknownHostException;
 import java.net.http.HttpConnectTimeoutException;
+import java.time.Duration;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -63,6 +64,31 @@ public final class Retries {
                 || find(t, UnknownHostException.class) != null
                 || find(t, NoRouteToHostException.class) != null
                 || find(t, UnresolvedAddressException.class) != null;
+    }
+
+    /**
+     * The wait a {@code Retry-After} header asks for, in delta-seconds form; null when absent or in
+     * the HTTP-date form (rare between services, and treated as no hint).
+     */
+    public static Duration retryAfter(String header) {
+        if (header == null || !header.strip().matches("\\d{1,9}")) {
+            return null;
+        }
+        return Duration.ofSeconds(Long.parseLong(header.strip()));
+    }
+
+    /**
+     * Sleeps for {@code wait}. @return false if interrupted (the interrupt flag is restored), so the
+     * caller stops retrying.
+     */
+    public static boolean pause(Duration wait) {
+        try {
+            Thread.sleep(wait);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     static <E extends Throwable> E find(Throwable t, Class<E> type) {
