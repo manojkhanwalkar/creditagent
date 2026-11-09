@@ -94,7 +94,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
-| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `75s` (longest wait for the agent's answer; longer than the agent's own worst case of about 67 s) |
+| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `90s` (longest wait for the agent's answer; longer than the agent's own worst case of about 82 s, report-lock check included) |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
 | `LLM_TIMEOUT` | agent | `30s` (one try; on any failure the rule-based advice answers instead) |
 | `KYC_URL`, `KYC_TIMEOUT` | web server | `http://localhost:8087`, `10s` |
@@ -103,7 +103,7 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server | **required** for third-party pulls, at least 32 characters. The agent and the MCP tool present it to check report locks; without it they refuse every pull |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
 | `REPORT_LOCK_URL` | agent, MCP server | `http://localhost:8080` (the web server, which owns the users table) |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |

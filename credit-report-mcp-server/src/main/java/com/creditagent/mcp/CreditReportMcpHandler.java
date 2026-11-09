@@ -1,5 +1,7 @@
 package com.creditagent.mcp;
 
+import com.creditagent.clients.ReportLockCheck;
+import com.creditagent.clients.ServiceUnavailableException;
 import com.creditagent.common.SafeLogging;
 import com.creditagent.common.InvalidSsnException;
 import com.creditagent.common.Ssn;
@@ -31,6 +33,11 @@ import org.springframework.stereotype.Component;
  * <p>A read fetches the consumer's Equifax, Experian and TransUnion files and returns the single
  * report the Normalized Report Generator merges them into.
  *
+ * <p>A read from a caller that did not present the internal service token (any generic MCP host) is
+ * refused when the consumer has locked their report ({@link #REPORT_LOCKED}), and refused when the
+ * lock cannot be checked. Token holders, the web server (reading for the signed-in owner) and the
+ * Credit Intelligence Agent (which checks the lock itself), are not checked again here.
+ *
  * <p>Resource URIs have the form {@code credit-report://ssn/{ssn}}. {@code resources/list} is
  * intentionally empty: enumerating credit files would enumerate people.
  */
@@ -50,6 +57,9 @@ public class CreditReportMcpHandler {
     static final int INVALID_PARAMS = -32602;
     static final int INTERNAL_ERROR = -32603;
     static final int RESOURCE_NOT_FOUND = -32002;
+    /** Server-defined: the consumer has locked their credit report against third-party pulls. */
+    public static final int REPORT_LOCKED = -32010;
+    static final String LOCKED_MESSAGE = "This credit report is locked by its owner.";
 
     private static final Pattern RESOURCE_URI = Pattern.compile("^credit-report://ssn/([0-9-]{9,11})$");
 
@@ -58,19 +68,28 @@ public class CreditReportMcpHandler {
     private final McpServer toolServer;
     private final McpImplementation serverInfo;
     private final CreditReportService reports;
+    private final ReportLockCheck locks;
 
-    public CreditReportMcpHandler(McpServer toolServer, McpImplementation serverInfo, CreditReportService reports) {
+    public CreditReportMcpHandler(
+            McpServer toolServer, McpImplementation serverInfo, CreditReportService reports, ReportLockCheck locks) {
         this.toolServer = toolServer;
         this.serverInfo = serverInfo;
         this.reports = reports;
+        this.locks = locks;
+    }
+
+    /** {@link #handle(String, boolean)} for a caller without the service token. */
+    public Optional<String> handle(String body) {
+        return handle(body, false);
     }
 
     /**
      * Handles one JSON-RPC message.
      *
+     * @param trusted the caller presented the internal service token
      * @return the response body, or empty for notifications (the HTTP layer answers 202)
      */
-    public Optional<String> handle(String body) {
+    public Optional<String> handle(String body, boolean trusted) {
         JsonNode message;
         try {
             message = mapper.readTree(body);
@@ -101,7 +120,7 @@ public class CreditReportMcpHandler {
                         case "ping" -> result(id, nodes.objectNode());
                         case "resources/list" -> result(id, nodes.objectNode().set("resources", nodes.arrayNode()));
                         case "resources/templates/list" -> result(id, resourceTemplates());
-                        case "resources/read" -> readResource(id, message.path("params"));
+                        case "resources/read" -> readResource(id, message.path("params"), trusted);
                         case "tools/list", "tools/call" -> delegateToLangChain4j(id, message);
                         default -> error(id, METHOD_NOT_FOUND, "Method not found");
                     });
@@ -139,7 +158,7 @@ public class CreditReportMcpHandler {
         return nodes.objectNode().set("resourceTemplates", templates);
     }
 
-    private String readResource(JsonNode id, JsonNode params) {
+    private String readResource(JsonNode id, JsonNode params, boolean trusted) {
         String uri = params.path("uri").asText("");
         Matcher matcher = RESOURCE_URI.matcher(uri);
         if (!matcher.matches()) {
@@ -150,6 +169,17 @@ public class CreditReportMcpHandler {
             ssn = Ssn.parse(matcher.group(1));
         } catch (InvalidSsnException e) {
             return error(id, INVALID_PARAMS, e.getMessage());
+        }
+        if (!trusted) {
+            try {
+                if (locks.isLocked(ssn)) {
+                    return error(id, REPORT_LOCKED, LOCKED_MESSAGE);
+                }
+            } catch (ServiceUnavailableException e) {
+                // Fail closed: an unknown lock status never releases the report.
+                log.warn("Report lock check failed: {}", SafeLogging.describe(e));
+                return error(id, INTERNAL_ERROR, "Internal error");
+            }
         }
         Optional<String> report = reports.findNormalizedReport(ssn);
         if (report.isEmpty()) {

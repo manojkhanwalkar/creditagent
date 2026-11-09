@@ -28,9 +28,12 @@ class AgentConfiguration {
     private static final Logger log = LoggerFactory.getLogger(AgentConfiguration.class);
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
-        return new McpCreditReportSource(
-                properties.mcpUrl(), "credit-intelligence-agent", properties.mcpTimeout(), retry, jsonMapper);
+    McpCreditReportSource creditReportSource(
+            AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry, ReportLockProperties lock) {
+        // The agent checks the lock itself before every read, so it identifies itself to the MCP
+        // server with the service token and is not checked a second time.
+        return new McpCreditReportSource(properties.mcpUrl(), "credit-intelligence-agent", properties.mcpTimeout(),
+                retry, lock.token(), jsonMapper);
     }
 
     @Bean

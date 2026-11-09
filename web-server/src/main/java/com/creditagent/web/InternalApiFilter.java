@@ -5,14 +5,13 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Locale;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
+import com.creditagent.web.support.ServiceToken;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
@@ -26,18 +25,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Order(InternalApiFilter.ORDER)
 class InternalApiFilter extends OncePerRequestFilter {
 
-    /** After the per-client and shared limits and the body-size cap; before user authentication. */
-    static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 15;
-    static final int MIN_TOKEN_LENGTH = 32;
-    private static final String BEARER = "Bearer ";
+    /**
+     * Right after security headers and before every limit: the per-IP limiter skips {@code /internal}
+     * and the shared bucket does not, so a caller without the token must be turned away before it
+     * can use up the shared bucket (and with it every user's requests and every lock check).
+     */
+    static final int ORDER = Ordered.HIGHEST_PRECEDENCE + 3;
 
-    private final byte[] token;
+    private final ServiceToken token;
 
     InternalApiFilter(@Value("${credit.internal.token:}") String token) {
-        if (token != null && !token.isBlank() && token.length() < MIN_TOKEN_LENGTH) {
-            throw new IllegalArgumentException("INTERNAL_API_TOKEN must be at least " + MIN_TOKEN_LENGTH + " characters");
-        }
-        this.token = token == null || token.isBlank() ? null : token.getBytes(StandardCharsets.UTF_8);
+        this.token = new ServiceToken(token);
     }
 
     static boolean isInternal(HttpServletRequest request) {
@@ -52,15 +50,11 @@ class InternalApiFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        if (token == null) {
+        if (!token.isConfigured()) {
             response.sendError(HttpServletResponse.SC_NOT_FOUND);
             return;
         }
-        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-        byte[] presented = header != null && header.regionMatches(true, 0, BEARER, 0, BEARER.length())
-                ? header.substring(BEARER.length()).strip().getBytes(StandardCharsets.UTF_8)
-                : new byte[0];
-        if (!MessageDigest.isEqual(token, presented)) {
+        if (!token.matches(request.getHeader(HttpHeaders.AUTHORIZATION))) {
             response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
             return;

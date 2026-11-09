@@ -32,8 +32,12 @@ class WebServerConfiguration {
     }
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
-        return new McpCreditReportSource(properties.mcpUrl(), "web-server", properties.mcpTimeout(), retry, jsonMapper);
+    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper, RetrySettings retry,
+            @org.springframework.beans.factory.annotation.Value("${credit.internal.token:}") String serviceToken) {
+        // The service token tells the MCP server this read is for the signed-in owner, so it is not
+        // lock-checked: owners always see their own report.
+        return new McpCreditReportSource(
+                properties.mcpUrl(), "web-server", properties.mcpTimeout(), retry, serviceToken, jsonMapper);
     }
 
     @Bean

@@ -4,6 +4,7 @@ import com.creditagent.clients.HttpClients;
 import com.creditagent.clients.ReportLockCheck;
 import com.creditagent.clients.ReportLockHttpClient;
 import com.creditagent.clients.ReportLockProperties;
+import com.creditagent.web.support.ServiceToken;
 import com.creditagent.clients.RetrySettings;
 import com.creditagent.common.CreditFileNames;
 import com.creditagent.web.support.RequestSizeLimitFilter;
@@ -47,6 +48,12 @@ class McpServerConfiguration {
     @Bean
     ReportLockCheck reportLockCheck(RestClient.Builder builder, ReportLockProperties properties, RetrySettings retry) {
         return ReportLockHttpClient.create(builder, properties, retry);
+    }
+
+    /** Identifies internal callers (web server, agent); the same INTERNAL_API_TOKEN as the lock check. */
+    @Bean
+    ServiceToken serviceToken(ReportLockProperties properties) {
+        return new ServiceToken(properties.token());
     }
 
     @Bean

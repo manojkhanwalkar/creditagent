@@ -13,8 +13,10 @@ import org.springframework.web.client.RestClientException;
  * Checks report locks with the web server's internal API: {@code POST /internal/v1/report-locks/lookup}
  * with {@code {"ssn":"…"}} (never in the URL) and the internal API token as a bearer token.
  *
- * <p>The check is a read, so the client retries recoverable failures like any idempotent call. Any
- * failure that remains, a missing token included, is a {@link ServiceUnavailableException}.
+ * <p>The check is a read, but a slow one can be two DynamoDB calls deep on the web server, so a
+ * timeout is not retried (that would only repeat work still in progress). Only failures that prove
+ * the request never arrived, and 429 or 503, are retried. Any failure that remains, a missing token
+ * included, is a {@link ServiceUnavailableException}.
  */
 public class ReportLockHttpClient implements ReportLockCheck {
 
@@ -34,7 +36,7 @@ public class ReportLockHttpClient implements ReportLockCheck {
     public static ReportLockHttpClient create(
             RestClient.Builder builder, ReportLockProperties properties, RetrySettings retry) {
         return new ReportLockHttpClient(
-                HttpClients.restClient(builder, properties.url(), properties.timeout(), retry), properties.token());
+                HttpClients.restClient(builder, properties.url(), properties.timeout(), retry, false), properties.token());
     }
 
     @Override

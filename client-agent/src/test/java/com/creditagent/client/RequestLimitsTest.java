@@ -41,7 +41,12 @@ class RequestLimitsTest {
         // Agent: one MCP look-up (MCP_TIMEOUT 20 s) + the Score Calculator with its retries
         // (DOWNSTREAM_TIMEOUT 5 s per try) + one LLM try (LLM_TIMEOUT 30 s). The MCP and LLM
         // defaults live in the agent module, so they are repeated here.
-        Duration agentWorstCase = Duration.ofSeconds(20)
+        // Plus the report-lock check: one try of up to 12 s (a timeout is not retried) and up to two
+        // refusals, each waited out (Retry-After up to the 1 s max delay, plus the backoff).
+        Duration lockCheck = com.creditagent.clients.ReportLockProperties.DEFAULT_TIMEOUT
+                .plus(Duration.ofMillis(2 * 1_000 + 150 + 250));
+        Duration agentWorstCase = lockCheck
+                .plusSeconds(20)
                 .plus(RetrySettings.DEFAULTS.worstCase(Duration.ofSeconds(5)))
                 .plusSeconds(30);
         assertThat(properties.timeout()).isGreaterThan(agentWorstCase);

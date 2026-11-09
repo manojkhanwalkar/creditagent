@@ -1,5 +1,6 @@
 package com.creditagent.mcp;
 
+import com.creditagent.web.support.ServiceToken;
 import java.util.Optional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -23,22 +24,28 @@ class McpHttpController {
 
     private final CreditReportMcpHandler handler;
     private final McpServerProperties properties;
+    private final ServiceToken serviceToken;
 
-    McpHttpController(CreditReportMcpHandler handler, McpServerProperties properties) {
+    McpHttpController(CreditReportMcpHandler handler, McpServerProperties properties, ServiceToken serviceToken) {
         this.handler = handler;
         this.properties = properties;
+        this.serviceToken = serviceToken;
     }
 
     @PostMapping(path = "/mcp", consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<String> post(
-            @RequestBody String body, @RequestHeader(name = "Origin", required = false) String origin) {
+            @RequestBody String body,
+            @RequestHeader(name = "Origin", required = false) String origin,
+            @RequestHeader(name = "Authorization", required = false) String authorization) {
         if (origin != null && !properties.allowedOrigins().contains(origin)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         if (body.length() > MAX_BODY_BYTES) {
             return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE).build();
         }
-        Optional<String> response = handler.handle(body);
+        // Internal services (the web server, the agent) present the service token; everyone else is
+        // a third party whose reads are lock-checked.
+        Optional<String> response = handler.handle(body, serviceToken.matches(authorization));
         return response.map(json -> ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(json))
                 .orElseGet(() -> ResponseEntity.accepted().build());
     }

@@ -26,7 +26,7 @@ class ReportLockHttpClientTest {
 
     ReportLockHttpClient client(String token) {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://web.test")
-                .requestInterceptor(new RetryingInterceptor(FAST, true));
+                .requestInterceptor(new RetryingInterceptor(FAST, false)); // as create() builds it
         server = MockRestServiceServer.bindTo(builder).build();
         return new ReportLockHttpClient(builder.build(), token);
     }
@@ -71,5 +71,15 @@ class ReportLockHttpClientTest {
     void theTokenIsNeverPrinted() {
         assertThat(new ReportLockProperties(null, "secret-token", null).toString())
                 .doesNotContain("secret-token").contains("localhost:8080");
+    }
+
+    @Test
+    void aSlowLookupIsNotRepeated() {
+        ReportLockHttpClient client = client("t0ken");
+        server.expect(times(1), requestTo(URL))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withException(
+                        new java.net.SocketTimeoutException("read timed out")));
+        assertThatThrownBy(() -> client.isLocked(Ssn.parse("123-45-6789"))).isInstanceOf(ServiceUnavailableException.class);
+        server.verify();
     }
 }
