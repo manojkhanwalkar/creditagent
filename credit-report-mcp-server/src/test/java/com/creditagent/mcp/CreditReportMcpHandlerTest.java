@@ -215,4 +215,67 @@ class CreditReportMcpHandlerTest {
         JsonNode response = mapper.readTree(handler.handle(READ, true).orElseThrow());
         assertThat(response.has("result")).isTrue();
     }
+
+    @Test
+    void aRequestWithoutAMethodIsInvalid() throws IOException {
+        assertThat(call("{\"jsonrpc\":\"2.0\",\"id\":9}").at("/error/code").asInt())
+                .isEqualTo(CreditReportMcpHandler.INVALID_REQUEST);
+    }
+
+    @Test
+    void toolCallsNeedANumericId() throws IOException {
+        JsonNode response = call("""
+                {"jsonrpc":"2.0","id":"abc","method":"tools/call",
+                 "params":{"name":"get_credit_report","arguments":{"ssn":"123-45-6789"}}}
+                """);
+        assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.INVALID_REQUEST);
+    }
+
+    @Test
+    void theToolExplainsAnInvalidSsnWithoutEchoingIt() throws IOException {
+        JsonNode response = call("""
+                {"jsonrpc":"2.0","id":10,"method":"tools/call",
+                 "params":{"name":"get_credit_report","arguments":{"ssn":"000-12-3456"}}}
+                """);
+        assertThat(response.toString()).contains("area number").doesNotContain("3456");
+        assertThat(sentToNrg.get()).isNull();
+    }
+
+    @Test
+    void aFailingReadIsAnInternalErrorWithoutDetails() throws IOException {
+        CreditReportService failing = new CreditReportService(
+                new CreditFileRepository(new McpServerProperties(dir, KEY, null), new CreditFileNames(KEY)),
+                bureauReports -> {
+                    throw new IllegalStateException("NRG down at http://internal");
+                });
+        McpImplementation info = new McpImplementation("credit-report-mcp", "test");
+        CreditReportMcpHandler broken = new CreditReportMcpHandler(
+                new McpServer(List.of(new CreditReportTools(failing, ssn -> false)), info), info, failing, ssn -> false);
+        JsonNode response = mapper.readTree(broken.handle(READ, true).orElseThrow());
+        assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.INTERNAL_ERROR);
+        assertThat(response.toString()).doesNotContain("internal").doesNotContain("123456789");
+    }
+
+    @Test
+    void theFileStoreRefusesOversizedFilesAndIgnoresSymlinks() throws IOException {
+        CreditFileNames names = new CreditFileNames(KEY);
+        CreditFileRepository repository = new CreditFileRepository(new McpServerProperties(dir, KEY, null), names);
+        Ssn big = Ssn.parse("234-56-7890");
+        Files.createDirectories(dir.resolve("Experian"));
+        Files.write(dir.resolve("Experian").resolve(names.fileNameFor(big)), new byte[(int) CreditFileRepository.MAX_FILE_BYTES + 1]);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository.findBureauReports(big))
+                .isInstanceOf(IllegalStateException.class).hasMessageNotContaining("7890");
+
+        Ssn linked = Ssn.parse("345-67-8901");
+        Path target = Files.writeString(dir.resolve("elsewhere.json"), EQUIFAX);
+        Files.createSymbolicLink(dir.resolve("Equifax").resolve(names.fileNameFor(linked)), target);
+        assertThat(repository.findBureauReports(linked)).isEmpty();
+    }
+
+    @Test
+    void theHmacKeyIsNeverPrinted() {
+        McpServerProperties properties = new McpServerProperties(dir, KEY, null);
+        assertThat(properties.allowedOrigins()).isEmpty();
+        assertThat(properties.toString()).doesNotContain(KEY).contains("<redacted>");
+    }
 }

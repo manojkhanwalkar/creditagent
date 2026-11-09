@@ -264,6 +264,14 @@ class McpCreditReportSourceTest {
         assertThat(initializes.get()).as("no connection opened after close()").isEqualTo(initsBefore);
     }
 
+    @Test
+    void anUnreadableReportIsAServerProblemNotAMissingReport() {
+        assertThatThrownBy(() -> source.findReport(Ssn.parse("456-78-9012")))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("unreadable")
+                .hasMessageNotContaining("9012");
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             requests.incrementAndGet();
@@ -317,7 +325,10 @@ class McpCreditReportSourceTest {
                     if (uri.endsWith("123456789")) {
                         sleep(slowReadMillis);
                     }
-                    if (uri.equals("credit-report://ssn/123456789")) {
+                    if (uri.equals("credit-report://ssn/456789012")) {
+                        response.putObject("result").putArray("contents").addObject()
+                                .put("uri", uri).put("mimeType", "application/json").put("text", "not a report");
+                    } else if (uri.equals("credit-report://ssn/123456789")) {
                         response.putObject("result").putArray("contents").addObject()
                                 .put("uri", uri).put("mimeType", "application/json").put("text", REPORT_JSON);
                     } else {

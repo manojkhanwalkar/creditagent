@@ -40,6 +40,8 @@
         <langchain4j.version>1.23.0</langchain4j.version>
         <langchain4j-beta.version>1.23.0-beta33</langchain4j-beta.version>
         <a2a-java-sdk.version>1.5.0.Final</a2a-java-sdk.version>
+        <!-- Line coverage every module must keep (the whole project targets 95% in CI). -->
+        <coverage.module.minimum>0.90</coverage.module.minimum>
         <jacoco.version>0.8.16</jacoco.version>
         <aws-sdk.version>2.57.0</aws-sdk.version>
         <nimbus-jose-jwt.version>10.10</nimbus-jose-jwt.version>
@@ -137,7 +139,34 @@
                         <phase>verify</phase>
                         <goals><goal>report</goal></goals>
                     </execution>
+                    <!-- Per-module floor: the build fails if a module's line coverage drops below it.
+                         CI also checks the whole project against the 95% target (.github/scripts/coverage.sh). -->
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${coverage.module.minimum}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
                 </executions>
+                <configuration>
+                    <!-- Spring Boot launchers only call SpringApplication.run. -->
+                    <excludes>
+                        <exclude>**/*Application.class</exclude>
+                    </excludes>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

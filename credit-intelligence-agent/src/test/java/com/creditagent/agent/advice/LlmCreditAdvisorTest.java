@@ -81,4 +81,32 @@ class LlmCreditAdvisorTest {
             assertThat(r.impact()).isEqualTo(Impact.MEDIUM);
         });
     }
+
+    @Test
+    void aMissingSummaryIsEmptyAndANullDraftFallsBackToRules() {
+        LlmCreditAdvisor noSummary = new LlmCreditAdvisor(
+                (score, band, report) -> new LlmCreditAdvisor.AdviceDraft(
+                        null, List.of(new LlmCreditAdvisor.Item("Pay on time", null, null))),
+                json, rules);
+        CreditAdvice advice = noSummary.advise(TestReports.troubled(), CreditScore.of(540));
+        assertThat(advice.summary()).isEmpty();
+        assertThat(advice.recommendations().getFirst().impact()).isEqualTo(Impact.MEDIUM);
+        assertThat(advice.recommendations().getFirst().detail()).isEmpty();
+
+        LlmCreditAdvisor nothing = new LlmCreditAdvisor((score, band, report) -> null, json, rules);
+        assertThat(nothing.advise(TestReports.troubled(), CreditScore.of(540)).source()).isEqualTo("rules");
+    }
+
+    @Test
+    void theModelIsWrappedInAnAiService() {
+        // The public constructor builds a LangChain4j AI service around any chat model.
+        dev.langchain4j.model.chat.ChatModel model = new dev.langchain4j.model.chat.ChatModel() {
+            @Override
+            public dev.langchain4j.model.chat.response.ChatResponse doChat(dev.langchain4j.model.chat.request.ChatRequest request) {
+                throw new IllegalStateException("offline");
+            }
+        };
+        LlmCreditAdvisor advisor = new LlmCreditAdvisor(model, json, rules);
+        assertThat(advisor.advise(TestReports.troubled(), CreditScore.of(540)).source()).isEqualTo("rules");
+    }
 }
