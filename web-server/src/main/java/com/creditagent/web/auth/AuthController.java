@@ -4,7 +4,6 @@ import com.creditagent.clients.ServiceUnavailableException;
 import com.creditagent.common.SafeLogging;
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
 import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
-import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
 import com.creditagent.web.kyc.DocumentRejectedException;
 import jakarta.validation.Valid;
@@ -15,7 +14,6 @@ import java.io.UncheckedIOException;
 import java.net.URI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -138,12 +136,5 @@ class AuthController {
         log.warn("KYC provider failure: {}", SafeLogging.describe(e));
         return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
                 "We could not check your Social Security card just now. Please try again in a few minutes.");
-    }
-
-    @ExceptionHandler(UnauthenticatedException.class)
-    ResponseEntity<ProblemDetail> unauthenticated(UnauthenticatedException e) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
-                .body(ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage()));
     }
 }

@@ -1,7 +1,6 @@
 package com.creditagent.mcp;
 
 import com.creditagent.clients.ReportLockCheck;
-import com.creditagent.clients.ServiceUnavailableException;
 import com.creditagent.common.SafeLogging;
 import com.creditagent.common.InvalidSsnException;
 import com.creditagent.common.Ssn;
@@ -59,7 +58,7 @@ public class CreditReportMcpHandler {
     static final int RESOURCE_NOT_FOUND = -32002;
     /** Server-defined: the consumer has locked their credit report against third-party pulls. */
     public static final int REPORT_LOCKED = -32010;
-    static final String LOCKED_MESSAGE = "This credit report is locked by its owner.";
+    static final String LOCKED_MESSAGE = ReportLockCheck.LOCKED_MESSAGE;
 
     private static final Pattern RESOURCE_URI = Pattern.compile("^credit-report://ssn/([0-9-]{9,11})$");
 
@@ -171,14 +170,15 @@ public class CreditReportMcpHandler {
             return error(id, INVALID_PARAMS, e.getMessage());
         }
         if (!trusted) {
-            try {
-                if (locks.isLocked(ssn)) {
+            switch (locks.decide(ssn)) {
+                case LOCKED -> {
                     return error(id, REPORT_LOCKED, LOCKED_MESSAGE);
                 }
-            } catch (ServiceUnavailableException e) {
                 // Fail closed: an unknown lock status never releases the report.
-                log.warn("Report lock check failed: {}", SafeLogging.describe(e));
-                return error(id, INTERNAL_ERROR, "Internal error");
+                case UNAVAILABLE -> {
+                    return error(id, INTERNAL_ERROR, "Internal error");
+                }
+                case RELEASE -> { }
             }
         }
         Optional<String> report = reports.findNormalizedReport(ssn);

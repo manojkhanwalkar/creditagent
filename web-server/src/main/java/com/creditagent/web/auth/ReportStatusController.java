@@ -1,15 +1,9 @@
 package com.creditagent.web.auth;
 
-import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.ProblemDetail;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
@@ -55,12 +49,5 @@ class ReportStatusController {
             @Valid @RequestBody ReportStatusBody request,
             @RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
         return ReportStatusBody.of(auth.setReportStatus(user, ReportStatus.valueOf(request.reportStatus())));
-    }
-
-    @ExceptionHandler(UnauthenticatedException.class)
-    ResponseEntity<ProblemDetail> unauthenticated(UnauthenticatedException e) {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
-                .body(ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage()));
     }
 }
