@@ -130,7 +130,9 @@ class CreditAdviceClientTest {
             throw sneaky(new java.io.IOException("broken pipe"));
         }, json);
         assertThatThrownBy(() -> client.adviceFor(Ssn.parse("123-45-6789")))
-                .isInstanceOf(CreditAdviceClient.AgentCallException.class);
+                .isInstanceOf(CreditAdviceClient.AgentCallException.class)
+                .hasRootCauseInstanceOf(java.io.IOException.class)
+                .hasRootCauseMessage("broken pipe");
     }
 
     @Test

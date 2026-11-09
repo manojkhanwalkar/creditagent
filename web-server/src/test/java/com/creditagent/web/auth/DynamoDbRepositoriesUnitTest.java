@@ -320,6 +320,9 @@ class DynamoDbRepositoriesUnitTest {
         ArgumentCaptor<CreateTableRequest> created = ArgumentCaptor.forClass(CreateTableRequest.class);
         verify(dynamo, times(2)).createTable(created.capture());
         assertThat(created.getAllValues()).extracting(CreateTableRequest::tableName).containsExactly("users", "sessions");
+        ArgumentCaptor<DescribeTableRequest> waitedFor = ArgumentCaptor.forClass(DescribeTableRequest.class);
+        verify(waiter, times(2)).waitUntilTableExists(waitedFor.capture());
+        assertThat(waitedFor.getAllValues()).extracting(DescribeTableRequest::tableName).containsExactly("users", "sessions");
         ArgumentCaptor<UpdateTimeToLiveRequest> ttl = ArgumentCaptor.forClass(UpdateTimeToLiveRequest.class);
         verify(dynamo).updateTimeToLive(ttl.capture());
         assertThat(ttl.getValue().tableName()).isEqualTo("sessions");
