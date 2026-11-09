@@ -31,6 +31,10 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>The MCP connection is opened lazily on first use and re-opened after a transport failure, so a
  * caller can start before the MCP server is up.
  *
+ * <p>Concurrent reads share one connection. After a transport failure that connection is retired:
+ * new reads open a fresh one, and the retired one is closed only when the reads still using it have
+ * finished, so one caller's failure never cancels another caller's read.
+ *
  * <p>Retries (with the backoff of {@link RetrySettings}) happen only when the MCP server did no work:
  * the request never arrived (connection refused, unknown host), or it was refused with 429, 502 or
  * 503. A refusal is retried after {@link #REFUSAL_PAUSE}, since the server's {@code Retry-After}
@@ -70,7 +74,10 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private final String serviceToken;
     private final JsonMapper jsonMapper;
     private final ReentrantLock lock = new ReentrantLock();
-    private volatile McpClient client;
+    /** The connection new reads use; replaced after a transport failure. Null until first use. */
+    private volatile Connection connection;
+    /** Set by {@link #close()}, under {@link #lock}: no connection is opened after it. */
+    private boolean shutDown;
 
     /**
      * @param timeout longest wait for one look-up, reconnects and retries included; make it longer than
@@ -137,8 +144,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
 
     /**
      * Runs {@code call} on a virtual thread and waits at most {@code timeout} for it. A FutureTask,
-     * not a CompletableFuture: its cancel(true) interrupts the abandoned call, which then drops its
-     * connection instead of staying blocked on the server.
+     * not a CompletableFuture: its cancel(true) interrupts the abandoned call, which then retires its
+     * connection instead of staying blocked on the server (other reads on it still finish).
      */
     private <T> T withinTimeout(Callable<T> call) {
         FutureTask<T> task = new FutureTask<>(call);
@@ -159,14 +166,16 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     }
 
     private McpReadResourceResult read(Ssn ssn, int attempt) {
+        Connection leased = lease();
         try {
-            return client().readResource(resourceUri(ssn));
+            return leased.client.readResource(resourceUri(ssn));
         } catch (RuntimeException e) {
             boolean refused = refusedStatus(e);
             if (findMcpException(e) == null && !refused) {
-                // The connection or request failed: drop the client so the next try reconnects. A
+                // The connection or request failed: retire this connection so the next read
+                // reconnects. Reads still in flight on it finish first; only then is it closed. A
                 // refusal (429/502/503) came over a working connection, so that is kept.
-                reset();
+                retire(leased);
             }
             if (refused && attempt < retry.maxAttempts() && !Retries.pause(refusalPause)) {
                 // No cause, so the retry predicate does not see the refusal and stops here.
@@ -175,6 +184,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
                 throw interrupted;
             }
             throw e;
+        } finally {
+            leased.release();
         }
     }
 
@@ -196,47 +207,70 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
         }
     }
 
-    private McpClient client() {
-        McpClient current = client;
-        if (current != null) {
-            return current;
-        }
-        lock.lock();
-        try {
-            if (client == null) {
-                StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder()
-                        .url(mcpUrl)
-                        .timeout(timeout)
-                        // Never enable request/response logging: payloads contain SSNs and reports.
-                        .logRequests(false)
-                        .logResponses(false)
-                        .customHeaders(serviceToken == null
-                                ? java.util.Map.of()
-                                : java.util.Map.of("Authorization", "Bearer " + serviceToken))
-                        .build();
-                client = DefaultMcpClient.builder()
-                        .key(clientKey)
-                        .transport(transport)
-                        .protocolVersion(PROTOCOL_VERSION)
-                        .initializationTimeout(timeout)
-                        .resourcesTimeout(timeout)
-                        .build();
-                log.info("Connected to Credit Report MCP server at {}", mcpUrl);
+    /**
+     * The current connection, opened on first use, with one more read counted against it. Every
+     * lease is paired with {@link Connection#release()}.
+     */
+    private Connection lease() {
+        while (true) {
+            Connection current = connection;
+            if (current == null) {
+                lock.lock();
+                try {
+                    if (shutDown) {
+                        throw new IllegalStateException("Credit Report MCP source is closed");
+                    }
+                    if (connection == null) {
+                        connection = new Connection(open());
+                        log.info("Connected to Credit Report MCP server at {}", mcpUrl);
+                    }
+                    current = connection;
+                } finally {
+                    lock.unlock();
+                }
             }
-            return client;
-        } finally {
-            lock.unlock();
+            if (current.acquire()) {
+                return current;
+            }
+            // Retired between the read of the field and the lease: try the replacement.
         }
     }
 
-    private void reset() {
+    private McpClient open() {
+        StreamableHttpMcpTransport transport = StreamableHttpMcpTransport.builder()
+                .url(mcpUrl)
+                .timeout(timeout)
+                // Never enable request/response logging: payloads contain SSNs and reports.
+                .logRequests(false)
+                .logResponses(false)
+                .customHeaders(serviceToken == null
+                        ? java.util.Map.of()
+                        : java.util.Map.of("Authorization", "Bearer " + serviceToken))
+                .build();
+        return DefaultMcpClient.builder()
+                .key(clientKey)
+                .transport(transport)
+                .protocolVersion(PROTOCOL_VERSION)
+                .initializationTimeout(timeout)
+                .resourcesTimeout(timeout)
+                .build();
+    }
+
+    /**
+     * Stops new reads from using {@code failed}, if it is still the current connection (a failure
+     * on an already-replaced connection must not drop its replacement), and closes it once the
+     * reads still using it have finished.
+     */
+    private void retire(Connection failed) {
         lock.lock();
         try {
-            closeQuietly(client);
-            client = null;
+            if (connection == failed) {
+                connection = null;
+            }
         } finally {
             lock.unlock();
         }
+        failed.retire();
     }
 
     private static McpException findMcpException(Throwable t) {
@@ -259,8 +293,65 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
         }
     }
 
+    /**
+     * Stops new reads and retires the current connection: it is closed once the reads still using
+     * it have finished. Under the lock, so a connection being opened right now is retired too, and
+     * none is opened afterwards.
+     */
     @Override
     public void close() {
-        reset();
+        Connection current;
+        lock.lock();
+        try {
+            shutDown = true;
+            current = connection;
+            connection = null;
+        } finally {
+            lock.unlock();
+        }
+        if (current != null) {
+            current.retire();
+        }
+    }
+
+    /**
+     * One MCP client shared by concurrent reads, counted so that retiring it never cancels a read
+     * still in flight: it is closed when it is both retired and idle.
+     */
+    private static final class Connection {
+        final McpClient client;
+        private int inUse;
+        private boolean retired;
+        private boolean closed;
+
+        Connection(McpClient client) {
+            this.client = client;
+        }
+
+        /** @return false if retired: the caller must use the replacement connection */
+        synchronized boolean acquire() {
+            if (retired) {
+                return false;
+            }
+            inUse++;
+            return true;
+        }
+
+        synchronized void release() {
+            inUse--;
+            closeIfIdle();
+        }
+
+        synchronized void retire() {
+            retired = true;
+            closeIfIdle();
+        }
+
+        private void closeIfIdle() {
+            if (retired && inUse == 0 && !closed) {
+                closed = true;
+                closeQuietly(client);
+            }
+        }
     }
 }
