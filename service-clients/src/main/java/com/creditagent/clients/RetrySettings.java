@@ -46,14 +46,17 @@ public record RetrySettings(
 
     /**
      * The longest a call with these settings can take when every try runs to {@code timeout}: all
-     * tries plus every wait at its longest (jitter included). A caller of a service that retries
-     * this way must wait longer than this, or it gives up on work still in progress.
+     * tries plus every wait at its longest. Before each retry that is the backoff with its full
+     * jitter, plus a {@code Retry-After} of up to {@code maxDelay}, which {@link RetryingInterceptor}
+     * waits out first. A caller of a service that retries this way must wait longer than this, or it
+     * gives up on work still in progress.
      */
     public Duration worstCase(Duration timeout) {
         Duration total = timeout.multipliedBy(maxAttempts);
         double delay = initialDelay.toNanos();
         for (int retry = 1; retry < maxAttempts; retry++) {
-            long wait = Math.min((long) delay, maxDelay.toNanos()) + jitter.toNanos();
+            long retryAfter = maxDelay.toNanos();
+            long wait = retryAfter + Math.min((long) delay, maxDelay.toNanos()) + jitter.toNanos();
             total = total.plusNanos(wait);
             delay *= multiplier;
         }

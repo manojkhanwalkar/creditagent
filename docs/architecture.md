@@ -81,14 +81,14 @@ Every service-to-service call is bounded, retried when the failure is recoverabl
 
 | Caller → callee | Timeout | Covers |
 |---|---|---|
-| MCP server → NRG, web server and agent → Score Calculator | `DOWNSTREAM_TIMEOUT` 5 s per try; 3 tries + waits ≈ 15.4 s | — |
-| web server and agent → MCP server | `MCP_TIMEOUT` 20 s | the MCP server's NRG retries (≈ 15.4 s) plus the file reads |
+| MCP server → NRG, web server and agent → Score Calculator | `DOWNSTREAM_TIMEOUT` 5 s per try; 3 tries + backoff + up to 1 s `Retry-After` per retry ≈ 17.4 s | — |
+| web server and agent → MCP server | `MCP_TIMEOUT` 20 s for the whole look-up: reconnect, every try and the waits, enforced by the client and interrupting the call | the MCP server's NRG retries (≈ 17.4 s) plus the file reads |
 | agent → Anthropic (when `LLM_ENABLED`) | `LLM_TIMEOUT` 30 s, one try | on failure the rules answer at once |
-| client agent → intelligence agent | `INTELLIGENCE_AGENT_TIMEOUT` 75 s, enforced by the client and interrupting the call | the agent's worst case: MCP 20 s + Score Calculator 15.4 s + LLM 30 s ≈ 65 s |
+| client agent → intelligence agent | `INTELLIGENCE_AGENT_TIMEOUT` 75 s, enforced by the client and interrupting the call | the agent's worst case: MCP 20 s + Score Calculator 17.4 s + LLM 30 s ≈ 67.4 s |
 | web server → KYC | `KYC_TIMEOUT` 10 s | — |
 | web server → DynamoDB | `DYNAMODB_TIMEOUT` 5 s per call, retries included | — |
 
-`TimeoutBudgetTest`, `AgentPropertiesTest` and `RequestLimitsTest` check these orderings, so a changed default that breaks one fails the build.
+`TimeoutBudgetTest`, `AgentPropertiesTest` and `RequestLimitsTest` check these orderings for the defaults (`RequestLimitsTest` repeats the agent's MCP and LLM defaults, which live in another module). The budgets assume the default `DOWNSTREAM_TIMEOUT`: raise `MCP_TIMEOUT` and `INTELLIGENCE_AGENT_TIMEOUT` with it.
 
 **Retries with exponential backoff and jitter.** `service-clients` builds every `RestClient` with `RetryingInterceptor`, which uses Spring Framework's `RetryTemplate`. By default a call is tried 3 times, waiting about 100 ms and then 200 ms (doubling, capped at 1 s), each wait lengthened at random by up to 50 ms (Spring never shortens it below the base delay) so that callers which failed together do not all retry together (`CREDIT_RETRY_*`). What is retried depends on whether repeating the call is safe:
 

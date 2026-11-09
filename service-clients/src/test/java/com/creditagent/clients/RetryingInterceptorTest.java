@@ -208,8 +208,8 @@ class RetryingInterceptorTest {
 
     @Test
     void worstCaseCountsEveryTryAndEveryWait() {
-        // 3 × 5 s + (100 + 50) ms + (200 + 50) ms
-        assertThat(RetrySettings.DEFAULTS.worstCase(Duration.ofSeconds(5))).isEqualTo(Duration.ofMillis(15_400));
+        // 3 × 5 s + (1 s Retry-After + 100 + 50 ms) + (1 s Retry-After + 200 + 50 ms)
+        assertThat(RetrySettings.DEFAULTS.worstCase(Duration.ofSeconds(5))).isEqualTo(Duration.ofMillis(17_400));
         assertThat(RetrySettings.none().worstCase(Duration.ofSeconds(5))).isEqualTo(Duration.ofSeconds(5));
     }
 }

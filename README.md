@@ -88,13 +88,13 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `NRG_MAX_REQUEST_BYTES` | NRG | `3200000` (larger bodies get 413) |
 | `CREDIT_SEED_SSNS` | generator | none |
 | `CREDIT_MCP_URL` | web server, agent | `http://localhost:8082/mcp` |
-| `MCP_TIMEOUT` | web server, agent | `20s` (one MCP read; longer than `DOWNSTREAM_TIMEOUT` because it includes the MCP server's own retries of NRG) |
+| `MCP_TIMEOUT` | web server, agent | `20s` (one MCP look-up, reconnects and retries included; longer than `DOWNSTREAM_TIMEOUT` because it includes the MCP server's own retries of NRG. Raise it if you raise `DOWNSTREAM_TIMEOUT`) |
 | `SCORE_CALCULATOR_URL` | web server, agent | `http://localhost:8081` |
 | `RATE_LIMIT_PER_MINUTE` | web server | `20` |
 | `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
-| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `75s` (longest wait for the agent's answer; longer than the agent's own worst case of about 65 s) |
+| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `75s` (longest wait for the agent's answer; longer than the agent's own worst case of about 67 s) |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
 | `LLM_TIMEOUT` | agent | `30s` (one try; on any failure the rule-based advice answers instead) |
 | `KYC_URL`, `KYC_TIMEOUT` | web server | `http://localhost:8087`, `10s` |

@@ -2,6 +2,7 @@ package com.creditagent.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.creditagent.clients.RetrySettings;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -37,8 +38,12 @@ class RequestLimitsTest {
 
     @Test
     void theClientWaitsLongerThanTheAgentsOwnWorstCase() {
-        // Agent: MCP read 20 s + Score Calculator with retries 15.4 s + one LLM try 30 s.
-        Duration agentWorstCase = Duration.ofSeconds(20).plusMillis(15_400).plusSeconds(30);
+        // Agent: one MCP look-up (MCP_TIMEOUT 20 s) + the Score Calculator with its retries
+        // (DOWNSTREAM_TIMEOUT 5 s per try) + one LLM try (LLM_TIMEOUT 30 s). The MCP and LLM
+        // defaults live in the agent module, so they are repeated here.
+        Duration agentWorstCase = Duration.ofSeconds(20)
+                .plus(RetrySettings.DEFAULTS.worstCase(Duration.ofSeconds(5)))
+                .plusSeconds(30);
         assertThat(properties.timeout()).isGreaterThan(agentWorstCase);
     }
 }
