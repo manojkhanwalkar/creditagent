@@ -67,12 +67,13 @@ class AuthControllerTest {
         static final InMemoryRepositories.MutableClock CLOCK =
                 new InMemoryRepositories.MutableClock(Instant.parse("2026-11-08T12:00:00Z"));
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
+        static final InMemoryRepositories.Users USERS = new InMemoryRepositories.Users();
         static final FakeIdentityVerifier KYC = new FakeIdentityVerifier();
 
         @Bean
         AuthService authService() {
             return new AuthService(
-                    new InMemoryRepositories.Users(), SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")), KYC,
+                    USERS, SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")), KYC,
                     new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), CLOCK),
                     Duration.ofMinutes(5), CLOCK);
         }
@@ -267,5 +268,27 @@ class AuthControllerTest {
         mvc.perform(put("/api/v1/credit-report/status").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reportStatus\":\"LOCKED\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aReportStatusCallForAnAccountThatIsGoneIs401WithTheBearerChallenge() throws Exception {
+        // The token and session are still valid, so the filter lets the call through; the
+        // controller's own 401 (AuthErrorHandling) must answer it with the same challenge.
+        mvc.perform(register("mona", "789-01-2345")).andExpect(status().isCreated());
+        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"mona\",\"password\":\"" + PASSWORD + "\"}"))
+                .andReturn().getResponse().getContentAsString();
+        String bearer = "Bearer " + JsonPath.read(login, "$.token");
+        Wiring.USERS.byId.remove("mona");
+
+        mvc.perform(get("/api/v1/credit-report/status").header("Authorization", bearer))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andExpect(jsonPath("$.detail").value(Matchers.containsString("ended")));
+        mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reportStatus\":\"LOCKED\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andExpect(jsonPath("$.detail").value(Matchers.containsString("ended")));
     }
 }

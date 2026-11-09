@@ -45,7 +45,7 @@ public class CreditIntelligenceService {
     public static class ReportLockedException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
-        public static final String MESSAGE = "This credit report is locked by its owner.";
+        public static final String MESSAGE = ReportLockCheck.LOCKED_MESSAGE;
 
         ReportLockedException() {
             super(MESSAGE);

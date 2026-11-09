@@ -1,14 +1,10 @@
 package com.creditagent.mcp;
 
 import com.creditagent.clients.ReportLockCheck;
-import com.creditagent.clients.ServiceUnavailableException;
 import com.creditagent.common.InvalidSsnException;
-import com.creditagent.common.SafeLogging;
 import com.creditagent.common.Ssn;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -23,10 +19,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class CreditReportTools {
 
-    private static final Logger log = LoggerFactory.getLogger(CreditReportTools.class);
-
     static final String NOT_FOUND = "No credit report found for that SSN.";
-    static final String LOCKED = "This credit report is locked by its owner.";
+    static final String LOCKED = ReportLockCheck.LOCKED_MESSAGE;
     static final String LOCK_UNAVAILABLE = "The credit report cannot be released right now. Please try again later.";
 
     private final CreditReportService reports;
@@ -45,14 +39,10 @@ public class CreditReportTools {
         } catch (InvalidSsnException e) {
             return e.getMessage();
         }
-        try {
-            if (locks.isLocked(parsed)) {
-                return LOCKED;
-            }
-        } catch (ServiceUnavailableException e) {
-            log.warn("Report lock check failed: {}", SafeLogging.describe(e));
-            return LOCK_UNAVAILABLE;
-        }
-        return reports.findNormalizedReport(parsed).orElse(NOT_FOUND);
+        return switch (locks.decide(parsed)) {
+            case LOCKED -> LOCKED;
+            case UNAVAILABLE -> LOCK_UNAVAILABLE;
+            case RELEASE -> reports.findNormalizedReport(parsed).orElse(NOT_FOUND);
+        };
     }
 }

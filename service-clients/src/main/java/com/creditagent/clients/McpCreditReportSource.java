@@ -127,7 +127,7 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
             result = withinTimeout(() ->
                     Retries.call(retry, McpCreditReportSource::isRetryable, () -> read(ssn, attempt.incrementAndGet())));
         } catch (RuntimeException e) {
-            McpException mcpError = findMcpException(e);
+            McpException mcpError = Retries.find(e, McpException.class);
             if (mcpError != null && mcpError.errorCode() == RESOURCE_NOT_FOUND) {
                 return Optional.empty();
             }
@@ -171,7 +171,7 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
             return leased.client.readResource(resourceUri(ssn));
         } catch (RuntimeException e) {
             boolean refused = refusedStatus(e);
-            if (findMcpException(e) == null && !refused) {
+            if (Retries.find(e, McpException.class) == null && !refused) {
                 // The connection or request failed: retire this connection so the next read
                 // reconnects. Reads still in flight on it finish first; only then is it closed. A
                 // refusal (429/502/503) came over a working connection, so that is kept.
@@ -191,7 +191,7 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
 
     /** The read never reached the MCP server, or the server refused it before doing any work. */
     static boolean isRetryable(Throwable e) {
-        return findMcpException(e) == null && (Retries.notDelivered(e) || refusedStatus(e));
+        return Retries.find(e, McpException.class) == null && (Retries.notDelivered(e) || refusedStatus(e));
     }
 
     private static boolean refusedStatus(Throwable e) {
@@ -271,15 +271,6 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
             lock.unlock();
         }
         failed.retire();
-    }
-
-    private static McpException findMcpException(Throwable t) {
-        for (Throwable cause = t; cause != null; cause = cause.getCause()) {
-            if (cause instanceof McpException mcp) {
-                return mcp;
-            }
-        }
-        return null;
     }
 
     private static void closeQuietly(McpClient c) {
