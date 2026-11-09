@@ -106,7 +106,9 @@ Every endpoint that reads an untrusted body caps it with `RequestSizeLimitFilter
 | KYC `/api/*` | 10 MB plus multipart framing |
 | MCP `/mcp` | 64 KiB. Before the deep review, the whole body was buffered into a String first and only then checked |
 | intelligence agent (A2A) | 64 KiB |
-| web server | multipart 5 MB / 6 MB; JSON bodies rely on binding |
+| web server | JSON endpoints (`/credit-score`, `/auth/login`) 64 KiB; registration multipart 5 MB / 6 MB |
+| client agent `/api/*` | 4 KiB |
+| report generator `/api/*` | 16 KiB |
 
 Every service also refuses excess load before doing any work: a token bucket (429) and an in-flight cap (503), both with `Retry-After` (`credit.inbound.*`, see the architecture's Resilience section).
 **Remaining:** cap request size at the gateway or ingress as well.

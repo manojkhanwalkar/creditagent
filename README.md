@@ -88,13 +88,15 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `NRG_MAX_REQUEST_BYTES` | NRG | `3200000` (larger bodies get 413) |
 | `CREDIT_SEED_SSNS` | generator | none |
 | `CREDIT_MCP_URL` | web server, agent | `http://localhost:8082/mcp` |
+| `MCP_TIMEOUT` | web server, agent | `20s` (one MCP read; longer than `DOWNSTREAM_TIMEOUT` because it includes the MCP server's own retries of NRG) |
 | `SCORE_CALCULATOR_URL` | web server, agent | `http://localhost:8081` |
 | `RATE_LIMIT_PER_MINUTE` | web server | `20` |
 | `SCORE_MAX_REQUEST_BYTES` | score calculator | `262144` (256 KiB; larger bodies get 413) |
 | `AGENT_PUBLIC_URL` | agent | `http://localhost:<port>` |
 | `INTELLIGENCE_AGENT_URL` | client agent | `http://localhost:8085` |
-| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `60s` (longest wait for the agent's answer, which may include an LLM call) |
+| `INTELLIGENCE_AGENT_TIMEOUT` | client agent | `75s` (longest wait for the agent's answer; longer than the agent's own worst case of about 65 s) |
 | `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `LLM_MODEL` | agent | `false`, none, `claude-sonnet-5-5` |
+| `LLM_TIMEOUT` | agent | `30s` (one try; on any failure the rule-based advice answers instead) |
 | `KYC_URL`, `KYC_TIMEOUT` | web server | `http://localhost:8087`, `10s` |
 | `SSN_CARD_MAX_BYTES`, `SSN_CARD_MAX_REQUEST_BYTES` | web server | `5MB`, `6MB` (larger card photos or form bodies get 413). The UI checks the same 5 MB before uploading (`MAX_CARD_BYTES` in `auth.js`); change both together |
 | `KYC_MIN_SHARPNESS` | KYC service | `100` (variance of the Laplacian; lower scores are refused as blurred) |

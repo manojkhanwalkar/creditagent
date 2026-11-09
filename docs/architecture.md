@@ -77,23 +77,38 @@ flowchart LR
 
 Every service-to-service call is bounded, retried when the failure is recoverable, and refused early when the callee is overloaded.
 
-**Timeouts.** Every outbound call has connect and read timeouts (`DOWNSTREAM_TIMEOUT`, 5 s; `KYC_TIMEOUT`, 10 s; `DYNAMODB_TIMEOUT`, 5 s per call including retries). The A2A client waits for the agent's answer with no limit of its own, so the client agent bounds each call itself (`INTELLIGENCE_AGENT_TIMEOUT`, 60 s, enough for an LLM answer).
+**Timeouts that shrink down the chain.** Every outbound call has a timeout, and each caller waits longer than everything the service it calls may do, retries included. Otherwise a caller gives up on work still in progress, and its retry doubles the load at the worst moment.
+
+| Caller → callee | Timeout | Covers |
+|---|---|---|
+| MCP server → NRG, web server and agent → Score Calculator | `DOWNSTREAM_TIMEOUT` 5 s per try; 3 tries + waits ≈ 15.4 s | — |
+| web server and agent → MCP server | `MCP_TIMEOUT` 20 s | the MCP server's NRG retries (≈ 15.4 s) plus the file reads |
+| agent → Anthropic (when `LLM_ENABLED`) | `LLM_TIMEOUT` 30 s, one try | on failure the rules answer at once |
+| client agent → intelligence agent | `INTELLIGENCE_AGENT_TIMEOUT` 75 s, enforced by the client and interrupting the call | the agent's worst case: MCP 20 s + Score Calculator 15.4 s + LLM 30 s ≈ 65 s |
+| web server → KYC | `KYC_TIMEOUT` 10 s | — |
+| web server → DynamoDB | `DYNAMODB_TIMEOUT` 5 s per call, retries included | — |
+
+`TimeoutBudgetTest`, `AgentPropertiesTest` and `RequestLimitsTest` check these orderings, so a changed default that breaks one fails the build.
 
 **Retries with exponential backoff and jitter.** `service-clients` builds every `RestClient` with `RetryingInterceptor`, which uses Spring Framework's `RetryTemplate`. By default a call is tried 3 times, waiting about 100 ms and then 200 ms (doubling, capped at 1 s), each wait lengthened at random by up to 50 ms (Spring never shortens it below the base delay) so that callers which failed together do not all retry together (`CREDIT_RETRY_*`). What is retried depends on whether repeating the call is safe:
 
 | Call | Safe to repeat? | Retried on |
 |---|---|---|
 | web server → score calculator, agent → score calculator, MCP server → NRG | yes (pure computations) | any I/O failure or timeout; 429, 502, 503, 504 |
-| web server, agent → MCP `resources/read` | yes (a read) | transport failures only (the client reconnects). An MCP error answer is not retried: the MCP server already retried NRG, and retrying at both layers would multiply attempts |
+| web server, agent → MCP `resources/read` | yes (a read) | only when the MCP server did no work: the request never arrived (the client reconnects), or it was refused with 429, 502 or 503 (retried after 1 s). Never after a timeout, and never on an MCP error answer: the MCP server already retries NRG, and a second read would double that work |
 | web server → KYC | no (a real provider may bill or record each check) | only failures that prove the request never arrived (connection refused, connect timeout, unknown host), and 429 or 503 |
 | client agent → intelligence agent (A2A) | no (it may be running a slow LLM call) | only failures that prove the request never arrived; never after a timeout |
 | web server → DynamoDB | yes | the AWS SDK's standard retry mode (3 attempts, exponential backoff with jitter) |
 
 On the last try the caller sees the real failure, and maps it to 503 (or 502 in the client agent) as before. Client errors and 500s are never retried: they would only repeat.
 
+**`Retry-After` is honoured.** A 429 or 503 from our services carries `Retry-After` (at least 1 s). A retry sooner would only be refused again, so the HTTP clients wait that long before retrying (then the usual backoff). If a server asks for longer than the 1 s maximum wait, the client stops retrying and fails at once instead of holding a thread. The MCP client cannot see response headers, so it waits 1 s, the smallest `Retry-After` the services send, before retrying a refusal.
+
+**The LLM is tried once.** The agent's model call has its own timeout and no automatic retries (LangChain4j would otherwise make 3 tries of up to 30 s). Any failure falls back to the rule-based advice, so the user still gets recommendations.
+
 **Admission control: token bucket and bulkhead.** `web-support` adds `InboundLimitFilter` to every service through Boot auto-configuration. A token bucket admits `CREDIT_INBOUND_RATE_PER_SECOND` requests a second (50) with bursts up to `CREDIT_INBOUND_BURST` (100); beyond it a request gets 429 with `Retry-After`. At most `CREDIT_INBOUND_MAX_CONCURRENT` requests (32) run at once; beyond that a request gets 503 with `Retry-After: 1` instead of queueing on a thread. The KYC service, which decodes images in memory, admits 4 at once. Both answers are ones the callers retry with backoff, so a short overload slows callers down instead of failing them. Health checks (`/actuator/*`) are never limited. In the web server the shared limits cover only `/api/*`, so page loads do not use up the bucket, and its per-IP limit (`RATE_LIMIT_PER_MINUTE`) runs first: one client over its own limit is stopped before it can drain the shared bucket and get everyone else refused.
 
-**Body limits.** Every endpoint that reads an untrusted body caps it before reading (`RequestSizeLimitFilter`): score calculator, NRG, KYC, MCP (`/mcp`, 64 KiB) and the A2A endpoint (64 KiB).
+**Body limits.** Every endpoint that reads a body caps it before reading (`RequestSizeLimitFilter`): score calculator, NRG, KYC, MCP (`/mcp`, 64 KiB), the A2A endpoint (64 KiB), the client agent (4 KiB), the report generator (16 KiB) and the web server's JSON endpoints (64 KiB; registration is multipart with its own 5/6 MB limits).
 
 ## Multi-bureau model
 
