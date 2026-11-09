@@ -13,12 +13,16 @@ credit:
     mcp-url: ${CREDIT_MCP_URL:http://localhost:8082/mcp}
     score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}
+    # One MCP read includes the MCP server's retries of NRG, so wait longer than for other calls.
+    mcp-timeout: ${MCP_TIMEOUT:20s}
     # URL other agents use to reach this one (goes into the A2A agent card).
     public-url: ${AGENT_PUBLIC_URL:}
     llm:
       enabled: ${LLM_ENABLED:false}
       model: ${LLM_MODEL:claude-sonnet-5-5}
       api-key: ${ANTHROPIC_API_KEY:}
+      # One try; on failure the rules answer instead.
+      timeout: ${LLM_TIMEOUT:30s}
 
 management:
   endpoints:

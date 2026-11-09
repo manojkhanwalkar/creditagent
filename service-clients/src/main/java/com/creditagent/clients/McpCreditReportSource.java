@@ -2,6 +2,7 @@ package com.creditagent.clients;
 
 import com.creditagent.common.CreditReport;
 import com.creditagent.common.Ssn;
+import dev.langchain4j.exception.HttpException;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.McpException;
@@ -22,9 +23,19 @@ import tools.jackson.databind.json.JsonMapper;
  * the {@code credit-report://ssn/{ssn}} resource.
  *
  * <p>The MCP connection is opened lazily on first use and re-opened after a transport failure, so a
- * caller can start before the MCP server is up. A read is idempotent, so a transport failure is
- * retried with backoff ({@link RetrySettings}). An MCP error answer (not found, internal error) is
- * not: the server already retried its own downstream call, and retrying here would multiply them.
+ * caller can start before the MCP server is up.
+ *
+ * <p>Retries (with the backoff of {@link RetrySettings}) happen only when the MCP server did no work:
+ * the request never arrived (connection refused, unknown host), or it was refused with 429, 502 or
+ * 503. A refusal is retried after {@link #REFUSAL_PAUSE}, since the server's {@code Retry-After}
+ * is not visible through the MCP client. Not retried:
+ * <ul>
+ *   <li>a timeout: the server may still be working, and it already retries its own call to NRG, so
+ *       a second read would only double the load during the slowdown. Give this client a
+ *       {@code timeout} longer than the server's NRG retry budget instead;
+ *   <li>an MCP error answer (not found, internal error), for the same reason;
+ *   <li>anything else, such as a bug in this process.
+ * </ul>
  */
 public class McpCreditReportSource implements CreditReportSource, AutoCloseable {
 
@@ -32,6 +43,11 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
 
     /** MCP "resource not found" error code. */
     static final int RESOURCE_NOT_FOUND = -32002;
+    /** Statuses that mean the MCP server refused the read before doing any work. */
+    static final java.util.Set<Integer> REFUSED_STATUSES = java.util.Set.of(429, 502, 503);
+    /** Wait before retrying a refusal: the smallest Retry-After the services' limit filter sends. */
+    static final Duration REFUSAL_PAUSE = Duration.ofSeconds(1);
+
     /** Pinned so the client skips protocol auto-detection against our single-response server. */
     static final String PROTOCOL_VERSION = "2025-11-25";
 
@@ -39,12 +55,23 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private final String clientKey;
     private final Duration timeout;
     private final RetrySettings retry;
+    private final Duration refusalPause;
     private final JsonMapper jsonMapper;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile McpClient client;
 
+    /**
+     * @param timeout longest wait for one read; make it longer than the MCP server's own retry budget
+     *     for NRG, or this client gives up on reads the server is still completing
+     */
     public McpCreditReportSource(
             String mcpUrl, String clientKey, Duration timeout, RetrySettings retry, JsonMapper jsonMapper) {
+        this(mcpUrl, clientKey, timeout, retry, REFUSAL_PAUSE, jsonMapper);
+    }
+
+    McpCreditReportSource(String mcpUrl, String clientKey, Duration timeout, RetrySettings retry,
+            Duration refusalPause, JsonMapper jsonMapper) {
+        this.refusalPause = Objects.requireNonNull(refusalPause, "refusalPause");
         this.mcpUrl = Objects.requireNonNull(mcpUrl, "mcpUrl");
         this.clientKey = Objects.requireNonNull(clientKey, "clientKey");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
@@ -60,7 +87,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     public Optional<CreditReport> findReport(Ssn ssn) {
         McpReadResourceResult result;
         try {
-            result = Retries.call(retry, McpCreditReportSource::isTransportFailure, () -> read(ssn));
+            java.util.concurrent.atomic.AtomicInteger attempt = new java.util.concurrent.atomic.AtomicInteger();
+            result = Retries.call(retry, McpCreditReportSource::isRetryable, () -> read(ssn, attempt.incrementAndGet()));
         } catch (RuntimeException e) {
             McpException mcpError = findMcpException(e);
             if (mcpError != null && mcpError.errorCode() == RESOURCE_NOT_FOUND) {
@@ -77,21 +105,34 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
                 .map(this::parse);
     }
 
-    private McpReadResourceResult read(Ssn ssn) {
+    private McpReadResourceResult read(Ssn ssn, int attempt) {
         try {
             return client().readResource(resourceUri(ssn));
         } catch (RuntimeException e) {
-            if (isTransportFailure(e)) {
-                // Drop the client so the next try reconnects.
+            boolean refused = refusedStatus(e);
+            if (findMcpException(e) == null && !refused) {
+                // The connection or request failed: drop the client so the next try reconnects. A
+                // refusal (429/502/503) came over a working connection, so that is kept.
                 reset();
+            }
+            if (refused && attempt < retry.maxAttempts() && !Retries.pause(refusalPause)) {
+                // No cause, so the retry predicate does not see the refusal and stops here.
+                IllegalStateException interrupted = new IllegalStateException("Interrupted while waiting to retry");
+                interrupted.addSuppressed(e);
+                throw interrupted;
             }
             throw e;
         }
     }
 
-    /** No MCP error answer anywhere in the chain: the request or connection itself failed. */
-    static boolean isTransportFailure(Throwable e) {
-        return findMcpException(e) == null;
+    /** The read never reached the MCP server, or the server refused it before doing any work. */
+    static boolean isRetryable(Throwable e) {
+        return findMcpException(e) == null && (Retries.notDelivered(e) || refusedStatus(e));
+    }
+
+    private static boolean refusedStatus(Throwable e) {
+        HttpException http = Retries.find(e, HttpException.class);
+        return http != null && REFUSED_STATUSES.contains(http.statusCode());
     }
 
     private CreditReport parse(String json) {

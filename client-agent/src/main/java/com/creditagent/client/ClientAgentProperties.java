@@ -7,14 +7,15 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * @param intelligenceAgentUrl base URL of the Credit Intelligence Agent (its agent card is fetched from here)
- * @param timeout longest wait for the agent's answer; it may call an LLM, so this is longer than the
- *     other services' timeouts. Defaults to 60 s.
+ * @param timeout longest wait for the agent's answer. Defaults to 75 s: longer than the agent's own
+ *     worst case (MCP read 20 s + Score Calculator with retries ~15.4 s + LLM 30 s, about 65 s), so
+ *     the client never gives up on an answer the agent is still completing.
  */
 @Validated
 @ConfigurationProperties("credit.client")
 public record ClientAgentProperties(@NotBlank String intelligenceAgentUrl, Duration timeout) {
 
     public ClientAgentProperties {
-        timeout = timeout == null ? Duration.ofSeconds(60) : timeout;
+        timeout = timeout == null ? Duration.ofSeconds(75) : timeout;
     }
 }
