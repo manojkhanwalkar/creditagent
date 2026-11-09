@@ -30,7 +30,11 @@ credit:
     timeout: ${KYC_TIMEOUT:10s}
   inbound:
     # Shared limits cover the API only: page loads (HTML, CSS, JS) must not use up the bucket.
-    url-patterns: /api/*
+    url-patterns: /api/*,/internal/*
+  internal:
+    # Shared token other services present to call /internal/** (the report-lock check). At least
+    # 32 characters. Empty = the internal API is off (404), and third-party report pulls are refused.
+    token: ${INTERNAL_API_TOKEN:}
   auth:
     # Required. HMAC-SHA256 key for signing JWTs, at least 32 characters. No default on purpose.
     jwt-secret: ${JWT_SECRET}

@@ -54,6 +54,12 @@ class McpClientContractTest {
         ReportNormalizerClient fakeNrg() {
             return bureauReports -> REPORT;
         }
+
+        @Bean
+        @Primary
+        com.creditagent.clients.ReportLockCheck unlocked() {
+            return ssn -> false;
+        }
     }
 
     @DynamicPropertySource

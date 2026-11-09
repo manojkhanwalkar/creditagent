@@ -6,6 +6,9 @@ import com.creditagent.agent.advice.RuleBasedCreditAdvisor;
 import com.creditagent.clients.CreditReportSource;
 import com.creditagent.clients.HttpClients;
 import com.creditagent.clients.McpCreditReportSource;
+import com.creditagent.clients.ReportLockCheck;
+import com.creditagent.clients.ReportLockHttpClient;
+import com.creditagent.clients.ReportLockProperties;
 import com.creditagent.clients.RetrySettings;
 import com.creditagent.clients.ScoreCalculatorHttpClient;
 import com.creditagent.clients.ScoreService;
@@ -60,8 +63,16 @@ class AgentConfiguration {
     }
 
     @Bean
+    ReportLockCheck reportLockCheck(RestClient.Builder builder, ReportLockProperties properties, RetrySettings retry) {
+        if (!properties.hasToken()) {
+            log.warn("INTERNAL_API_TOKEN is not set: every report-lock check fails, so all advice requests are refused");
+        }
+        return ReportLockHttpClient.create(builder, properties, retry);
+    }
+
+    @Bean
     CreditIntelligenceService creditIntelligenceService(
-            CreditReportSource reports, ScoreService scores, CreditAdvisor advisor) {
-        return new CreditIntelligenceService(reports, scores, advisor);
+            CreditReportSource reports, ScoreService scores, CreditAdvisor advisor, ReportLockCheck locks) {
+        return new CreditIntelligenceService(reports, scores, advisor, locks);
     }
 }

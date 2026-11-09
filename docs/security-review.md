@@ -13,7 +13,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
 | S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups limited to the user's own SSN; the SSN is read by a KYC check of the user's card photo, but the bundled KYC provider is a dummy |
-| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open |
+| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open; first step: the report-lock check uses a shared internal token (`INTERNAL_API_TOKEN`) |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Open |
 | S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed |

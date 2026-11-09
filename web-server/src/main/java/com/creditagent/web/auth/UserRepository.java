@@ -14,6 +14,9 @@ public interface UserRepository {
 
     Optional<User> find(String userId);
 
+    /** The user who registered the SSN with this hash (via its {@code ssn#} claim), if any. */
+    Optional<User> findBySsnHash(String ssnHash);
+
     /**
      * Sets an existing user's report status. Never creates a user.
      *

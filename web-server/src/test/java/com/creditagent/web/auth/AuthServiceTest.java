@@ -286,4 +286,18 @@ class AuthServiceTest {
         assertThat(ReportStatus.fromStored("garbage")).isEqualTo(ReportStatus.LOCKED);
         assertThat(ReportStatus.fromStored("locked")).isEqualTo(ReportStatus.LOCKED);
     }
+
+    @Test
+    void thirdPartiesSeeALockOnlyForALockedRegisteredSsn() {
+        register();
+        com.creditagent.common.Ssn averySsn = com.creditagent.common.Ssn.parse(AVERY_SSN);
+        assertThat(auth.isReportLocked(averySsn)).isFalse();
+
+        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        auth.setReportStatus(avery, ReportStatus.LOCKED);
+        assertThat(auth.isReportLocked(averySsn)).isTrue();
+
+        // No account for this SSN: not locked, and indistinguishable from an unlocked account.
+        assertThat(auth.isReportLocked(com.creditagent.common.Ssn.parse("876-54-3210"))).isFalse();
+    }
 }

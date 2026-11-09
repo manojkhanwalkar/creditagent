@@ -26,8 +26,9 @@ class WebServerConfiguration {
 
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> jsonRequestSizeLimitFilter() {
-        return RequestSizeLimitFilter.registration(
-                MAX_JSON_BYTES, "/api/v1/credit-score", "/api/v1/auth/login", "/api/v1/credit-report/status");
+        return RequestSizeLimitFilter.registration(MAX_JSON_BYTES,
+                "/api/v1/credit-score", "/api/v1/auth/login", "/api/v1/credit-report/status",
+                "/internal/v1/report-locks/lookup");
     }
 
     @Bean // AutoCloseable: Spring closes it on shutdown

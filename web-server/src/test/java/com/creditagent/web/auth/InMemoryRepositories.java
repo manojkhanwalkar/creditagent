@@ -34,6 +34,11 @@ final class InMemoryRepositories {
         }
 
         @Override
+        public Optional<User> findBySsnHash(String ssnHash) {
+            return byId.values().stream().filter(u -> u.ssnHash().equals(ssnHash)).findFirst();
+        }
+
+        @Override
         public boolean updateReportStatus(String userId, ReportStatus status) {
             return byId.computeIfPresent(userId, (id, u) -> new User(
                     u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),

@@ -21,7 +21,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 
 | Module | Port | What it does |
 |---|---|---|
-| `web-server` | 8080 | UI, `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
+| `web-server` | 8080 | UI, `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
@@ -42,7 +42,7 @@ mvn -B verify                 # compile, unit tests, MCP and A2A contract tests,
 
 ```bash
 mvn -B package -DskipTests
-cp .env.example .env          # set CREDIT_FILE_HMAC_KEY, JWT_SECRET and SSN_HMAC_KEY (openssl rand -hex 32 each)
+cp .env.example .env          # set CREDIT_FILE_HMAC_KEY, JWT_SECRET, SSN_HMAC_KEY and INTERNAL_API_TOKEN (openssl rand -hex 32 each)
 docker compose up --build
 ```
 
@@ -103,6 +103,8 @@ mvn -pl credit-report-mcp-server spring-boot:run
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server | **required** for third-party pulls, at least 32 characters. The agent and the MCP tool present it to check report locks; without it they refuse every pull |
+| `REPORT_LOCK_URL` | agent, MCP server | `http://localhost:8080` (the web server, which owns the users table) |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
 | `JWT_TTL`, `SESSION_IDLE_TIMEOUT` | web server | `1h`, `5m` |

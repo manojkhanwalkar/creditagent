@@ -1,6 +1,9 @@
 package com.creditagent.mcp;
 
 import com.creditagent.clients.HttpClients;
+import com.creditagent.clients.ReportLockCheck;
+import com.creditagent.clients.ReportLockHttpClient;
+import com.creditagent.clients.ReportLockProperties;
 import com.creditagent.clients.RetrySettings;
 import com.creditagent.common.CreditFileNames;
 import com.creditagent.web.support.RequestSizeLimitFilter;
@@ -38,6 +41,12 @@ class McpServerConfiguration {
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> mcpRequestSizeLimitFilter() {
         return RequestSizeLimitFilter.registration(McpHttpController.MAX_BODY_BYTES, "/mcp");
+    }
+
+    /** The get_credit_report tool checks report locks with the web server (fail closed). */
+    @Bean
+    ReportLockCheck reportLockCheck(RestClient.Builder builder, ReportLockProperties properties, RetrySettings retry) {
+        return ReportLockHttpClient.create(builder, properties, retry);
     }
 
     @Bean

@@ -49,6 +49,10 @@ class A2aContractTest {
     @MockitoBean
     ScoreService scores;
 
+    /** Unlocked unless a test says otherwise (Mockito's default answer is false). */
+    @MockitoBean
+    com.creditagent.clients.ReportLockCheck locks;
+
     Advisor advisor;
 
     @BeforeEach
@@ -111,5 +115,21 @@ class A2aContractTest {
                 .body(huge)
                 .exchange((request, response) -> response.getStatusCode().value());
         assertThat(status).isEqualTo(413);
+    }
+
+    @Test
+    void aLockedReportIsRefusedBeforeItIsRead() {
+        given(locks.isLocked(Ssn.parse("123-45-6789"))).willReturn(true);
+        JsonNode reply = json.readTree(advisor.advise("123-45-6789"));
+        assertThat(reply.get("error").asString()).isEqualTo("This credit report is locked by its owner.");
+        org.mockito.Mockito.verifyNoInteractions(reports, scores);
+    }
+
+    @Test
+    void whenTheLockCannotBeCheckedTheReportIsNotReleased() {
+        given(locks.isLocked(any())).willThrow(new com.creditagent.clients.ServiceUnavailableException("down", null));
+        JsonNode reply = json.readTree(advisor.advise("123-45-6789"));
+        assertThat(reply.get("error").asString()).contains("temporarily unavailable");
+        org.mockito.Mockito.verifyNoInteractions(reports, scores);
     }
 }

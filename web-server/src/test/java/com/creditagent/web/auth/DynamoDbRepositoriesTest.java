@@ -139,4 +139,12 @@ class DynamoDbRepositoriesTest {
                 "createdAt", AttributeValue.fromS("2026-11-08T12:00:00Z"))));
         assertThat(users.find("legacy").orElseThrow().reportStatus()).isEqualTo(ReportStatus.UNLOCKED);
     }
+
+    @Test
+    void aUserIsFoundByTheirSsnClaim() {
+        users.create(user("erin", "hash-e"));
+        assertThat(users.findBySsnHash("hash-e")).hasValueSatisfying(u -> assertThat(u.userId()).isEqualTo("erin"));
+        assertThat(users.findBySsnHash("hash-unknown")).isEmpty();
+        assertThat(users.findBySsnHash("")).isEmpty();
+    }
 }
