@@ -170,15 +170,15 @@ public class CreditReportMcpHandler {
             return error(id, INVALID_PARAMS, e.getMessage());
         }
         if (!trusted) {
-            switch (locks.decide(ssn)) {
-                case LOCKED -> {
-                    return error(id, REPORT_LOCKED, LOCKED_MESSAGE);
-                }
-                // Fail closed: an unknown lock status never releases the report.
-                case UNAVAILABLE -> {
-                    return error(id, INTERNAL_ERROR, "Internal error");
-                }
-                case RELEASE -> { }
+            // A switch expression, so the compiler makes any new Decision be handled here rather
+            // than fall through to the read. Fail closed: an unknown lock status never releases.
+            String refusal = switch (locks.decide(ssn)) {
+                case LOCKED -> error(id, REPORT_LOCKED, LOCKED_MESSAGE);
+                case UNAVAILABLE -> error(id, INTERNAL_ERROR, "Internal error");
+                case RELEASE -> null;
+            };
+            if (refusal != null) {
+                return refusal;
             }
         }
         Optional<String> report = reports.findNormalizedReport(ssn);
