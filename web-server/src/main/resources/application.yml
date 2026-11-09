@@ -21,6 +21,8 @@ credit:
     mcp-url: ${CREDIT_MCP_URL:http://localhost:8082/mcp}
     score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}
+    # One MCP read includes the MCP server's retries of NRG, so wait longer than for other calls.
+    mcp-timeout: ${MCP_TIMEOUT:20s}
     rate-limit-per-minute: ${RATE_LIMIT_PER_MINUTE:20}
   kyc:
     # KYC provider that checks the SSN card photo and reads the SSN from it (kyc-service locally).

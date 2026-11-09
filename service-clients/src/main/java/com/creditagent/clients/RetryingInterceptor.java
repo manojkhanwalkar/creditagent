@@ -2,10 +2,12 @@ package com.creditagent.clients;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpRequest;
 import org.springframework.http.client.ClientHttpRequestExecution;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
@@ -19,6 +21,11 @@ import org.springframework.http.client.ClientHttpResponse;
  *
  * <p>For a call that must not run twice, construct with {@code idempotent = false}: then only
  * failures that prove the request never arrived, and 429 or 503, are retried.
+ *
+ * <p>A 429 or 503 may carry {@code Retry-After}. A retry before then would only be refused again,
+ * so the interceptor waits that long first (then the usual backoff). If the server asks for longer
+ * than {@link RetrySettings#maxDelay()}, it stops retrying and returns the refusal at once: the
+ * caller is better off failing fast than holding a thread for the wait.
  */
 public class RetryingInterceptor implements ClientHttpRequestInterceptor {
 
@@ -50,6 +57,10 @@ public class RetryingInterceptor implements ClientHttpRequestInterceptor {
                     throw new UncheckedIOException(e);
                 }
                 if (!lastAttempt && retryStatuses.contains(status)) {
+                    Duration wait = Retries.retryAfter(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER));
+                    if (wait != null && (wait.compareTo(settings.maxDelay()) > 0 || !Retries.pause(wait))) {
+                        return response; // asked to wait too long, or interrupted: give up now
+                    }
                     response.close();
                     throw new Retries.RetryableStatusException(status);
                 }

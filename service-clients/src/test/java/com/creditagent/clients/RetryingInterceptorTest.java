@@ -170,4 +170,46 @@ class RetryingInterceptorTest {
         assertThat(Retries.notDelivered(new Retries.RetryableStatusException(503))).isTrue();
         assertThat(Retries.notDelivered(new Retries.RetryableStatusException(504))).isFalse();
     }
+
+    @Test
+    void retryAfterIsWaitedOutBeforeTheNextTry() {
+        RetrySettings patient = new RetrySettings(3, Duration.ofMillis(1), 2.0, Duration.ofSeconds(2), Duration.ZERO);
+        RestClient client = client(patient, true);
+        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, "1"));
+        server.expect(requestTo(URL)).andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
+
+        long start = System.nanoTime();
+        assertThat(post(client)).isEqualTo("ok");
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isGreaterThanOrEqualTo(Duration.ofMillis(990));
+        server.verify();
+    }
+
+    @Test
+    void aRetryAfterLongerThanTheMaxDelayStopsRetryingAtOnce() {
+        RestClient client = client(FAST, true); // max delay 4 ms
+        server.expect(times(1), requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, "30"));
+
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> post(client)).isInstanceOf(HttpServerErrorException.ServiceUnavailable.class);
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(1));
+        server.verify();
+    }
+
+    @Test
+    void retryAfterIsParsedAsSecondsOnly() {
+        assertThat(Retries.retryAfter("2")).isEqualTo(Duration.ofSeconds(2));
+        assertThat(Retries.retryAfter(" 0 ")).isEqualTo(Duration.ZERO);
+        assertThat(Retries.retryAfter("Wed, 21 Oct 2026 07:28:00 GMT")).isNull();
+        assertThat(Retries.retryAfter("-1")).isNull();
+        assertThat(Retries.retryAfter(null)).isNull();
+    }
+
+    @Test
+    void worstCaseCountsEveryTryAndEveryWait() {
+        // 3 × 5 s + (1 s Retry-After + 100 + 50 ms) + (1 s Retry-After + 200 + 50 ms)
+        assertThat(RetrySettings.DEFAULTS.worstCase(Duration.ofSeconds(5))).isEqualTo(Duration.ofMillis(17_400));
+        assertThat(RetrySettings.none().worstCase(Duration.ofSeconds(5))).isEqualTo(Duration.ofSeconds(5));
+    }
 }

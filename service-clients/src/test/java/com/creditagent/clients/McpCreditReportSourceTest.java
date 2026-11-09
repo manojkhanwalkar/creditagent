@@ -36,9 +36,16 @@ class McpCreditReportSourceTest {
             new RetrySettings(3, Duration.ofMillis(1), 2.0, Duration.ofMillis(5), Duration.ofMillis(1));
 
     final AtomicBoolean failing = new AtomicBoolean();
-    /** The next this many requests fail with 500, then the server recovers. */
+    /** The next this many requests are refused with {@link #refuseWith}, then the server recovers. */
     final java.util.concurrent.atomic.AtomicInteger failNext = new java.util.concurrent.atomic.AtomicInteger();
     final java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+    volatile int refuseWith = 503;
+    final AtomicBoolean hang = new AtomicBoolean();
+    final java.util.concurrent.atomic.AtomicInteger initializes = new java.util.concurrent.atomic.AtomicInteger();
+    /** How long the server takes to answer {@code initialize} and {@code resources/read}. */
+    volatile long initMillis;
+    volatile long readMillis;
     HttpServer server;
     McpCreditReportSource source;
 
@@ -49,7 +56,7 @@ class McpCreditReportSourceTest {
         server.start();
         source = new McpCreditReportSource(
                 "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5),
-                FAST_RETRY, json);
+                FAST_RETRY, Duration.ofMillis(1), json);
     }
 
     @AfterEach
@@ -89,13 +96,101 @@ class McpCreditReportSourceTest {
     }
 
     @Test
-    void aBriefOutageIsRetriedWithBackoffAndRecovers() {
-        failNext.set(2); // the first two tries fail, the third succeeds
+    void aBriefRefusalIsRetriedWithBackoffAndRecovers() {
+        source.findReport(Ssn.parse("123-45-6789")); // connect first, so only the read is refused
+        failNext.set(2); // 503 twice, then the third try succeeds
+        assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
+
+        refuseWith = 429;
+        failNext.set(2);
         assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
     }
 
     @Test
+    void a500IsNotRetried() {
+        source.findReport(Ssn.parse("123-45-6789"));
+        int before = requests.get();
+        failing.set(true);
+        assertThatThrownBy(() -> source.findReport(Ssn.parse("123-45-6789"))).isInstanceOf(ServiceUnavailableException.class);
+        // One failed read, plus at most the reconnect's own initialise request.
+        assertThat(requests.get() - before).isLessThanOrEqualTo(2);
+    }
+
+    @Test
+    void aTimeoutIsNotRetriedBecauseTheServerMayStillBeWorking() {
+        McpCreditReportSource quick = new McpCreditReportSource(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofMillis(300),
+                FAST_RETRY, Duration.ofMillis(1), json);
+        try {
+            quick.findReport(Ssn.parse("123-45-6789"));
+            hang.set(true);
+            int before = requests.get();
+            assertThatThrownBy(() -> quick.findReport(Ssn.parse("123-45-6789"))).isInstanceOf(ServiceUnavailableException.class);
+            assertThat(requests.get() - before).isEqualTo(1);
+        } finally {
+            hang.set(false);
+            quick.close();
+        }
+    }
+
+    @Test
+    void whatIsRetriedIsDecidedByTheCauseChain() {
+        assertThat(McpCreditReportSource.isRetryable(new RuntimeException(new java.net.ConnectException("refused")))).isTrue();
+        assertThat(McpCreditReportSource.isRetryable(new RuntimeException(new dev.langchain4j.exception.HttpException(503, "x")))).isTrue();
+        assertThat(McpCreditReportSource.isRetryable(new RuntimeException(new dev.langchain4j.exception.HttpException(500, "x")))).isFalse();
+        assertThat(McpCreditReportSource.isRetryable(new RuntimeException(new java.util.concurrent.TimeoutException()))).isFalse();
+        assertThat(McpCreditReportSource.isRetryable(new IllegalArgumentException("bug"))).isFalse();
+    }
+
+    @Test
+    void oneLookUpNeverTakesLongerThanTheTimeoutEvenWhenItReconnects() {
+        // The MCP client times the initialisation and the read separately; without an overall
+        // bound, a reconnect followed by a slow read took both timeouts.
+        McpCreditReportSource bounded = new McpCreditReportSource(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(1),
+                FAST_RETRY, Duration.ofMillis(1), json);
+        initMillis = 900;
+        readMillis = 900;
+        try {
+            long start = System.nanoTime();
+            assertThatThrownBy(() -> bounded.findReport(Ssn.parse("123-45-6789")))
+                    .isInstanceOf(ServiceUnavailableException.class);
+            assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(1_600));
+        } finally {
+            bounded.close();
+        }
+    }
+
+    @Test
+    void aRefusalKeepsTheConnectionAndOnlyPausesBeforeARealRetry() {
+        McpCreditReportSource paced = new McpCreditReportSource(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5),
+                FAST_RETRY, Duration.ofMillis(400), json);
+        try {
+            paced.findReport(Ssn.parse("123-45-6789"));
+            int initsBefore = initializes.get();
+            int requestsBefore = requests.get();
+            failNext.set(2);
+            assertThat(paced.findReport(Ssn.parse("123-45-6789"))).isPresent();
+            assertThat(initializes.get()).as("no reconnect after a refusal").isEqualTo(initsBefore);
+            assertThat(requests.get() - requestsBefore).isEqualTo(3);
+
+            failNext.set(1_000);
+            long start = System.nanoTime();
+            assertThatThrownBy(() -> paced.findReport(Ssn.parse("123-45-6789")))
+                    .isInstanceOf(ServiceUnavailableException.class);
+            // Three tries, two pauses: none after the last try.
+            assertThat(Duration.ofNanos(System.nanoTime() - start))
+                    .isGreaterThanOrEqualTo(Duration.ofMillis(800))
+                    .isLessThan(Duration.ofMillis(1_200));
+        } finally {
+            paced.close();
+        }
+    }
+
+    @Test
     void anOutageLongerThanTheRetriesFails() {
+        source.findReport(Ssn.parse("123-45-6789"));
         failNext.set(1_000);
         assertThatThrownBy(() -> source.findReport(Ssn.parse("123-45-6789"))).isInstanceOf(ServiceUnavailableException.class);
     }
@@ -113,8 +208,21 @@ class McpCreditReportSourceTest {
 
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
-            if (failing.get() || failNext.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            requests.incrementAndGet();
+            if (hang.get()) {
+                try {
+                    Thread.sleep(3_000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+            if (failing.get()) {
                 exchange.sendResponseHeaders(500, -1);
+                return;
+            }
+            if (failNext.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                exchange.sendResponseHeaders(refuseWith, -1);
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
@@ -131,6 +239,8 @@ class McpCreditReportSourceTest {
             response.set("id", id);
             switch (request.path("method").asString()) {
                 case "initialize" -> {
+                    initializes.incrementAndGet();
+                    sleep(initMillis);
                     ObjectNode result = response.putObject("result");
                     result.put("protocolVersion", "2025-11-25");
                     result.putObject("capabilities").putObject("resources");
@@ -138,6 +248,7 @@ class McpCreditReportSourceTest {
                 }
                 case "resources/read" -> {
                     reads.incrementAndGet();
+                    sleep(readMillis);
                     String uri = request.at("/params/uri").asString();
                     if (uri.equals("credit-report://ssn/123456789")) {
                         response.putObject("result").putArray("contents").addObject()
@@ -154,6 +265,17 @@ class McpCreditReportSourceTest {
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(bytes);
             }
+        }
+    }
+
+    private static void sleep(long millis) {
+        if (millis <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }
