@@ -12,6 +12,12 @@ import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +42,10 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>an MCP error answer (not found, internal error), for the same reason;
  *   <li>anything else, such as a bug in this process.
  * </ul>
+ *
+ * <p>{@code timeout} bounds a whole look-up: reconnecting, every try and the waits between them.
+ * The MCP client times the initialisation and the read separately, so without this bound a look-up
+ * that reconnects could take twice the timeout, and more with retried connection failures.
  */
 public class McpCreditReportSource implements CreditReportSource, AutoCloseable {
 
@@ -61,8 +71,9 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private volatile McpClient client;
 
     /**
-     * @param timeout longest wait for one read; make it longer than the MCP server's own retry budget
-     *     for NRG, or this client gives up on reads the server is still completing
+     * @param timeout longest wait for one look-up, reconnects and retries included; make it longer than
+     *     the MCP server's own retry budget for NRG, or this client gives up on reads the server is
+     *     still completing
      */
     public McpCreditReportSource(
             String mcpUrl, String clientKey, Duration timeout, RetrySettings retry, JsonMapper jsonMapper) {
@@ -87,8 +98,9 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     public Optional<CreditReport> findReport(Ssn ssn) {
         McpReadResourceResult result;
         try {
-            java.util.concurrent.atomic.AtomicInteger attempt = new java.util.concurrent.atomic.AtomicInteger();
-            result = Retries.call(retry, McpCreditReportSource::isRetryable, () -> read(ssn, attempt.incrementAndGet()));
+            AtomicInteger attempt = new AtomicInteger();
+            result = withinTimeout(() ->
+                    Retries.call(retry, McpCreditReportSource::isRetryable, () -> read(ssn, attempt.incrementAndGet())));
         } catch (RuntimeException e) {
             McpException mcpError = findMcpException(e);
             if (mcpError != null && mcpError.errorCode() == RESOURCE_NOT_FOUND) {
@@ -103,6 +115,29 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
                 .map(McpTextResourceContents::text)
                 .findFirst()
                 .map(this::parse);
+    }
+
+    /**
+     * Runs {@code call} on a virtual thread and waits at most {@code timeout} for it. A FutureTask,
+     * not a CompletableFuture: its cancel(true) interrupts the abandoned call, which then drops its
+     * connection instead of staying blocked on the server.
+     */
+    private <T> T withinTimeout(Callable<T> call) {
+        FutureTask<T> task = new FutureTask<>(call);
+        Thread.ofVirtual().name("mcp-read").start(task);
+        try {
+            return task.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            task.cancel(true);
+            throw new IllegalStateException("No answer from the Credit Report MCP server within " + timeout, e);
+        } catch (InterruptedException e) {
+            task.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for the Credit Report MCP server", e);
+        } catch (ExecutionException e) {
+            // Keep the original exception: not-found and the error mapping depend on its cause chain.
+            throw e.getCause() instanceof RuntimeException runtime ? runtime : new IllegalStateException(e.getCause());
+        }
     }
 
     private McpReadResourceResult read(Ssn ssn, int attempt) {

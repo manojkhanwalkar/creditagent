@@ -11,8 +11,8 @@ import org.springframework.validation.annotation.Validated;
  * @param mcpUrl Credit Report MCP server endpoint, e.g. {@code http://localhost:8082/mcp}
  * @param scoreCalculatorUrl Score Calculator base URL, e.g. {@code http://localhost:8081}
  * @param timeout connect/read timeout for the Score Calculator
- * @param mcpTimeout longest wait for one MCP read. Longer than {@code timeout} on purpose: one read
- *     includes the MCP server's own retries of NRG (up to 3 × 5 s plus backoff), and giving up
+ * @param mcpTimeout longest wait for one MCP look-up, reconnects and retries included. Longer than {@code timeout} on purpose: one read
+ *     includes the MCP server's own retries of NRG (up to 3 × 5 s plus the waits, about 17.4 s), and giving up
  *     sooner would abandon reads the server is still completing. Defaults to 20 s.
  * @param rateLimitPerMinute max score look-ups per client IP per minute (SSN enumeration guard)
  */

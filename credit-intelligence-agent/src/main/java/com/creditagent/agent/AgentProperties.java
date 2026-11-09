@@ -9,7 +9,7 @@ import org.springframework.validation.annotation.Validated;
 
 /**
  * @param timeout connect/read timeout for the Score Calculator
- * @param mcpTimeout longest wait for one MCP read; covers the MCP server's own NRG retries. 20 s
+ * @param mcpTimeout longest wait for one MCP look-up, reconnects and retries included; covers the MCP server's own NRG retries. 20 s
  * @param publicUrl URL advertised in the A2A agent card; defaults to {@code http://localhost:<port>}
  * @param llm optional LLM settings; when disabled the agent uses deterministic rules
  */
