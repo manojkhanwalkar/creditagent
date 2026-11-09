@@ -53,6 +53,9 @@ public class CreditIntelligenceAgentExecutor implements AgentExecutor {
             emitter.sendMessage(jsonMapper.writeValueAsString(advice));
         } catch (InvalidSsnException e) {
             emitter.sendMessage(error(e.getMessage()));
+        } catch (CreditIntelligenceService.ReportLockedException e) {
+            log.info("Refused advice for {}: report locked", candidate.map(c -> "***-**-" + c.substring(c.length() - 4)).orElse("?"));
+            emitter.sendMessage(error(CreditIntelligenceService.ReportLockedException.MESSAGE));
         } catch (CreditIntelligenceService.ReportNotFoundException e) {
             emitter.sendMessage(error("No credit report was found for that SSN."));
         } catch (ServiceUnavailableException e) {

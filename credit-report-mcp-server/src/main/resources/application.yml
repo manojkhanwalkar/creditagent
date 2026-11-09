@@ -20,6 +20,11 @@ credit:
     url: ${NRG_URL:http://localhost:8084}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}
 
+  # Third-party pulls check that the consumer has not locked their report (fail closed).
+  report-lock:
+    url: ${REPORT_LOCK_URL:http://localhost:8080}
+    token: ${INTERNAL_API_TOKEN:}
+
 management:
   endpoints:
     web:

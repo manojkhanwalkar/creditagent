@@ -96,6 +96,21 @@ public class DynamoDbUserRepository implements UserRepository {
                 ReportStatus.fromStored(text(item, REPORT_STATUS))));
     }
 
+    /** Reads the {@code ssn#<hash>} claim, then its owner. Two consistent reads. */
+    @Override
+    public Optional<User> findBySsnHash(String ssnHash) {
+        if (ssnHash == null || ssnHash.isEmpty()) {
+            return Optional.empty();
+        }
+        GetItemResponse claim = dynamo.getItem(
+                r -> r.tableName(table).key(Map.of(KEY, s(SSN_CLAIM_PREFIX + ssnHash))).consistentRead(true));
+        if (!claim.hasItem() || claim.item().isEmpty()) {
+            return Optional.empty();
+        }
+        String owner = text(claim.item(), "owner");
+        return owner == null ? Optional.empty() : find(owner);
+    }
+
     /**
      * A conditional update: only an existing user item (it has a password hash; SSN-claim items do
      * not) is changed, so this can never create a user or touch a claim.

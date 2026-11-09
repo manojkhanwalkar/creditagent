@@ -24,6 +24,11 @@ credit:
       # One try; on failure the rules answer instead.
       timeout: ${LLM_TIMEOUT:30s}
 
+  # Third-party pulls check that the consumer has not locked their report (fail closed).
+  report-lock:
+    url: ${REPORT_LOCK_URL:http://localhost:8080}
+    token: ${INTERNAL_API_TOKEN:}
+
 management:
   endpoints:
     web:

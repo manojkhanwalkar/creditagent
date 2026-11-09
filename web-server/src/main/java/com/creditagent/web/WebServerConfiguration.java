@@ -26,13 +26,18 @@ class WebServerConfiguration {
 
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> jsonRequestSizeLimitFilter() {
-        return RequestSizeLimitFilter.registration(
-                MAX_JSON_BYTES, "/api/v1/credit-score", "/api/v1/auth/login", "/api/v1/credit-report/status");
+        return RequestSizeLimitFilter.registration(MAX_JSON_BYTES,
+                "/api/v1/credit-score", "/api/v1/auth/login", "/api/v1/credit-report/status",
+                "/internal/v1/report-locks/lookup");
     }
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
-        return new McpCreditReportSource(properties.mcpUrl(), "web-server", properties.mcpTimeout(), retry, jsonMapper);
+    McpCreditReportSource creditReportSource(WebServerProperties properties, JsonMapper jsonMapper, RetrySettings retry,
+            @org.springframework.beans.factory.annotation.Value("${credit.internal.token:}") String serviceToken) {
+        // The service token tells the MCP server this read is for the signed-in owner, so it is not
+        // lock-checked: owners always see their own report.
+        return new McpCreditReportSource(
+                properties.mcpUrl(), "web-server", properties.mcpTimeout(), retry, serviceToken, jsonMapper);
     }
 
     @Bean

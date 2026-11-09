@@ -33,6 +33,8 @@ class CreditReportMcpHandlerTest {
     final ObjectMapper mapper = new ObjectMapper();
     CreditReportMcpHandler handler;
     final AtomicReference<Map<Bureau, String>> sentToNrg = new AtomicReference<>();
+    /** What the report-lock check answers: "locked", "unlocked" or "down". */
+    final AtomicReference<String> lock = new AtomicReference<>("unlocked");
 
     @BeforeEach
     void setUp() throws IOException {
@@ -49,7 +51,15 @@ class CreditReportMcpHandlerTest {
         });
         McpImplementation info = new McpImplementation("credit-report-mcp", "test");
         handler = new CreditReportMcpHandler(
-                new McpServer(List.of(new CreditReportTools(reports)), info), info, reports);
+                new McpServer(List.of(new CreditReportTools(reports, lockCheck())), info), info, reports, lockCheck());
+    }
+
+    com.creditagent.clients.ReportLockCheck lockCheck() {
+        return ssn -> switch (lock.get()) {
+            case "locked" -> true;
+            case "down" -> throw new com.creditagent.clients.ServiceUnavailableException("down", null);
+            default -> false;
+        };
     }
 
     JsonNode call(String json) throws IOException {
@@ -153,5 +163,56 @@ class CreditReportMcpHandlerTest {
         assertThat(call("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"nope\"}").at("/error/code").asInt())
                 .isEqualTo(CreditReportMcpHandler.METHOD_NOT_FOUND);
         assertThat(call("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}").get("result").isObject()).isTrue();
+    }
+
+    JsonNode callTool() throws IOException {
+        return call("""
+                {"jsonrpc":"2.0","id":7,"method":"tools/call",
+                 "params":{"name":"get_credit_report","arguments":{"ssn":"123-45-6789"}}}
+                """);
+    }
+
+    @Test
+    void theToolRefusesALockedReportWithoutReadingIt() throws IOException {
+        lock.set("locked");
+        assertThat(callTool().toString()).contains(CreditReportTools.LOCKED).doesNotContain("reportId");
+        assertThat(sentToNrg.get()).isNull();
+    }
+
+    @Test
+    void theToolRefusesWhenTheLockCannotBeChecked() throws IOException {
+        lock.set("down");
+        assertThat(callTool().toString()).contains(CreditReportTools.LOCK_UNAVAILABLE);
+        assertThat(sentToNrg.get()).isNull();
+    }
+
+    static final String READ = """
+            {"jsonrpc":"2.0","id":8,"method":"resources/read","params":{"uri":"credit-report://ssn/123456789"}}
+            """;
+
+    @Test
+    void aThirdPartyResourceReadOfALockedReportIsRefused() throws IOException {
+        lock.set("locked");
+        JsonNode response = call(READ); // no service token: a generic MCP host
+        assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.REPORT_LOCKED);
+        assertThat(response.at("/error/message").asText()).isEqualTo("This credit report is locked by its owner.");
+        assertThat(response.toString()).doesNotContain("123456789").doesNotContain("reportId");
+        assertThat(sentToNrg.get()).isNull();
+    }
+
+    @Test
+    void aThirdPartyReadFailsClosedWhenTheLockCannotBeChecked() throws IOException {
+        lock.set("down");
+        JsonNode response = call(READ);
+        assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.INTERNAL_ERROR);
+        assertThat(sentToNrg.get()).isNull();
+    }
+
+    @Test
+    void internalCallersAreNotCheckedAgain() throws IOException {
+        // The web server reads for the signed-in owner; the agent has checked the lock itself.
+        lock.set("down");
+        JsonNode response = mapper.readTree(handler.handle(READ, true).orElseThrow());
+        assertThat(response.has("result")).isTrue();
     }
 }

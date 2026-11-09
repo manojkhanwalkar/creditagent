@@ -66,6 +66,8 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
     private final Duration timeout;
     private final RetrySettings retry;
     private final Duration refusalPause;
+    /** INTERNAL_API_TOKEN, sent as a bearer token so the MCP server knows an internal caller; or null. */
+    private final String serviceToken;
     private final JsonMapper jsonMapper;
     private final ReentrantLock lock = new ReentrantLock();
     private volatile McpClient client;
@@ -77,11 +79,27 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
      */
     public McpCreditReportSource(
             String mcpUrl, String clientKey, Duration timeout, RetrySettings retry, JsonMapper jsonMapper) {
-        this(mcpUrl, clientKey, timeout, retry, REFUSAL_PAUSE, jsonMapper);
+        this(mcpUrl, clientKey, timeout, retry, (String) null, jsonMapper);
+    }
+
+    /**
+     * @param serviceToken the internal service token ({@code INTERNAL_API_TOKEN}). An internal caller
+     *     sends it so the MCP server does not lock-check its reads again: the web server reads only
+     *     for the signed-in owner, and the agent checks the lock itself. Null or blank sends none.
+     */
+    public McpCreditReportSource(String mcpUrl, String clientKey, Duration timeout, RetrySettings retry,
+            String serviceToken, JsonMapper jsonMapper) {
+        this(mcpUrl, clientKey, timeout, retry, REFUSAL_PAUSE, serviceToken, jsonMapper);
     }
 
     McpCreditReportSource(String mcpUrl, String clientKey, Duration timeout, RetrySettings retry,
             Duration refusalPause, JsonMapper jsonMapper) {
+        this(mcpUrl, clientKey, timeout, retry, refusalPause, null, jsonMapper);
+    }
+
+    McpCreditReportSource(String mcpUrl, String clientKey, Duration timeout, RetrySettings retry,
+            Duration refusalPause, String serviceToken, JsonMapper jsonMapper) {
+        this.serviceToken = serviceToken == null || serviceToken.isBlank() ? null : serviceToken;
         this.refusalPause = Objects.requireNonNull(refusalPause, "refusalPause");
         this.mcpUrl = Objects.requireNonNull(mcpUrl, "mcpUrl");
         this.clientKey = Objects.requireNonNull(clientKey, "clientKey");
@@ -192,6 +210,9 @@ public class McpCreditReportSource implements CreditReportSource, AutoCloseable 
                         // Never enable request/response logging: payloads contain SSNs and reports.
                         .logRequests(false)
                         .logResponses(false)
+                        .customHeaders(serviceToken == null
+                                ? java.util.Map.of()
+                                : java.util.Map.of("Authorization", "Bearer " + serviceToken))
                         .build();
                 client = DefaultMcpClient.builder()
                         .key(clientKey)

@@ -175,6 +175,16 @@ public class AuthService {
         }
     }
 
+    /**
+     * Whether the owner of {@code ssn} has locked their credit report; false when unlocked or when
+     * no account has the SSN. For the internal lock check that third-party consumers make.
+     */
+    public boolean isReportLocked(Ssn ssn) {
+        return users.findBySsnHash(ssnHasher.hash(ssn))
+                .map(user -> user.reportStatus() == ReportStatus.LOCKED)
+                .orElse(false);
+    }
+
     /** The signed-in user's report status. */
     public ReportStatus reportStatus(AuthenticatedUser user) {
         return users.find(user.userId())

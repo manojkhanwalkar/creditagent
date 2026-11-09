@@ -6,6 +6,9 @@ import com.creditagent.agent.advice.RuleBasedCreditAdvisor;
 import com.creditagent.clients.CreditReportSource;
 import com.creditagent.clients.HttpClients;
 import com.creditagent.clients.McpCreditReportSource;
+import com.creditagent.clients.ReportLockCheck;
+import com.creditagent.clients.ReportLockHttpClient;
+import com.creditagent.clients.ReportLockProperties;
 import com.creditagent.clients.RetrySettings;
 import com.creditagent.clients.ScoreCalculatorHttpClient;
 import com.creditagent.clients.ScoreService;
@@ -25,9 +28,12 @@ class AgentConfiguration {
     private static final Logger log = LoggerFactory.getLogger(AgentConfiguration.class);
 
     @Bean // AutoCloseable: Spring closes it on shutdown
-    McpCreditReportSource creditReportSource(AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry) {
-        return new McpCreditReportSource(
-                properties.mcpUrl(), "credit-intelligence-agent", properties.mcpTimeout(), retry, jsonMapper);
+    McpCreditReportSource creditReportSource(
+            AgentProperties properties, JsonMapper jsonMapper, RetrySettings retry, ReportLockProperties lock) {
+        // The agent checks the lock itself before every read, so it identifies itself to the MCP
+        // server with the service token and is not checked a second time.
+        return new McpCreditReportSource(properties.mcpUrl(), "credit-intelligence-agent", properties.mcpTimeout(),
+                retry, lock.token(), jsonMapper);
     }
 
     @Bean
@@ -60,8 +66,16 @@ class AgentConfiguration {
     }
 
     @Bean
+    ReportLockCheck reportLockCheck(RestClient.Builder builder, ReportLockProperties properties, RetrySettings retry) {
+        if (!properties.hasToken()) {
+            log.warn("INTERNAL_API_TOKEN is not set: every report-lock check fails, so all advice requests are refused");
+        }
+        return ReportLockHttpClient.create(builder, properties, retry);
+    }
+
+    @Bean
     CreditIntelligenceService creditIntelligenceService(
-            CreditReportSource reports, ScoreService scores, CreditAdvisor advisor) {
-        return new CreditIntelligenceService(reports, scores, advisor);
+            CreditReportSource reports, ScoreService scores, CreditAdvisor advisor, ReportLockCheck locks) {
+        return new CreditIntelligenceService(reports, scores, advisor, locks);
     }
 }

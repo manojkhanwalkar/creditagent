@@ -42,6 +42,7 @@ class McpCreditReportSourceTest {
     final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
     volatile int refuseWith = 503;
     final AtomicBoolean hang = new AtomicBoolean();
+    final java.util.concurrent.atomic.AtomicReference<String> lastAuthorization = new java.util.concurrent.atomic.AtomicReference<>();
     final java.util.concurrent.atomic.AtomicInteger initializes = new java.util.concurrent.atomic.AtomicInteger();
     /** How long the server takes to answer {@code initialize} and {@code resources/read}. */
     volatile long initMillis;
@@ -206,9 +207,26 @@ class McpCreditReportSourceTest {
         assertThat(McpCreditReportSource.resourceUri(Ssn.parse("123-45-6789"))).isEqualTo("credit-report://ssn/123456789");
     }
 
+    @Test
+    void anInternalCallerSendsTheServiceTokenAndOthersSendNone() {
+        source.findReport(Ssn.parse("123-45-6789"));
+        assertThat(lastAuthorization.get()).isNull();
+
+        McpCreditReportSource internal = new McpCreditReportSource(
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5),
+                FAST_RETRY, "service-token-service-token-service-token", json);
+        try {
+            internal.findReport(Ssn.parse("123-45-6789"));
+            assertThat(lastAuthorization.get()).isEqualTo("Bearer service-token-service-token-service-token");
+        } finally {
+            internal.close();
+        }
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             requests.incrementAndGet();
+            lastAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             if (hang.get()) {
                 try {
                     Thread.sleep(3_000);
