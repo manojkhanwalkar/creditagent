@@ -117,10 +117,14 @@ class DynamoDbRepositoriesTest {
         assertThat(users.updateReportStatus("dana", ReportStatus.LOCKED)).isTrue();
         assertThat(users.find("dana").orElseThrow().reportStatus()).isEqualTo(ReportStatus.LOCKED);
 
-        // Never creates a user, and never touches an SSN claim item.
+        // Never creates a user.
         assertThat(users.updateReportStatus("ghost", ReportStatus.LOCKED)).isFalse();
         assertThat(users.find("ghost")).isEmpty();
+        // Never touches an SSN claim item: the key guard refuses it, and the item is unchanged.
         assertThat(users.updateReportStatus("ssn#hash-d", ReportStatus.LOCKED)).isFalse();
+        assertThat(client.getItem(r -> r.tableName("users")
+                        .key(java.util.Map.of("userId", AttributeValue.fromS("ssn#hash-d"))).consistentRead(true))
+                .item()).doesNotContainKey("reportStatus").containsEntry("owner", AttributeValue.fromS("dana"));
     }
 
     @Test

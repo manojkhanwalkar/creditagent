@@ -23,6 +23,7 @@ function showSignedIn(userId, ssnMasked) {
   scoreWidget.hidden = false;
   lockWidget.hidden = false;
   hideNotice();
+  resetLockWidget();
   loadReportStatus();
 }
 
@@ -32,6 +33,7 @@ function showSignedOut(message) {
   authWidget.hidden = false;
   scoreWidget.hidden = true;
   lockWidget.hidden = true;
+  resetLockWidget();
   $('result').hidden = true;
   $('ssn').value = '';
   if (message) showNotice(message);
@@ -52,35 +54,58 @@ function hideNotice() {
 const lockStatus = $('lock-status');
 const lockToggle = $('lock-toggle');
 const lockError = $('lock-error');
+// The status the button will set, or null when the status is unknown (the button then retries).
 let nextStatus = null;
+// Bumped on every sign-in and sign-out, so a response for an earlier session is ignored.
+let lockGeneration = 0;
+
+function resetLockWidget() {
+  lockGeneration += 1;
+  nextStatus = null;
+  lockStatus.textContent = 'Checking…';
+  lockStatus.classList.remove('locked');
+  lockToggle.textContent = 'Lock my report';
+  lockToggle.disabled = true;
+  showFormError(lockError, '');
+}
 
 function showReportStatus(status) {
   const view = lockView(status);
   lockStatus.textContent = view.statusText;
   lockStatus.classList.toggle('locked', view.locked);
   lockToggle.textContent = view.buttonText;
-  lockToggle.setAttribute('aria-pressed', String(view.locked));
   lockToggle.disabled = false;
   nextStatus = view.next;
 }
 
+function showLockUnavailable(message) {
+  nextStatus = null;
+  lockStatus.textContent = 'The lock status is not available right now.';
+  lockStatus.classList.remove('locked');
+  lockToggle.textContent = 'Try again';
+  lockToggle.disabled = false;
+  showFormError(lockError, message);
+}
+
 async function loadReportStatus() {
+  const generation = lockGeneration;
   showFormError(lockError, '');
   lockToggle.disabled = true;
   try {
     const { response, data } = await api('/api/v1/credit-report/status', { method: 'GET' });
+    if (generation !== lockGeneration) return;
     if (response.status === 401) {
       showSignedOut(messageFor(401, data));
       return;
     }
     if (!response.ok) {
-      lockStatus.textContent = 'The lock status is not available right now.';
-      showFormError(lockError, messageFor(response.status, data));
+      showLockUnavailable(messageFor(response.status, data));
       return;
     }
     showReportStatus(data.reportStatus);
   } catch {
-    lockStatus.textContent = 'The lock status is not available right now.';
+    if (generation !== lockGeneration) return;
+    showLockUnavailable('Could not reach the server. Check your connection and try again.');
   }
 }
 
@@ -221,7 +246,11 @@ registerForm.addEventListener('submit', async (event) => {
 });
 
 lockToggle.addEventListener('click', async () => {
-  if (!nextStatus) return;
+  if (!nextStatus) {
+    loadReportStatus(); // status unknown: the button reads "Try again"
+    return;
+  }
+  const generation = lockGeneration;
   showFormError(lockError, '');
   lockToggle.disabled = true;
   try {
@@ -229,6 +258,7 @@ lockToggle.addEventListener('click', async () => {
       method: 'PUT',
       body: { reportStatus: nextStatus },
     });
+    if (generation !== lockGeneration) return;
     if (response.status === 401) {
       showSignedOut(messageFor(401, data));
       return;
@@ -240,6 +270,7 @@ lockToggle.addEventListener('click', async () => {
     }
     showReportStatus(data.reportStatus);
   } catch {
+    if (generation !== lockGeneration) return;
     showFormError(lockError, 'Could not reach the server. Check your connection and try again.');
     lockToggle.disabled = false;
   }

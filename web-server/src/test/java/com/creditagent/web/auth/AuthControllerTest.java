@@ -251,6 +251,14 @@ class AuthControllerTest {
         mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
+        // Enum ordinals and lower case are refused too, and the status is unchanged.
+        for (String bad : new String[] {"0", "1", "\"0\"", "\"locked\""}) {
+            mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"reportStatus\":" + bad + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get("/api/v1/credit-report/status").header("Authorization", bearer))
+                .andExpect(jsonPath("$.reportStatus").value("LOCKED"));
     }
 
     @Test

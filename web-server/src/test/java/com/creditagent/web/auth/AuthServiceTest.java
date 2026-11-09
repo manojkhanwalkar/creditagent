@@ -281,7 +281,9 @@ class AuthServiceTest {
     void storedValuesMapToAStatus() {
         assertThat(ReportStatus.fromStored("LOCKED")).isEqualTo(ReportStatus.LOCKED);
         assertThat(ReportStatus.fromStored("UNLOCKED")).isEqualTo(ReportStatus.UNLOCKED);
+        // Missing (an older account): unlocked. Anything unexpected: locked, so the lock fails closed.
         assertThat(ReportStatus.fromStored(null)).isEqualTo(ReportStatus.UNLOCKED);
-        assertThat(ReportStatus.fromStored("garbage")).isEqualTo(ReportStatus.UNLOCKED);
+        assertThat(ReportStatus.fromStored("garbage")).isEqualTo(ReportStatus.LOCKED);
+        assertThat(ReportStatus.fromStored("locked")).isEqualTo(ReportStatus.LOCKED);
     }
 }

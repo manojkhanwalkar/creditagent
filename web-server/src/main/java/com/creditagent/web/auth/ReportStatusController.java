@@ -3,6 +3,7 @@ package com.creditagent.web.auth;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -33,18 +34,27 @@ class ReportStatusController {
         this.auth = auth;
     }
 
-    record ReportStatusBody(@NotNull ReportStatus reportStatus) {}
+    /**
+     * The status as a string, matched exactly: binding straight to the enum would also accept its
+     * ordinals ({@code 0}, {@code "1"}), which would silently change meaning if the constants moved.
+     */
+    record ReportStatusBody(@NotNull @Pattern(regexp = "LOCKED|UNLOCKED") String reportStatus) {
+
+        static ReportStatusBody of(ReportStatus status) {
+            return new ReportStatusBody(status.name());
+        }
+    }
 
     @GetMapping
     ReportStatusBody status(@RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
-        return new ReportStatusBody(auth.reportStatus(user));
+        return ReportStatusBody.of(auth.reportStatus(user));
     }
 
     @PutMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     ReportStatusBody update(
             @Valid @RequestBody ReportStatusBody request,
             @RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
-        return new ReportStatusBody(auth.setReportStatus(user, request.reportStatus()));
+        return ReportStatusBody.of(auth.setReportStatus(user, ReportStatus.valueOf(request.reportStatus())));
     }
 
     @ExceptionHandler(UnauthenticatedException.class)
