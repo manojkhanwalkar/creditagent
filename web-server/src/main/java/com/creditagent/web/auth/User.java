@@ -9,6 +9,8 @@ import java.time.Instant;
  *
  * @param kycVerificationId the KYC provider's reference for the check that read the SSN from the
  *     user's card; null only for rows written before registration required a card
+ * @param reportStatus whether the user has locked their credit report; {@link ReportStatus#UNLOCKED}
+ *     when not set
  */
 public record User(
         String userId,
@@ -18,7 +20,12 @@ public record User(
         String ssnHash,
         String ssnLastFour,
         String kycVerificationId,
-        Instant createdAt) {
+        Instant createdAt,
+        ReportStatus reportStatus) {
+
+    public User {
+        reportStatus = reportStatus == null ? ReportStatus.UNLOCKED : reportStatus;
+    }
 
     @Override
     public String toString() {

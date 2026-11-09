@@ -1,5 +1,5 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
-import { authHeaders, checkRegistration, createSession, registrationFailure, ssnHint } from './auth.js';
+import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -11,6 +11,7 @@ const accountUser = $('account-user');
 const notice = $('notice');
 const authWidget = $('auth-widget');
 const scoreWidget = $('score-widget');
+const lockWidget = $('lock-widget');
 
 // ---------- signed-in / signed-out view ----------
 
@@ -20,7 +21,10 @@ function showSignedIn(userId, ssnMasked) {
   account.hidden = false;
   authWidget.hidden = true;
   scoreWidget.hidden = false;
+  lockWidget.hidden = false;
   hideNotice();
+  resetLockWidget();
+  loadReportStatus();
 }
 
 function showSignedOut(message) {
@@ -28,6 +32,8 @@ function showSignedOut(message) {
   account.hidden = true;
   authWidget.hidden = false;
   scoreWidget.hidden = true;
+  lockWidget.hidden = true;
+  resetLockWidget();
   $('result').hidden = true;
   $('ssn').value = '';
   if (message) showNotice(message);
@@ -41,6 +47,66 @@ function showNotice(message) {
 function hideNotice() {
   notice.textContent = '';
   notice.hidden = true;
+}
+
+// ---------- credit report lock ----------
+
+const lockStatus = $('lock-status');
+const lockToggle = $('lock-toggle');
+const lockError = $('lock-error');
+// The status the button will set, or null when the status is unknown (the button then retries).
+let nextStatus = null;
+// Bumped on every sign-in and sign-out, so a response for an earlier session is ignored.
+let lockGeneration = 0;
+
+function resetLockWidget() {
+  lockGeneration += 1;
+  nextStatus = null;
+  lockStatus.textContent = 'Checking…';
+  lockStatus.classList.remove('locked');
+  lockToggle.textContent = 'Lock my report';
+  lockToggle.disabled = true;
+  showFormError(lockError, '');
+}
+
+function showReportStatus(status) {
+  const view = lockView(status);
+  lockStatus.textContent = view.statusText;
+  lockStatus.classList.toggle('locked', view.locked);
+  lockToggle.textContent = view.buttonText;
+  lockToggle.disabled = false;
+  nextStatus = view.next;
+}
+
+function showLockUnavailable(message) {
+  nextStatus = null;
+  lockStatus.textContent = 'The lock status is not available right now.';
+  lockStatus.classList.remove('locked');
+  lockToggle.textContent = 'Try again';
+  lockToggle.disabled = false;
+  showFormError(lockError, message);
+}
+
+async function loadReportStatus() {
+  const generation = lockGeneration;
+  showFormError(lockError, '');
+  lockToggle.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/credit-report/status', { method: 'GET' });
+    if (generation !== lockGeneration) return;
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      showLockUnavailable(messageFor(response.status, data));
+      return;
+    }
+    showReportStatus(data.reportStatus);
+  } catch {
+    if (generation !== lockGeneration) return;
+    showLockUnavailable('Could not reach the server. Check your connection and try again.');
+  }
 }
 
 async function api(path, { method = 'POST', body } = {}) {
@@ -176,6 +242,37 @@ registerForm.addEventListener('submit', async (event) => {
   } finally {
     button.disabled = false;
     button.textContent = label;
+  }
+});
+
+lockToggle.addEventListener('click', async () => {
+  if (!nextStatus) {
+    loadReportStatus(); // status unknown: the button reads "Try again"
+    return;
+  }
+  const generation = lockGeneration;
+  showFormError(lockError, '');
+  lockToggle.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/credit-report/status', {
+      method: 'PUT',
+      body: { reportStatus: nextStatus },
+    });
+    if (generation !== lockGeneration) return;
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      showFormError(lockError, messageFor(response.status, data));
+      lockToggle.disabled = false;
+      return;
+    }
+    showReportStatus(data.reportStatus);
+  } catch {
+    if (generation !== lockGeneration) return;
+    showFormError(lockError, 'Could not reach the server. Check your connection and try again.');
+    lockToggle.disabled = false;
   }
 });
 

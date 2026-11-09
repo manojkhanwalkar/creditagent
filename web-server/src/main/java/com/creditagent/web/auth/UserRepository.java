@@ -13,4 +13,11 @@ public interface UserRepository {
     CreateResult create(User user);
 
     Optional<User> find(String userId);
+
+    /**
+     * Sets an existing user's report status. Never creates a user.
+     *
+     * @return false if no such user exists
+     */
+    boolean updateReportStatus(String userId, ReportStatus status);
 }

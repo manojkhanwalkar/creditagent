@@ -14,6 +14,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
 /** The DynamoDB repositories against DynamoDB Local. Skipped where Docker is not available. */
 @Testcontainers(disabledWithoutDocker = true)
@@ -59,7 +60,7 @@ class DynamoDbRepositoriesTest {
 
     static User user(String id, String ssnHash) {
         return new User(id, "$2a$hash", id + "@example.com", "+14155550100", ssnHash, "6789", "kyc_" + id,
-                Instant.parse("2026-11-08T12:00:00Z"));
+                Instant.parse("2026-11-08T12:00:00Z"), ReportStatus.UNLOCKED);
     }
 
     @Test
@@ -106,5 +107,36 @@ class DynamoDbRepositoriesTest {
         assertThat(sessions.deleteExpired(now)).isEqualTo(60);
         assertThat(sessions.find("keep")).isPresent();
         assertThat(sessions.find("old-0")).isEmpty();
+    }
+
+    @Test
+    void reportStatusIsStoredAndOnlyExistingUsersCanBeUpdated() {
+        users.create(user("dana", "hash-d"));
+        assertThat(users.find("dana").orElseThrow().reportStatus()).isEqualTo(ReportStatus.UNLOCKED);
+
+        assertThat(users.updateReportStatus("dana", ReportStatus.LOCKED)).isTrue();
+        assertThat(users.find("dana").orElseThrow().reportStatus()).isEqualTo(ReportStatus.LOCKED);
+
+        // Never creates a user.
+        assertThat(users.updateReportStatus("ghost", ReportStatus.LOCKED)).isFalse();
+        assertThat(users.find("ghost")).isEmpty();
+        // Never touches an SSN claim item: the key guard refuses it, and the item is unchanged.
+        assertThat(users.updateReportStatus("ssn#hash-d", ReportStatus.LOCKED)).isFalse();
+        assertThat(client.getItem(r -> r.tableName("users")
+                        .key(java.util.Map.of("userId", AttributeValue.fromS("ssn#hash-d"))).consistentRead(true))
+                .item()).doesNotContainKey("reportStatus").containsEntry("owner", AttributeValue.fromS("dana"));
+    }
+
+    @Test
+    void rowsWithoutAReportStatusReadAsUnlocked() {
+        client.putItem(r -> r.tableName("users").item(java.util.Map.of(
+                "userId", AttributeValue.fromS("legacy"),
+                "passwordHash", AttributeValue.fromS("$2a$hash"),
+                "email", AttributeValue.fromS("l@example.com"),
+                "phone", AttributeValue.fromS("+14155550100"),
+                "ssnHash", AttributeValue.fromS("hash-l"),
+                "ssnLastFour", AttributeValue.fromS("6789"),
+                "createdAt", AttributeValue.fromS("2026-11-08T12:00:00Z"))));
+        assertThat(users.find("legacy").orElseThrow().reportStatus()).isEqualTo(ReportStatus.UNLOCKED);
     }
 }

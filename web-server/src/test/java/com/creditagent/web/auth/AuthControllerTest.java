@@ -5,6 +5,7 @@ import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,7 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 
 /** Register, log in, use the token on the score API, log out: through the real filter chain. */
-@WebMvcTest(controllers = AuthController.class)
+@WebMvcTest(controllers = {AuthController.class, ReportStatusController.class})
 @Import(AuthControllerTest.Wiring.class)
 @TestPropertySource(properties = {
     "credit.web.mcp-url=http://mcp.invalid/mcp",
@@ -222,6 +223,49 @@ class AuthControllerTest {
     void scoreApiNeedsAToken() throws Exception {
         given(scores.scoreFor(Ssn.parse("123-45-6789"))).willReturn(CreditScore.of(700));
         mvc.perform(post("/api/v1/credit-score").contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"123-45-6789\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aUserCanLockAndUnlockTheirReport() throws Exception {
+        mvc.perform(register("lena", "678-90-1234")).andExpect(status().isCreated());
+        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"lena\",\"password\":\"" + PASSWORD + "\"}"))
+                .andReturn().getResponse().getContentAsString();
+        String bearer = "Bearer " + JsonPath.read(login, "$.token");
+
+        mvc.perform(get("/api/v1/credit-report/status").header("Authorization", bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportStatus").value("UNLOCKED"));
+        mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reportStatus\":\"LOCKED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportStatus").value("LOCKED"));
+        mvc.perform(get("/api/v1/credit-report/status").header("Authorization", bearer))
+                .andExpect(jsonPath("$.reportStatus").value("LOCKED"));
+
+        // Only the two statuses are accepted.
+        mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reportStatus\":\"OPEN\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        // Enum ordinals and lower case are refused too, and the status is unchanged.
+        for (String bad : new String[] {"0", "1", "\"0\"", "\"locked\""}) {
+            mvc.perform(put("/api/v1/credit-report/status").header("Authorization", bearer)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"reportStatus\":" + bad + "}"))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get("/api/v1/credit-report/status").header("Authorization", bearer))
+                .andExpect(jsonPath("$.reportStatus").value("LOCKED"));
+    }
+
+    @Test
+    void theReportStatusNeedsALogin() throws Exception {
+        mvc.perform(get("/api/v1/credit-report/status")).andExpect(status().isUnauthorized());
+        mvc.perform(put("/api/v1/credit-report/status").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reportStatus\":\"LOCKED\"}"))
                 .andExpect(status().isUnauthorized());
     }
 }
