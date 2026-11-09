@@ -42,6 +42,8 @@ class McpCreditReportSourceTest {
     final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
     volatile int refuseWith = 503;
     final AtomicBoolean hang = new AtomicBoolean();
+    /** Reads of 123-45-6789 take this long, so another look-up can fail while they are in flight. */
+    volatile long slowReadMillis = 0;
     final java.util.concurrent.atomic.AtomicReference<String> lastAuthorization = new java.util.concurrent.atomic.AtomicReference<>();
     final java.util.concurrent.atomic.AtomicInteger initializes = new java.util.concurrent.atomic.AtomicInteger();
     /** How long the server takes to answer {@code initialize} and {@code resources/read}. */
@@ -54,6 +56,8 @@ class McpCreditReportSourceTest {
     void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", this::handle);
+        // Several threads, so concurrent look-ups are really concurrent on the server.
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         server.start();
         source = new McpCreditReportSource(
                 "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp", "test", Duration.ofSeconds(5),
@@ -223,6 +227,25 @@ class McpCreditReportSourceTest {
         }
     }
 
+    @Test
+    void aFailedLookupDoesNotCancelOtherLookupsOnTheSameConnection() throws Exception {
+        source.findReport(Ssn.parse("123-45-6789")); // one shared connection, initialised
+        slowReadMillis = 1_500;
+
+        java.util.concurrent.CompletableFuture<Optional<CreditReport>> slow =
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> source.findReport(Ssn.parse("123-45-6789")));
+        Thread.sleep(300); // the slow read is now in flight on the shared connection
+
+        // Another user's look-up fails at the transport level, which retires its connection.
+        assertThatThrownBy(() -> source.findReport(Ssn.parse("345-67-8901"))).isInstanceOf(ServiceUnavailableException.class);
+
+        // The in-flight read on that connection still completes.
+        assertThat(slow.get(10, java.util.concurrent.TimeUnit.SECONDS)).isPresent();
+        // And later look-ups work, on a fresh connection.
+        slowReadMillis = 0;
+        assertThat(source.findReport(Ssn.parse("123-45-6789"))).isPresent();
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             requests.incrementAndGet();
@@ -268,6 +291,14 @@ class McpCreditReportSourceTest {
                     reads.incrementAndGet();
                     sleep(readMillis);
                     String uri = request.at("/params/uri").asString();
+                    if (uri.endsWith("345678901")) {
+                        // This SSN's reads fail at the transport level (a 500) on a working connection.
+                        exchange.sendResponseHeaders(500, -1);
+                        return;
+                    }
+                    if (uri.endsWith("123456789")) {
+                        sleep(slowReadMillis);
+                    }
                     if (uri.equals("credit-report://ssn/123456789")) {
                         response.putObject("result").putArray("contents").addObject()
                                 .put("uri", uri).put("mimeType", "application/json").put("text", REPORT_JSON);
