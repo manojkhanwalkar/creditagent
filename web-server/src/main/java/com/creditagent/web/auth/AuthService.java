@@ -105,7 +105,8 @@ public class AuthService {
                 ssnHasher.hash(ssn),
                 ssn.digits().substring(5),
                 verified.verificationId(),
-                clock.instant());
+                clock.instant(),
+                ReportStatus.UNLOCKED);
         // The conditional transaction is the real uniqueness check; there is no read-then-write race.
         switch (users.create(user)) {
             case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
@@ -172,6 +173,23 @@ public class AuthService {
             log.warn("User {} asked for a credit report that is not theirs", user.userId());
             throw new NotOwnSsnException();
         }
+    }
+
+    /** The signed-in user's report status. */
+    public ReportStatus reportStatus(AuthenticatedUser user) {
+        return users.find(user.userId())
+                .map(User::reportStatus)
+                .orElseThrow(() -> new UnauthenticatedException("Your session has ended. Please log in again."));
+    }
+
+    /** Locks or unlocks the signed-in user's credit report. @return the new status */
+    public ReportStatus setReportStatus(AuthenticatedUser user, ReportStatus status) {
+        Objects.requireNonNull(status, "status");
+        if (!users.updateReportStatus(user.userId(), status)) {
+            throw new UnauthenticatedException("Your session has ended. Please log in again.");
+        }
+        log.info("User {} set their credit report to {}", user.userId(), status);
+        return status;
     }
 
     public void logout(AuthenticatedUser user) {

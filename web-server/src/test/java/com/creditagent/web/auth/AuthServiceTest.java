@@ -253,4 +253,35 @@ class AuthServiceTest {
         assertThat(averySession).isNotNull();
         assertThatThrownBy(() -> auth.authenticate(forged)).isInstanceOf(UnauthenticatedException.class);
     }
+
+    @Test
+    void aNewUsersReportStartsUnlockedAndCanBeLockedAndUnlocked() {
+        register();
+        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        assertThat(auth.reportStatus(avery)).isEqualTo(ReportStatus.UNLOCKED);
+
+        assertThat(auth.setReportStatus(avery, ReportStatus.LOCKED)).isEqualTo(ReportStatus.LOCKED);
+        assertThat(auth.reportStatus(avery)).isEqualTo(ReportStatus.LOCKED);
+        assertThat(users.find("avery").orElseThrow().reportStatus()).isEqualTo(ReportStatus.LOCKED);
+
+        auth.setReportStatus(avery, ReportStatus.UNLOCKED);
+        assertThat(auth.reportStatus(avery)).isEqualTo(ReportStatus.UNLOCKED);
+    }
+
+    @Test
+    void aDeletedUserCannotChangeTheirStatus() {
+        register();
+        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        users.byId.remove("avery");
+        assertThatThrownBy(() -> auth.setReportStatus(avery, ReportStatus.LOCKED)).isInstanceOf(UnauthenticatedException.class);
+        assertThatThrownBy(() -> auth.reportStatus(avery)).isInstanceOf(UnauthenticatedException.class);
+    }
+
+    @Test
+    void storedValuesMapToAStatus() {
+        assertThat(ReportStatus.fromStored("LOCKED")).isEqualTo(ReportStatus.LOCKED);
+        assertThat(ReportStatus.fromStored("UNLOCKED")).isEqualTo(ReportStatus.UNLOCKED);
+        assertThat(ReportStatus.fromStored(null)).isEqualTo(ReportStatus.UNLOCKED);
+        assertThat(ReportStatus.fromStored("garbage")).isEqualTo(ReportStatus.UNLOCKED);
+    }
 }

@@ -1,5 +1,5 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
-import { authHeaders, checkRegistration, createSession, registrationFailure, ssnHint } from './auth.js';
+import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -11,6 +11,7 @@ const accountUser = $('account-user');
 const notice = $('notice');
 const authWidget = $('auth-widget');
 const scoreWidget = $('score-widget');
+const lockWidget = $('lock-widget');
 
 // ---------- signed-in / signed-out view ----------
 
@@ -20,7 +21,9 @@ function showSignedIn(userId, ssnMasked) {
   account.hidden = false;
   authWidget.hidden = true;
   scoreWidget.hidden = false;
+  lockWidget.hidden = false;
   hideNotice();
+  loadReportStatus();
 }
 
 function showSignedOut(message) {
@@ -28,6 +31,7 @@ function showSignedOut(message) {
   account.hidden = true;
   authWidget.hidden = false;
   scoreWidget.hidden = true;
+  lockWidget.hidden = true;
   $('result').hidden = true;
   $('ssn').value = '';
   if (message) showNotice(message);
@@ -41,6 +45,43 @@ function showNotice(message) {
 function hideNotice() {
   notice.textContent = '';
   notice.hidden = true;
+}
+
+// ---------- credit report lock ----------
+
+const lockStatus = $('lock-status');
+const lockToggle = $('lock-toggle');
+const lockError = $('lock-error');
+let nextStatus = null;
+
+function showReportStatus(status) {
+  const view = lockView(status);
+  lockStatus.textContent = view.statusText;
+  lockStatus.classList.toggle('locked', view.locked);
+  lockToggle.textContent = view.buttonText;
+  lockToggle.setAttribute('aria-pressed', String(view.locked));
+  lockToggle.disabled = false;
+  nextStatus = view.next;
+}
+
+async function loadReportStatus() {
+  showFormError(lockError, '');
+  lockToggle.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/credit-report/status', { method: 'GET' });
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      lockStatus.textContent = 'The lock status is not available right now.';
+      showFormError(lockError, messageFor(response.status, data));
+      return;
+    }
+    showReportStatus(data.reportStatus);
+  } catch {
+    lockStatus.textContent = 'The lock status is not available right now.';
+  }
 }
 
 async function api(path, { method = 'POST', body } = {}) {
@@ -176,6 +217,31 @@ registerForm.addEventListener('submit', async (event) => {
   } finally {
     button.disabled = false;
     button.textContent = label;
+  }
+});
+
+lockToggle.addEventListener('click', async () => {
+  if (!nextStatus) return;
+  showFormError(lockError, '');
+  lockToggle.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/credit-report/status', {
+      method: 'PUT',
+      body: { reportStatus: nextStatus },
+    });
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      showFormError(lockError, messageFor(response.status, data));
+      lockToggle.disabled = false;
+      return;
+    }
+    showReportStatus(data.reportStatus);
+  } catch {
+    showFormError(lockError, 'Could not reach the server. Check your connection and try again.');
+    lockToggle.disabled = false;
   }
 });
 

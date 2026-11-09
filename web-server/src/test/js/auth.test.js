@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  authHeaders, checkCardPhoto, checkRegistration, createSession, MAX_CARD_BYTES, registrationFailure, ssnHint,
+  authHeaders, checkCardPhoto, checkRegistration, createSession, lockView, MAX_CARD_BYTES, registrationFailure, ssnHint,
 } from '../../main/resources/static/js/auth.js';
 
 const valid = {
@@ -79,4 +79,15 @@ test('other registration failures keep the photo', () => {
   assert.equal(registrationFailure(413, {}).retakePhoto, true);
   assert.match(registrationFailure(429, {}).message, /Too many/);
   assert.match(registrationFailure(503, null).message, /went wrong/);
+});
+
+test('the lock widget shows the status and offers the opposite action', () => {
+  assert.deepEqual(lockView('LOCKED'), {
+    locked: true, statusText: 'Your credit report is locked.', buttonText: 'Unlock my report', next: 'UNLOCKED',
+  });
+  assert.deepEqual(lockView('UNLOCKED'), {
+    locked: false, statusText: 'Your credit report is unlocked.', buttonText: 'Lock my report', next: 'LOCKED',
+  });
+  // Anything unexpected is shown as unlocked, the server's default.
+  assert.equal(lockView(undefined).locked, false);
 });

@@ -53,6 +53,20 @@ const EMAIL = /^[^@\s]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 export const MAX_CARD_BYTES = 5 * 1024 * 1024;
 const CARD_TYPES = new Set(['image/png', 'image/jpeg']);
 
+/**
+ * What the lock widget shows for a report status from the server.
+ * @returns {{ locked: boolean, statusText: string, buttonText: string, next: string }}
+ */
+export function lockView(status) {
+  const locked = status === 'LOCKED';
+  return {
+    locked,
+    statusText: locked ? 'Your credit report is locked.' : 'Your credit report is unlocked.',
+    buttonText: locked ? 'Unlock my report' : 'Lock my report',
+    next: locked ? 'UNLOCKED' : 'LOCKED',
+  };
+}
+
 /** "ending in 6789" for a masked SSN such as ***-**-6789, or "" if unknown. */
 export function ssnHint(ssnMasked) {
   const match = /(\d{4})$/.exec(ssnMasked || '');

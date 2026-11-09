@@ -96,3 +96,5 @@ figcaption { color: var(--muted); margin-top: 8px; }
   .page-header, .widgets { padding-left: 16px; padding-right: 16px; }
   .notice { margin-left: 16px; margin-right: 16px; }
 }
+.lock-status { margin: 0 0 12px; font-weight: 600; }
+.lock-status.locked { color: #8A3B22; }

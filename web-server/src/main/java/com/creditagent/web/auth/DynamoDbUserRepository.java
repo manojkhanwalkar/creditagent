@@ -8,6 +8,7 @@ import java.util.Optional;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -22,6 +23,7 @@ public class DynamoDbUserRepository implements UserRepository {
 
     static final String KEY = "userId";
     static final String SSN_CLAIM_PREFIX = "ssn#";
+    static final String REPORT_STATUS = "reportStatus";
     private static final String CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailed";
 
     private final DynamoDbClient dynamo;
@@ -45,6 +47,7 @@ public class DynamoDbUserRepository implements UserRepository {
             item.put("kycVerificationId", s(user.kycVerificationId()));
         }
         item.put("createdAt", s(user.createdAt().toString()));
+        item.put(REPORT_STATUS, s(user.reportStatus().name()));
         Map<String, AttributeValue> claim = Map.of(
                 KEY, s(SSN_CLAIM_PREFIX + user.ssnHash()),
                 "owner", s(user.userId()));
@@ -89,7 +92,30 @@ public class DynamoDbUserRepository implements UserRepository {
                 text(item, "ssnHash"),
                 text(item, "ssnLastFour"),
                 text(item, "kycVerificationId"),
-                Instant.parse(item.get("createdAt").s())));
+                Instant.parse(item.get("createdAt").s()),
+                ReportStatus.fromStored(text(item, REPORT_STATUS))));
+    }
+
+    /**
+     * A conditional update: only an existing user item (it has a password hash; SSN-claim items do
+     * not) is changed, so this can never create a user or touch a claim.
+     */
+    @Override
+    public boolean updateReportStatus(String userId, ReportStatus status) {
+        if (userId == null || userId.startsWith(SSN_CLAIM_PREFIX)) {
+            return false;
+        }
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(userId)))
+                    .updateExpression("SET #status = :status")
+                    .conditionExpression("attribute_exists(#id) AND attribute_exists(#pw)")
+                    .expressionAttributeNames(Map.of("#id", KEY, "#pw", "passwordHash", "#status", REPORT_STATUS))
+                    .expressionAttributeValues(Map.of(":status", s(status.name()))));
+            return true;
+        } catch (ConditionalCheckFailedException missing) {
+            return false;
+        }
     }
 
     static AttributeValue s(String value) {

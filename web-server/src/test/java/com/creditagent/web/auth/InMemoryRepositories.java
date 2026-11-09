@@ -32,6 +32,13 @@ final class InMemoryRepositories {
         public Optional<User> find(String userId) {
             return Optional.ofNullable(byId.get(userId));
         }
+
+        @Override
+        public boolean updateReportStatus(String userId, ReportStatus status) {
+            return byId.computeIfPresent(userId, (id, u) -> new User(
+                    u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),
+                    u.kycVerificationId(), u.createdAt(), status)) != null;
+        }
     }
 
     static class Sessions implements SessionRepository {
