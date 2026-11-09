@@ -8,9 +8,10 @@ public interface SessionRepository {
     void save(Session session);
 
     /**
-     * Stores the session only if none with its id exists yet, atomically.
+     * Stores the session only if none with its id exists yet, atomically. A retried write that finds
+     * its own earlier attempt stored (same user and {@code createdAt}) counts as stored.
      *
-     * @return false if the id is taken
+     * @return false if the id is taken by another write
      */
     boolean create(Session session);
 

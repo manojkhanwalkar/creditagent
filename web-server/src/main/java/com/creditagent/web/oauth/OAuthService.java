@@ -34,8 +34,9 @@ import org.slf4j.LoggerFactory;
  *   <li>{@link #authorizationRequest} + {@link #approve}: the user signs in on this server's form,
  *       with their password <em>and</em> their SSN, and consents. The client gets a code.
  *   <li>{@link #exchange}: the client trades the code and its PKCE verifier for an access token,
- *       bound to the connector's resource URL (RFC 8707). The exchange opens a grant row, keyed by an
- *       id the code carries, so each code works once.
+ *       bound to the connector's resource URL (RFC 8707). The exchange first marks the code used
+ *       (a conditional write that lasts as long as the code), so each code works once, even after
+ *       its grant is revoked; then it opens the grant row the token is checked against.
  *   <li>{@link #introspect}: the connector (an internal caller) turns the token back into the user
  *       and their SSN, as long as the grant is open.
  * </ol>
@@ -317,7 +318,7 @@ public class OAuthService {
         }
         Ssn ssn = Ssn.parse(code.ssnDigits());
         Instant expires = clock.instant().plus(properties.accessTokenTtl());
-        if (!auth.openGrant(code.grantId(), code.userId(), ssn, expires)) {
+        if (!auth.openGrant(code.grantId(), code.userId(), ssn, code.expiresAt(), expires)) {
             // A code used twice may have been stolen: end the grant the first use opened (RFC 9700).
             auth.revokeGrant(code.grantId());
             log.warn("Authorization code reused; its grant was revoked");

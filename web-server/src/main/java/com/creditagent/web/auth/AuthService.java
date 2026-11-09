@@ -170,16 +170,30 @@ public class AuthService {
         return Optional.of(new VerifiedOwner(found.userId(), found.ssnHash(), found.ssnLastFour()));
     }
 
+    /** Prefix of the rows that mark an authorization code as used; never a grant or login session id. */
+    static final String USED_CODE_PREFIX = "code#";
+
     /**
-     * Records a connector grant (an OAuth consent turned into an access token) as a session with its
-     * own expiry. Its id is single use: a second call with the same id changes nothing.
+     * Turns a consent into a connector grant: an access token's session, with its own expiry.
      *
-     * @return false if a grant with this id already exists (an authorization code used twice)
+     * <p>Each authorization code works once. Before the grant is opened, a separate "code used" row
+     * ({@code code#<grantId>}) is written with a conditional put. It lives until the code itself
+     * expires, so revoking the grant (or a replay revoking it) never makes the code usable again:
+     * the marker, not the grant row, is what refuses the second exchange.
+     *
+     * @param codeExpiresAt when the authorization code stops being valid; the marker lives until then
+     * @return false if the code was already used (the caller must revoke the grant it opened)
      */
-    public boolean openGrant(String grantId, String userId, Ssn ssn, Instant expiresAt) {
+    public boolean openGrant(String grantId, String userId, Ssn ssn, Instant codeExpiresAt, Instant expiresAt) {
         Instant now = clock.instant();
-        return sessions.create(new Session(
-                grantId, userId, ssnHasher.hash(ssn), ssn.digits().substring(5), now, now, expiresAt));
+        String ssnHash = ssnHasher.hash(ssn);
+        String lastFour = ssn.digits().substring(5);
+        if (!sessions.create(new Session(USED_CODE_PREFIX + grantId, userId, ssnHash, lastFour, now, now, codeExpiresAt))) {
+            return false;
+        }
+        // The id is new (the marker above was), so this never collides; save() keeps it simple.
+        sessions.save(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt));
+        return true;
     }
 
     /**

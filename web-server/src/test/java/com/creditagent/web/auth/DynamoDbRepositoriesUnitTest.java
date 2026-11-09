@@ -246,7 +246,31 @@ class DynamoDbRepositoriesUnitTest {
         assertThat(sent.getValue().item()).containsEntry("sessionId", AttributeValue.fromS("g1"));
 
         doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).putItem(any(PutItemRequest.class));
+        // Taken by someone else: nothing there to compare (deleted since), or another write's row.
+        doReturn(GetItemResponse.builder().build()).when(dynamo).getItem(any(GetItemRequest.class));
         assertThat(sessions.create(grant)).isFalse();
+        Map<String, AttributeValue> other = sessionItem("g1", "avery", NOW.minusSeconds(5));
+        doReturn(GetItemResponse.builder().item(other).build()).when(dynamo).getItem(any(GetItemRequest.class));
+        assertThat(sessions.create(grant)).isFalse();
+        doReturn(GetItemResponse.builder().item(sessionItem("g1", "mallory", NOW)).build())
+                .when(dynamo).getItem(any(GetItemRequest.class));
+        assertThat(sessions.create(grant)).isFalse();
+    }
+
+    @Test
+    void aRetriedCreateThatFindsItsOwnEarlierWriteSucceeds() {
+        // The SDK retried a put whose first attempt timed out but had been stored.
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).putItem(any(PutItemRequest.class));
+        doReturn(GetItemResponse.builder().item(sessionItem("g1", "avery", NOW)).build())
+                .when(dynamo).getItem(any(GetItemRequest.class));
+        assertThat(sessions.create(new Session("g1", "avery", "hash-a", "6789", NOW, NOW, NOW.plusSeconds(3600)))).isTrue();
+    }
+
+    static Map<String, AttributeValue> sessionItem(String id, String userId, Instant createdAt) {
+        Map<String, AttributeValue> item = item("sessionId", id, "userId", userId, "ssnHash", "hash-a", "ssnLastFour", "6789",
+                "createdAt", createdAt.toString(), "lastActivityAt", createdAt.toString());
+        item.put("expiresAt", AttributeValue.fromN(Long.toString(NOW.plusSeconds(3600).getEpochSecond())));
+        return item;
     }
 
     @Test

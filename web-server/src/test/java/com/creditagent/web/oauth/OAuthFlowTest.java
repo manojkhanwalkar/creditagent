@@ -455,6 +455,26 @@ class OAuthFlowTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_grant"));
         mvc.perform(introspect(token)).andExpect(jsonPath("$.active").value(false));
+
+        // Revoking the grant must not make the code usable again: a third try is refused too.
+        mvc.perform(tokenRequest(clientId, code, VERIFIER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+    }
+
+    @Test
+    void aCodeCannotBeExchangedAgainAfterItsTokenIsRevoked() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String code = code(clientId);
+        String body = mvc.perform(tokenRequest(clientId, code, VERIFIER)).andReturn().getResponse().getContentAsString();
+        String token = JsonPath.read(body, "$.access_token");
+        mvc.perform(post("/oauth/revoke").contentType(MediaType.APPLICATION_FORM_URLENCODED).param("token", token))
+                .andExpect(status().isOk());
+
+        mvc.perform(tokenRequest(clientId, code, VERIFIER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_grant"));
+        mvc.perform(introspect(token)).andExpect(jsonPath("$.active").value(false));
     }
 
     @Test

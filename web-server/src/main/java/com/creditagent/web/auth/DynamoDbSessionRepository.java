@@ -49,7 +49,13 @@ public class DynamoDbSessionRepository implements SessionRepository {
                     .expressionAttributeNames(Map.of("#id", KEY)));
             return true;
         } catch (ConditionalCheckFailedException taken) {
-            return false;
+            // The SDK retries a put whose attempt timed out. If the first attempt had in fact
+            // succeeded, the retry fails this condition against our own row: that is a success, not
+            // a taken id. createdAt is this call's own clock reading, so it tells the two apart.
+            return find(session.sessionId())
+                    .filter(stored -> stored.userId().equals(session.userId())
+                            && stored.createdAt().equals(session.createdAt()))
+                    .isPresent();
         }
     }
 
