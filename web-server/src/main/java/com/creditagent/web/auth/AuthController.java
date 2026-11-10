@@ -46,8 +46,11 @@ class AuthController {
 
     private final AuthService auth;
 
-    AuthController(AuthService auth) {
+    private final java.util.List<SessionEndListener> sessionEndListeners;
+
+    AuthController(AuthService auth, org.springframework.beans.factory.ObjectProvider<SessionEndListener> sessionEndListeners) {
         this.auth = auth;
+        this.sessionEndListeners = sessionEndListeners.orderedStream().toList();
     }
 
     /** The registration form. Bound from multipart fields; an {@code ssn} field, if sent, is ignored. */
@@ -100,6 +103,14 @@ class AuthController {
     @PostMapping("/logout")
     ResponseEntity<Void> logout(@RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
         auth.logout(user);
+        for (SessionEndListener listener : sessionEndListeners) {
+            try {
+                listener.sessionEnded(user);
+            } catch (RuntimeException e) {
+                // The session is already gone; whatever the listener holds also expires on its own.
+                log.warn("Session end listener failed: {}", SafeLogging.describe(e));
+            }
+        }
         return ResponseEntity.noContent().build();
     }
 

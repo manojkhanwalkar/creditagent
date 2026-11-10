@@ -102,6 +102,27 @@
       <p id="lock-help" class="help">While your report is locked, third parties (such as the credit advice agents) cannot pull it. You can still see your own score, and unlock it at any time.</p>
       <p id="lock-error" class="error" role="alert" hidden></p>
     </section>
+
+    <!-- Widget: chat about the user's own credit report. Shown while signed in. -->
+    <section class="widget chat-widget" id="chat-widget" aria-labelledby="chat-title" hidden>
+      <h2 id="chat-title">Ask about your report</h2>
+      <ol class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="Conversation"></ol>
+      <form id="chat-form" autocomplete="off" novalidate>
+        <div id="chat-ssn-row">
+          <label for="chat-ssn">Social Security Number</label>
+          <input id="chat-ssn" name="ssn" type="password" inputmode="numeric" placeholder="AAA-GG-SSSS" maxlength="11"
+                 autocomplete="off" spellcheck="false" aria-describedby="chat-ssn-help">
+          <p id="chat-ssn-help" class="help">Your own SSN, once per sign-in, so the assistant can read your report.</p>
+        </div>
+        <label for="chat-message">Your question</label>
+        <textarea id="chat-message" name="message" rows="2" maxlength="1000" required
+                  placeholder="For example: how can I raise my score?"></textarea>
+        <button type="submit" id="chat-send">Send</button>
+        <p id="chat-error" class="error" role="alert" hidden></p>
+      </form>
+      <p class="help chat-note">Answers come from your credit report and are for educational purposes only.
+        Your conversation is kept in memory only, and is cleared when you log out or after 5 idle minutes.</p>
+    </section>
   </main>
 </body>
 </html>

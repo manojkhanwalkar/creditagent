@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-20 | Medium | The chat sends a user's credit report and free-text questions to an (eventually LLM-backed) agent | Mitigated: own-SSN check, input and output guardrails outside the model, PII redaction, RAM-only bounded memory, internal-only agent |
 | S-19 | High | The Claude connector exposes a user's credit data to an internet-facing LLM client | Mitigated: OAuth 2.1 with PKCE, own-data-only tools, encrypted tokens; data still reaches the user's Claude conversations by design |
 
 ## Findings
@@ -93,6 +94,17 @@ Check the model provider's data-retention terms before enabling it.
 - `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
+
+### S-20 Chat and the User Advisor Agent (Mitigated)
+Reviewed against the OWASP Top 10 for LLM Applications (2025) and for Agentic Applications (2026).
+- **LLM01 / ASI01 prompt injection:** deterministic input checks on normalised text (Unicode, invisible characters, homoglyphs, leetspeak, base64, hex, Morse, role markers), a topic allow-list, and a prompt that keeps instructions apart from data. The placeholder model has no tools, so injection can only change text.
+- **LLM02 sensitive data:** the chat reaches only the signed-in user's own report (the same own-SSN check as the score API). Identifiers are redacted in both directions. Nothing is logged but refusal reasons. The agent sees a hash of the session, never the user id.
+- **LLM05 output handling:** answers are shown with `textContent`, markup characters are removed, and answers are length-capped.
+- **LLM07 leakage:** instructions carry a sentinel; any answer that contains it, a prompt delimiter or a role marker is replaced.
+- **LLM09 misinformation:** answers come from report data; promises are blocked; every answer carries the educational-use disclaimer.
+- **LLM10 / ASI08 consumption and cascades:** bounded memory (TTL, turns, LRU, heap pressure), input and output size caps, per-IP and shared inbound limits, timeouts, and no retry of a message that may have arrived.
+- **ASI06 memory poisoning:** only guardrail-checked text is stored; memory is per login session, cleared at logout.
+- **Residual:** word lists and patterns are a first layer, not a classifier. Add a moderation model when a real LLM is plugged in, and re-run `owasp-llm-top10` then.
 
 ### S-19 Claude connector (Mitigated)
 The connector (`claude-connector`) and the web server's OAuth endpoints are meant to be reachable from the internet, unlike every other service here.

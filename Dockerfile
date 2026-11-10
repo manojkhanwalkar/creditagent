@@ -26,5 +26,5 @@ COPY --chown=app:app ${MODULE}/target/*.jar /app/app.jar
 
 USER app:app
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
-EXPOSE 8080 8081 8082 8083 8084 8085 8086 8087 8088
+EXPOSE 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

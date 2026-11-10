@@ -16,6 +16,7 @@ class JsonSizeLimitCoverageTest {
 
     static final List<String> BODY_ENDPOINTS = List.of(
             "/api/v1/credit-score",
+            "/api/v1/chat",
             "/api/v1/auth/login",
             "/api/v1/credit-report/status",
             "/internal/v1/report-locks/lookup",

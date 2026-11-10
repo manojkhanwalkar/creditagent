@@ -79,6 +79,7 @@ jobs:
             credit-intelligence-agent/target/*.jar
             client-agent/target/*.jar
             claude-connector/target/*.jar
+            user-advisor-agent/target/*.jar
           retention-days: 7
 
   ui:
@@ -118,6 +119,7 @@ jobs:
           - credit-intelligence-agent
           - client-agent
           - claude-connector
+          - user-advisor-agent
     env:
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
