@@ -150,6 +150,17 @@ class DynamoDbRepositoriesTest {
     }
 
     @Test
+    void zipAndLastScoreAreStored() {
+        User user = new User("zip-user", "$2a$hash", "z@example.com", "+14155550100", "hash-zip", "6789", "kyc",
+                testNow(), ReportStatus.UNLOCKED, "98101", null, null);
+        assertThat(users.create(user)).isEqualTo(UserRepository.CreateResult.CREATED);
+        assertThat(users.find("zip-user").orElseThrow().zip()).isEqualTo("98101");
+        assertThat(users.updateLastScore("zip-user", 731, testNow())).isTrue();
+        assertThat(users.find("zip-user").orElseThrow().lastScore()).isEqualTo(731);
+        assertThat(users.updateLastScore("no-such-user", 731, testNow())).isFalse();
+    }
+
+    @Test
     void aUserIsFoundByTheirSsnClaim() {
         users.create(user("erin", "hash-e"));
         assertThat(users.findBySsnHash("hash-e")).hasValueSatisfying(u -> assertThat(u.userId()).isEqualTo("erin"));

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.creditagent.advisor.memory.ConversationMemory;
 import com.creditagent.web.support.ServiceToken;
+import com.creditagent.web.support.ServiceTokenFilter;
 import java.time.Clock;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;

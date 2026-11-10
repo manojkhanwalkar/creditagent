@@ -23,4 +23,11 @@ public interface UserRepository {
      * @return false if no such user exists
      */
     boolean updateReportStatus(String userId, ReportStatus status);
+
+    /**
+     * Records an existing user's latest credit score. Never creates a user.
+     *
+     * @return false if no such user exists
+     */
+    boolean updateLastScore(String userId, int score, java.time.Instant at);
 }

@@ -24,6 +24,12 @@ credit:
     # One MCP read includes the MCP server's retries of NRG, so wait longer than for other calls.
     mcp-timeout: ${MCP_TIMEOUT:20s}
     rate-limit-per-minute: ${RATE_LIMIT_PER_MINUTE:20}
+  offers:
+    # The Offers service: card offers for the user's last score and ZIP code, at login.
+    url: ${OFFERS_URL:http://localhost:8090}
+    timeout: ${OFFERS_TIMEOUT:3s}
+    # Login asks once and waits at most this; the page fetches offers again if they were not ready.
+    login-timeout: ${OFFERS_LOGIN_TIMEOUT:1500ms}
   chat:
     # The User Advisor Agent behind the chat (it needs the same INTERNAL_API_TOKEN).
     advisor-url: ${ADVISOR_URL:http://localhost:8089}

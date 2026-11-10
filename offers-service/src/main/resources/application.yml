@@ -1,0 +1,25 @@
+server:
+  port: ${PORT:8090}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: offers-service
+
+credit:
+  offers:
+    # Required: only internal callers presenting this token may use the REST or MCP interface.
+    # Empty = both are off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

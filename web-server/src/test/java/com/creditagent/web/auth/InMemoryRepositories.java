@@ -42,7 +42,14 @@ public final class InMemoryRepositories {
         public boolean updateReportStatus(String userId, ReportStatus status) {
             return byId.computeIfPresent(userId, (id, u) -> new User(
                     u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),
-                    u.kycVerificationId(), u.createdAt(), status)) != null;
+                    u.kycVerificationId(), u.createdAt(), status, u.zip(), u.lastScore(), u.lastScoreAt())) != null;
+        }
+
+        @Override
+        public boolean updateLastScore(String userId, int score, Instant at) {
+            return byId.computeIfPresent(userId, (id, u) -> new User(
+                    u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),
+                    u.kycVerificationId(), u.createdAt(), u.reportStatus(), u.zip(), score, at)) != null;
         }
     }
 

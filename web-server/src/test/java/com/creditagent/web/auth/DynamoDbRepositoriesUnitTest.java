@@ -205,6 +205,36 @@ class DynamoDbRepositoriesUnitTest {
         verify(dynamo, times(1)).updateItem(any(UpdateItemRequest.class));
     }
 
+    @Test
+    void zipAndLastScoreRoundTripAndTheScoreUpdateIsConditional() {
+        doReturn(null).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        users.create(new User("zed", "$2a$hash", "z@example.com", "+14155550100", "hash-zed", "6789", "kyc", NOW,
+                ReportStatus.UNLOCKED, "98101", null, null));
+        ArgumentCaptor<TransactWriteItemsRequest> created = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(dynamo).transactWriteItems(created.capture());
+        assertThat(created.getValue().transactItems().getFirst().put().item()).containsEntry("zip", AttributeValue.fromS("98101"));
+
+        Map<String, AttributeValue> stored = userItem("zed");
+        stored.put("zip", AttributeValue.fromS("98101"));
+        stored.put("lastScore", AttributeValue.fromN("731"));
+        stored.put("lastScoreAt", AttributeValue.fromS(NOW.toString()));
+        doReturn(GetItemResponse.builder().item(stored).build()).when(dynamo).getItem(any(GetItemRequest.class));
+        User found = users.find("zed").orElseThrow();
+        assertThat(found.zip()).isEqualTo("98101");
+        assertThat(found.lastScore()).isEqualTo(731);
+        assertThat(found.lastScoreAt()).isEqualTo(NOW);
+
+        doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        assertThat(users.updateLastScore("zed", 700, NOW)).isTrue();
+        ArgumentCaptor<UpdateItemRequest> sent = ArgumentCaptor.forClass(UpdateItemRequest.class);
+        verify(dynamo).updateItem(sent.capture());
+        assertThat(sent.getValue().conditionExpression()).contains("attribute_exists(#pw)");
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        assertThat(users.updateLastScore("gone", 700, NOW)).isFalse();
+        assertThat(users.updateLastScore("ssn#x", 700, NOW)).isFalse();
+        assertThat(users.updateLastScore(null, 700, NOW)).isFalse();
+    }
+
     // ---------------------------------------------------------------- sessions
 
     @Test

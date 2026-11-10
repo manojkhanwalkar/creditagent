@@ -76,6 +76,15 @@ public final class RegistrationPolicy {
         return value;
     }
 
+    /** A US ZIP code; ZIP+4 is accepted and stored as its first five digits. */
+    public static String normaliseZip(String zip) {
+        String value = zip == null ? "" : zip.strip();
+        if (!value.matches("\\d{5}(-\\d{4})?")) {
+            throw new InvalidRegistrationException("Enter your 5-digit ZIP code.");
+        }
+        return value.substring(0, 5);
+    }
+
     /** Accepts spaces, dashes, dots and brackets as separators and stores E.164. */
     public static String normalisePhone(String phone) {
         String value = phone == null ? "" : phone.strip().replaceAll("[\\s().-]", "");

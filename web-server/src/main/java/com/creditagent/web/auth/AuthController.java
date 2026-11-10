@@ -48,8 +48,12 @@ class AuthController {
 
     private final java.util.List<SessionEndListener> sessionEndListeners;
 
-    AuthController(AuthService auth, org.springframework.beans.factory.ObjectProvider<SessionEndListener> sessionEndListeners) {
+    private final org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers;
+
+    AuthController(AuthService auth, org.springframework.beans.factory.ObjectProvider<SessionEndListener> sessionEndListeners,
+            org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers) {
         this.auth = auth;
+        this.loginOffers = loginOffers;
         this.sessionEndListeners = sessionEndListeners.orderedStream().toList();
     }
 
@@ -59,10 +63,11 @@ class AuthController {
             @NotNull @Size(max = 256) String password,
             @NotNull @Size(max = 254) String email,
             @NotNull @Size(max = 32) String phone,
+            @NotNull @Size(max = 10) String zip,
             @NotNull MultipartFile ssnCard) {
         @Override
         public String toString() {
-            return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, ssnCard=<redacted>]";
+            return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, zip=<redacted>, ssnCard=<redacted>]";
         }
     }
 
@@ -75,13 +80,16 @@ class AuthController {
         }
     }
 
-    record LoginResponse(String token, String tokenType, String userId, String ssnMasked, long idleTimeoutSeconds) {}
+    /** {@code offers}: card offers matched at login (see {@link LoginOffers}); null when there is no source. */
+    record LoginResponse(String token, String tokenType, String userId, String ssnMasked, long idleTimeoutSeconds,
+            Object offers) {}
 
     record SessionResponse(String userId, String ssnMasked) {}
 
     @PostMapping(path = "/register", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<RegisterResponse> register(@Valid @ModelAttribute RegisterForm form) {
-        String userId = auth.register(form.userId(), form.password(), form.email(), form.phone(), bytes(form.ssnCard()));
+        String userId = auth.register(form.userId(), form.password(), form.email(), form.phone(), form.zip(),
+                bytes(form.ssnCard()));
         return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId));
     }
 
@@ -96,8 +104,9 @@ class AuthController {
     @PostMapping(path = "/login", consumes = MediaType.APPLICATION_JSON_VALUE)
     LoginResponse login(@Valid @RequestBody LoginRequest request) {
         AuthService.LoginResult result = auth.login(request.userId(), request.password());
-        return new LoginResponse(
-                result.token(), "Bearer", result.userId(), result.ssnMasked(), result.idleTimeout().toSeconds());
+        LoginOffers offers = loginOffers.getIfAvailable();
+        return new LoginResponse(result.token(), "Bearer", result.userId(), result.ssnMasked(),
+                result.idleTimeout().toSeconds(), offers == null ? null : offers.offersFor(result.userId()));
     }
 
     @PostMapping("/logout")

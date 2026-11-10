@@ -53,6 +53,10 @@
         <input id="reg-phone" name="phone" type="tel" autocomplete="tel" required maxlength="32"
                placeholder="+1 415 555 0100" aria-describedby="reg-phone-help">
         <p id="reg-phone-help" class="help">International form with country code. Used for password recovery.</p>
+        <label for="reg-zip">ZIP code</label>
+        <input id="reg-zip" name="zip" inputmode="numeric" autocomplete="postal-code" required maxlength="10"
+               placeholder="98101" aria-describedby="reg-zip-help">
+        <p id="reg-zip-help" class="help">Used only to match card offers available where you live.</p>
         <label for="reg-ssn-card">Photo of your Social Security card</label>
         <input id="reg-ssn-card" name="ssnCard" type="file" accept="image/png,image/jpeg" required
                aria-describedby="reg-ssn-card-help">
@@ -101,6 +105,15 @@
       <button type="button" id="lock-toggle" aria-describedby="lock-help" disabled>Lock my report</button>
       <p id="lock-help" class="help">While your report is locked, third parties (such as the credit advice agents) cannot pull it. You can still see your own score, and unlock it at any time.</p>
       <p id="lock-error" class="error" role="alert" hidden></p>
+    </section>
+
+    <!-- Widget: card offers matched to the user's score and ZIP code. Shown while signed in. -->
+    <section class="widget offers-widget" id="offers-widget" aria-labelledby="offers-title" hidden>
+      <h2 id="offers-title">Card offers for you</h2>
+      <p class="help" id="offers-message" role="status"></p>
+      <ol class="offers-list" id="offers-list"></ol>
+      <p class="help" id="offers-basis" hidden></p>
+      <p class="help offers-disclaimer" id="offers-disclaimer" hidden></p>
     </section>
 
     <!-- Widget: chat about the user's own credit report. Shown while signed in. -->

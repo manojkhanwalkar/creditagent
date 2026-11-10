@@ -75,6 +75,7 @@ services:
       SCORE_CALCULATOR_URL: http://score-calculator:8081
       KYC_URL: http://kyc-service:8087
       ADVISOR_URL: http://user-advisor-agent:8089
+      OFFERS_URL: http://offers-service:8090
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       SSN_HMAC_KEY: ${SSN_HMAC_KEY:?Set SSN_HMAC_KEY in .env}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
@@ -89,7 +90,7 @@ services:
       AWS_SECRET_ACCESS_KEY: local
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb, user-advisor-agent]
+    depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb, user-advisor-agent, offers-service]
 
   credit-intelligence-agent:
     <<: *service
@@ -112,6 +113,14 @@ services:
     ports:
       - "127.0.0.1:8086:8086"
     depends_on: [credit-intelligence-agent]
+
+  # Credit card offers for a score and ZIP code: an MCP tool, and a REST API that calls it. The web
+  # server asks for them at login. Placeholder catalogue until an offers marketplace exists.
+  offers-service:
+    <<: *service
+    build: { context: ., args: { MODULE: offers-service } }
+    environment:
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
 
   # Chatbot back end: answers a signed-in user's questions about their own report, behind input and
   # output guardrails, with conversation memory in RAM only. Called only by the web server.

@@ -6,8 +6,7 @@ import com.creditagent.advisor.memory.ConversationMemory;
 import com.creditagent.advisor.model.AdvisorModel;
 import com.creditagent.advisor.model.PlaceholderAdvisorModel;
 import com.creditagent.web.support.RequestSizeLimitFilter;
-import com.creditagent.web.support.ServiceToken;
-import com.creditagent.web.support.WebSupportAutoConfiguration;
+import com.creditagent.web.support.ServiceTokenFilter;
 import com.creditagent.advisor.eval.EvalLog;
 import com.creditagent.advisor.eval.JsonEvalLog;
 import java.time.Clock;
@@ -29,11 +28,7 @@ class AdvisorConfiguration {
     /** Before the shared inbound limits: callers without the token must not use up the bucket. */
     @Bean
     FilterRegistrationBean<ServiceTokenFilter> serviceTokenFilter(AdvisorProperties properties) {
-        FilterRegistrationBean<ServiceTokenFilter> registration =
-                new FilterRegistrationBean<>(new ServiceTokenFilter(new ServiceToken(properties.serviceToken())));
-        registration.addUrlPatterns("/*");
-        registration.setOrder(WebSupportAutoConfiguration.INBOUND_LIMIT_ORDER - 1);
-        return registration;
+        return ServiceTokenFilter.registration(properties.serviceToken());
     }
 
     @Bean

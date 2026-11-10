@@ -10,6 +10,7 @@ const valid = {
   confirm: 'correct horse battery staple',
   email: 'avery@example.com',
   phone: '+1 415 555 0100',
+  zip: '98101',
   ssnCard: { name: 'card.png', type: 'image/png', size: 120_000 },
 };
 
@@ -19,6 +20,9 @@ test('a good registration passes', () => {
 
 test('registration problems are reported', () => {
   assert.match(checkRegistration({ ...valid, userId: 'a b' }), /User id/);
+  assert.match(checkRegistration({ ...valid, zip: '981' }), /ZIP/);
+  assert.match(checkRegistration({ ...valid, zip: undefined }), /ZIP/);
+  assert.equal(checkRegistration({ ...valid, zip: '98101-1234' }), null);
   assert.match(checkRegistration({ ...valid, password: 'short', confirm: 'short' }), /at least 12/);
   assert.match(checkRegistration({ ...valid, password: 'avery-is-my-name', confirm: 'avery-is-my-name' }), /user id/);
   assert.match(checkRegistration({ ...valid, confirm: 'something else entirely' }), /do not match/);

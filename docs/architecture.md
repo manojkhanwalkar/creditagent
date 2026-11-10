@@ -22,6 +22,7 @@ flowchart LR
         CA[client-agent :8086]
         CIA[credit-intelligence-agent :8085]
     end
+    OFS[offers-service :8090<br/>MCP tool + REST<br/>ranks card offers]
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
     CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
@@ -46,6 +47,9 @@ flowchart LR
     CIA -- "D · report" --> SC
     SC -. "E · score" .-> CIA
     CIA -. "F · recommendations" .-> CA
+    UI -- "L1 · login" --> WS
+    WS -- "L2 · last score + ZIP (POST /api/v1/offers)" --> OFS
+    OFS -. "L3 · up to 10 ranked offers" .-> WS
     UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
     WS -- "Q2 · report (resources/read)" --> M
     WS -- "Q3 · question + report" --> UAA
@@ -73,6 +77,7 @@ flowchart LR
 | `web-server` | Serves the UI, registers users after a KYC check of their SSN card, logs them in (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
+| `offers-service` | Credit card offers for a score and ZIP code, ranked; an MCP tool, and a REST API that calls it | Spring Boot, LangChain4j `McpServer` |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
 | `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
 
@@ -278,3 +283,33 @@ sequenceDiagram
 **Resilience.** Each try waits at most `ADVISOR_TIMEOUT` (15 s). A chat message is retried only when it provably never arrived (connection refused, connect timeout) or was refused with 429 or 503 before any work, because each message adds to the conversation. With the default 3 tries, the worst case is therefore about 47 s (`RetrySettings.worstCase`); a read timeout is never retried. Forgetting a conversation is retried on any transient failure, and runs on a virtual thread after logout: a slow or unreachable agent never delays the logout, and the conversation expires on its own anyway.
 
 **Eval log.** Every turn is also written as one JSON line to its own rolling file for offline evals: the question, the input verdict, the model's raw answer, what was shown, the output verdict, the model and its latency. It goes through a dedicated logger (`advisor-eval`, outside every package, so no class log lines reach the file) and an asynchronous appender with a bounded queue that drops lines rather than block a chat. Everything written is redacted; the report and the user's identity never are. Retention is bounded (30 days, 500 MB). Trade-off: a raw answer the output guardrails replaced is kept in the log, because that is exactly what an eval of the guardrails needs. The agent has the shared inbound limits (token bucket and concurrency cap) and a 512 KB body limit, and the web server's per-IP limit covers `/api/v1/chat`.
+
+## Card offers
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant W as web-server
+    participant D as users table
+    participant O as offers-service
+    Note over W,D: registration: KYC reads the SSN → score computed in the background → lastScore stored
+    Note over W,D: every score look-up also updates lastScore
+    B->>W: POST /api/v1/auth/login
+    W->>D: user (zip, lastScore)
+    W->>O: POST /api/v1/offers {score, zip}
+    O->>O: REST → MCP tools/call get_credit_card_offers → eligible → priced → ranked
+    O-->>W: up to 10 offers (Schumer-box terms)
+    W-->>B: token + offers
+```
+
+**Score at login.** Login has no SSN (only its keyed hash is stored), so it cannot compute a score. The account therefore keeps the latest score and when it was computed: recorded at registration (the one time the server holds the SSN without the user typing it, from the KYC check; computed on a virtual thread so registration does not wait) and at every score look-up. Trade-off: offers can be based on a score that is days old; the widget says which score they were matched on.
+
+**REST plugs into MCP.** The Offers service has one entry to its logic, the MCP tool `get_credit_card_offers`. `POST /api/v1/offers` builds an MCP `tools/call` and runs it through the same LangChain4j `McpServer`, so the two interfaces cannot drift apart. The price is a JSON round trip inside the process, small next to the HTTP hop.
+
+**What the service sees.** A score and a ZIP code only: no name, SSN or user id. Both interfaces still need the internal service token (only the web server and internal agents call them), and the MCP endpoint refuses requests that carry an `Origin`. It accepts string or numeric JSON-RPC ids (LangChain4j's `McpServer` takes numbers only, so the handler maps them).
+
+**Honest terms, sensible ranking.** Every Schumer-box term is the product's own; an unknown one is null ("see issuer terms"), never a default. Cards for building credit (secured, builder, student, fair credit) are offered only below 670, and the match score gives 20% to fit, so a 700 sees cash-back and travel cards, not a student card. Marketplace data is validated before ranking, since issuer text reaches agents' context.
+
+**Resilience.** Login asks once and waits at most `OFFERS_LOGIN_TIMEOUT` (1.5 s, no retry), so a hung Offers service costs a login 1.5 s, not the ~11 s three retried tries would. `GET /api/v1/offers` uses `OFFERS_TIMEOUT` (3 s) a try with retries. Any failure, the account read included, becomes `UNAVAILABLE`, never an error; a failed score write never fails a score look-up. Up to 10 offers are shown even if the service returned more, and the web server adds its own disclaimer if the service sent none. After registration the page re-asks at 2, 5 and 10 s, since the first score is computed in the background.
+
+**Placeholder marketplace.** Fictional issuers modelled on typical market score floors per card type. Real offers will come from a marketplace with many issuers; `OfferMarketplace` is the seam.

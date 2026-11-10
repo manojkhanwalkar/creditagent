@@ -94,6 +94,17 @@ class CreditScoreControllerTest {
                 .andExpect(jsonPath("$.ssnMasked").value("***-**-6789"))
                 .andExpect(content().string(Matchers.not(Matchers.containsString("123-45"))))
                 .andExpect(header().string("Cache-Control", "no-store"));
+        // The score is kept (never the SSN) so offers can be matched at the next login.
+        org.mockito.Mockito.verify(auth).recordScore(AVERY.userId(), 689);
+    }
+
+    @Test
+    void aFailedScoreWriteStillReturnsTheScore() throws Exception {
+        given(service.scoreFor(Ssn.parse("123-45-6789"))).willReturn(CreditScore.of(689));
+        org.mockito.BDDMockito.willThrow(new IllegalStateException("DynamoDB down")).given(auth).recordScore(AVERY.userId(), 689);
+        mvc.perform(post("/api/v1/credit-score").header("Authorization", BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"123-45-6789\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score").value(689));
     }
 
     @Test

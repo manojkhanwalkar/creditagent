@@ -32,6 +32,7 @@
         <module>client-agent</module>
         <module>claude-connector</module>
         <module>user-advisor-agent</module>
+        <module>offers-service</module>
     </modules>
 
     <properties>

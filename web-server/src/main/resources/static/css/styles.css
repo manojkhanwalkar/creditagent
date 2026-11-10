@@ -112,3 +112,15 @@ figcaption { color: var(--muted); margin-top: 8px; }
 #chat-form textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
 #chat-form textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .chat-note { margin-bottom: 0; }
+
+/* ---------- offers ---------- */
+.offers-widget { grid-column: 1 / -1; }
+.offers-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.offer-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.offer-card h3 { margin: 0 0 4px; font-size: 16px; }
+.offer-headline { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.offer-terms { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+.offer-terms dt { color: var(--muted); }
+.offer-terms dd { margin: 0; }
+.offers-disclaimer { font-size: 13px; }
+.offer-disclosure { margin: 10px 0 0; font-size: 12px; color: var(--muted); }

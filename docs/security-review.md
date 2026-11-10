@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-21 | Low | Card offers: the account now keeps the user's ZIP code and latest credit score | Mitigated: only score and ZIP go to the Offers service; offers are not firm offers of credit and say so |
 | S-20 | Medium | The chat sends a user's credit report and free-text questions to an (eventually LLM-backed) agent | Mitigated: own-SSN check, input and output guardrails outside the model, PII redaction, RAM-only bounded memory, internal-only agent |
 | S-19 | High | The Claude connector exposes a user's credit data to an internet-facing LLM client | Mitigated: OAuth 2.1 with PKCE, own-data-only tools, encrypted tokens; data still reaches the user's Claude conversations by design |
 
@@ -94,6 +95,13 @@ Check the model provider's data-retention terms before enabling it.
 - `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
+
+### S-21 Card offers (Mitigated)
+- **New personal data at rest:** the users table now holds the ZIP code (asked at registration) and the latest credit score with its time. Both are personal data; they live in the same encrypted-at-rest table as the rest of the account and are never logged. The SSN is still never stored: the first score is computed from the SSN the KYC check read, then dropped.
+- **Minimal disclosure:** the Offers service receives a score and a ZIP code only, no identity. Both its interfaces still need the internal service token, and the MCP endpoint refuses browser requests (any `Origin`).
+- **Agent-facing content (reviewed with `owasp-llm-top10`):** terms are the issuer's own, never computed; the tool description says terms are indicative and offers are not pre-approvals; marketplace text is validated (ids, lengths, printable characters) before it reaches agents; unsuitable cards are not offered.
+- **Consumer protection:** every offer and the list carry a "not a firm offer of credit / not a pre-approval" disclosure and the card's Schumer-box terms; approval odds are an estimate. Placeholder issuers are fictional.
+- **Failure:** offers never fail a login; the page says when they are unavailable.
 
 ### S-20 Chat and the User Advisor Agent (Mitigated)
 Reviewed against the OWASP Top 10 for LLM Applications (2025) and for Agentic Applications (2026).
