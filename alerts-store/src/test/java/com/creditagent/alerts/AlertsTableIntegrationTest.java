@@ -52,4 +52,62 @@ class AlertsTableIntegrationTest {
         assertThat(alerts.find("nobody@example.com")).isEmpty();
         assertThat(AwsBasicCredentials.create("local", "local")).isNotNull();
     }
+
+    @Test
+    void theNotifierSeesEachUnnotifiedAlertOfTheWindowOnceAcrossDays() {
+        DynamoDbAlertRepository alerts = new DynamoDbAlertRepository(dynamo, "Alerts");
+        Instant run = Instant.parse("2026-11-12T08:00:00Z");
+        Instant from = run.minus(Duration.ofHours(24));
+        alerts.record(new Alert("old@example.com", "loc-a", from.minusSeconds(1)));         // before the window
+        alerts.record(new Alert("eve@example.com", "loc-a", from));                          // first instant: in
+        alerts.record(new Alert("eve@example.com", "loc-b", Instant.parse("2026-11-12T01:00:00Z"))); // the next UTC day
+        alerts.record(new Alert("late@example.com", "loc-a", run));                          // the run's own instant: out
+
+        assertThat(alerts.unnotifiedBetween(from, run, 100)).extracting(Alert::email, Alert::location)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("eve@example.com", "loc-a"),
+                        org.assertj.core.groups.Tuple.tuple("eve@example.com", "loc-b"));
+        assertThat(alerts.unnotifiedBetween(from, run, 1)).hasSize(1);
+
+        Alert first = alerts.unnotifiedBetween(from, run, 100).get(0);
+        assertThat(alerts.claimNotification(first, run)).isTrue();
+        assertThat(alerts.claimNotification(first, run.plusSeconds(1))).isFalse(); // a second replica or run
+        assertThat(alerts.unnotifiedBetween(from, run, 100)).extracting(Alert::location).containsExactly("loc-b");
+
+        alerts.releaseNotification(first, run.plusSeconds(1)); // not that run's claim: kept
+        assertThat(alerts.unnotifiedBetween(from, run, 100)).hasSize(1);
+        alerts.releaseNotification(first, run);
+        assertThat(alerts.unnotifiedBetween(from, run, 100)).hasSize(2);
+
+        // A claim never creates an alert.
+        assertThat(alerts.claimNotification(new Alert("ghost@example.com", "loc-a", from), run)).isFalse();
+        assertThat(alerts.find("ghost@example.com")).isEmpty();
+        assertThat(alerts.unnotifiedBetween(run, from, 100)).isEmpty();
+    }
+
+    @Test
+    void timestampsInTheSameSecondAsABoundAreNotLost() {
+        DynamoDbAlertRepository alerts = new DynamoDbAlertRepository(dynamo, "Alerts");
+        // Instant.toString prints 0, 3, 6 or 9 fractional digits, which do not sort as time within a second.
+        alerts.record(new Alert("whole@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00Z")));
+        alerts.record(new Alert("micros@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00.003500Z")));
+        alerts.record(new Alert("after@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00.004Z")));
+        assertThat(alerts.unnotifiedBetween(Instant.parse("2026-11-20T07:00:00Z"), Instant.parse("2026-11-20T08:00:00.003Z"), 10))
+                .extracting(Alert::email).containsExactly("whole@example.com");
+        assertThat(alerts.unnotifiedBetween(Instant.parse("2026-11-20T08:00:00.003Z"), Instant.parse("2026-11-20T09:00:00Z"), 10))
+                .extracting(Alert::email).containsExactly("micros@example.com", "after@example.com");
+    }
+
+    @Test
+    void aTableFromBeforeTheIndexGetsIt() {
+        dynamo.createTable(r -> r.tableName("OldAlerts")
+                .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)
+                .attributeDefinitions(
+                        a -> a.attributeName("email").attributeType(software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType.S),
+                        a -> a.attributeName("location").attributeType(software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType.S))
+                .keySchema(k -> k.attributeName("email").keyType(software.amazon.awssdk.services.dynamodb.model.KeyType.HASH),
+                        k -> k.attributeName("location").keyType(software.amazon.awssdk.services.dynamodb.model.KeyType.RANGE)));
+        AlertsTable.ensure(dynamo, "OldAlerts");
+        assertThat(dynamo.describeTable(r -> r.tableName("OldAlerts")).table().globalSecondaryIndexes())
+                .extracting(index -> index.indexName()).containsExactly(DynamoDbAlertRepository.BY_DAY);
+    }
 }

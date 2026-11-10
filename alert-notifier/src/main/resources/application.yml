@@ -1,0 +1,54 @@
+server:
+  port: ${PORT:8093}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: alert-notifier
+  # The SMTP relay. Without MAIL_HOST no email is sent (placeholder sender). Every call is bounded.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+credit:
+  notifier:
+    # Once a day, 08:00 UTC (Spring cron: second minute hour day month weekday).
+    cron: ${NOTIFIER_CRON:0 0 8 * * *}
+    # Each run emails alerts no email has covered yet, found within this long before the run: normally
+    # the last 24 hours (the previous run took the rest); the longer lookback lets a missed run catch up.
+    lookback: ${NOTIFIER_LOOKBACK:7d}
+    max-alerts-per-run: ${NOTIFIER_MAX_ALERTS_PER_RUN:10000}
+    sends-per-second: ${NOTIFIER_SENDS_PER_SECOND:10}
+    from: ${NOTIFIER_FROM:alerts@creditagent.local}
+    app-url: ${NOTIFIER_APP_URL:}
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    region: ${AWS_REGION:us-east-1}
+    dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
+    alerts-table: ${ALERTS_TABLE:Alerts}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
+
+management:
+  health:
+    mail:
+      # A relay outage must not mark the notifier unhealthy (or restart it): failed sends are released
+      # and retried, and the run logs them.
+      enabled: false
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

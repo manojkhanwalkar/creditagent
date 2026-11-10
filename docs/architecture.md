@@ -26,6 +26,8 @@ flowchart LR
     DWM[dark-web-monitor :8091<br/>runs continuously<br/>placeholder source]
     AT[(Alerts table<br/>email + location → timestamp)]
     ALS[alerts-service :8092<br/>internal look-up]
+    AN[alert-notifier :8093<br/>daily at 08:00 UTC]
+    MAIL([SMTP relay<br/>Mailpit locally])
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
     CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
@@ -57,6 +59,8 @@ flowchart LR
     WS -- "L4 · email (POST /internal/v1/alerts/lookup)" --> ALS
     ALS -- "L5 · query by email" --> AT
     ALS -. "L6 · exposed + where, when" .-> WS
+    AN -- "N1 · last 24 h, not yet notified (by-day index); claim" --> AT
+    AN -- "N2 · one email per user" --> MAIL
     UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
     WS -- "Q2 · report (resources/read)" --> M
     WS -- "Q3 · question + report" --> UAA
@@ -87,6 +91,7 @@ flowchart LR
 | `offers-service` | Credit card offers for a score and ZIP code, ranked; an MCP tool, and a REST API that calls it | Spring Boot, LangChain4j `McpServer` |
 | `dark-web-monitor` | Scheduled job: checks registered users' emails against known dark-web locations and records exposures in the `Alerts` table (placeholder source) | Spring Boot `@Scheduled`, AWS SDK DynamoDB |
 | `alerts-service` | Internal look-up: does the `Alerts` table hold a record for this email? | Spring Boot, AWS SDK DynamoDB |
+| `alert-notifier` | Daily job: emails each user whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring Mail (SMTP), AWS SDK DynamoDB |
 | `alerts-store` | The `Alerts` table: record type, repository, table creation | AWS SDK DynamoDB |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
 | `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
@@ -358,4 +363,30 @@ sequenceDiagram
 **Login.** The web server sends the email in a POST body (not a URL, which ends up in logs) to the internal alerts service, behind the service token. Offers and alerts are fetched in parallel on virtual threads; each reads the account (one DynamoDB GetItem) and then makes a single HTTP try of at most 1.5 s, so the HTTP waits overlap rather than add up. Any failure becomes `UNAVAILABLE`, and the page then asks `GET /api/v1/alerts` (retried) at once and again after 5 and 30 s. The banner lists at most 20 findings.
 
 **Resilience.** The monitor's cycles are `fixedDelay` (never overlap), a failed cycle is logged (counts only, no emails) and the next one runs as usual. DynamoDB calls have an API-call timeout and the SDK's standard retries with jitter; the users scan is bounded per cycle and per page. In alerts-service the DynamoDB budget (`ALERTS_DYNAMODB_TIMEOUT`, 2 s, retries included) is shorter than the web server's per-try `ALERTS_TIMEOUT` (3 s), and a DynamoDB failure answers 503 with `Retry-After`, so the web server's retries back off and never pile onto work still running.
+
+### Alert emails
+
+```mermaid
+sequenceDiagram
+    participant N as alert-notifier
+    participant A as Alerts table
+    participant S as SMTP relay
+    Note over N: every day at 08:00 UTC (NOTIFIER_CRON)
+    N->>A: query by-day index: day ∈ last 8 UTC days, timestamp ∈ [run − 7 d, run), notifiedAt absent (normally only the last 24 h)
+    loop each user (≤ 10 a second)
+        N->>A: claim each alert: SET notifiedAt = run IF absent
+        N->>S: one plain-text email (no locations)
+        alt send failed
+            N->>A: release: REMOVE notifiedAt IF = run
+        end
+    end
+```
+
+**Finding the last 24 hours.** The table's key is email + location, so "found in the last day" would need a scan. Each alert now also carries `day` (its UTC date), and a global secondary index `by-day` (key `day` + `timestamp`) answers it with one query per day touched. A run asks for alerts no email has covered within `NOTIFIER_LOOKBACK` (7 days), not only 24 hours: since every run claims what it emails, a healthy daily run still finds just the last 24 hours, and the lookback is what lets a failed send, a capped or interrupted run, a run that started a little later than the day before, an alert written by a monitor cycle that started before the run but finished after it, or a day the service was down, catch up the next day instead of being lost. Each index query's bounds are widened to whole seconds (ISO strings with 0–9 fractional digits do not sort as time within one second) and the exact window is applied in code. Trade-off: every write also writes the index, and a day's alerts share one index partition; at this scale (a handful of new alerts a day per user, at most) that is far from DynamoDB's per-partition limits. `AlertsTable.ensure` adds the index to a table created before it existed; alerts written before it have no `day` and are older than any window anyway.
+
+**Exactly one email per alert, not per run.** Each alert is claimed with a conditional update (`notifiedAt` absent → set to the run's time) before the email goes out, so two overlapping runs or two replicas cannot both email it, and a re-run the same day finds nothing new. A failed send, or a DynamoDB error while claiming, releases that user's claims (only this run's own) and the run carries on with the next user; the next run retries them. If the process dies after sending but before finishing, the claim stays: the user is never emailed twice for the same finding (at most once). Without a mail relay (`MAIL_HOST`) a run reads and claims nothing, so configuring one later still emails the waiting alerts.
+
+**What the email says.** Fixed wording, plain text: how many places and the first date, what to do (identity protection, change passwords), a sign-in pointer, and that we never ask for a password or SSN by email. No location names (they stay behind sign-in) and nothing else from outside the service, so the email cannot carry markup or attacker-chosen links. The sender comes from config; the recipient is the registered address (validated at registration, unique per account).
+
+**Resilience.** SMTP calls have a 5 s connect and 10 s read/write timeout. Sends are paced (`NOTIFIER_SENDS_PER_SECOND`, 10) to stay within the relay's limits, and a run reads at most `NOTIFIER_MAX_ALERTS_PER_RUN` alerts. Sends are not retried within a run: a timed-out send may have been delivered, and a second try could duplicate it. The mail health indicator is off, so a relay outage does not mark the notifier unhealthy or get it restarted. Without `MAIL_HOST` the run is skipped with a warning. SMTP needs STARTTLS: the notifier refuses to start with it off unless the relay is local (`localhost`, `mailpit`), which compose's Mailpit is.
 
