@@ -1,16 +1,18 @@
 package com.creditagent.generator;
 
-import com.creditagent.common.CreditFileNames;
 import com.creditagent.web.support.RequestSizeLimitFilter;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import java.security.SecureRandom;
 import java.time.Clock;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+import com.creditagent.reports.CreditReportsConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(GeneratorProperties.class)
+@Import(CreditReportsConfiguration.class)
 class GeneratorConfiguration {
 
     /** A request is an SSN and an optional name. */
@@ -19,11 +21,6 @@ class GeneratorConfiguration {
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilter() {
         return RequestSizeLimitFilter.registration(MAX_REQUEST_BYTES, "/api/*");
-    }
-
-    @Bean
-    CreditFileNames creditFileNames(GeneratorProperties properties) {
-        return new CreditFileNames(properties.hmacKey());
     }
 
     @Bean

@@ -33,7 +33,7 @@ class NrgHttpClient implements ReportNormalizerClient {
                 // Parsed rather than spliced in, so a malformed file cannot change the envelope.
                 body.set(bureau.name().toLowerCase(Locale.ROOT), mapper.readTree(json));
             } catch (JsonProcessingException e) {
-                throw new IllegalStateException(bureau.directoryName() + " credit file is not valid JSON");
+                throw new IllegalStateException(bureau.displayName() + " credit report is not valid JSON");
             }
         });
         try {

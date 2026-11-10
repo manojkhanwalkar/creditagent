@@ -29,8 +29,7 @@ class McpHttpControllerTest {
     static class Props {
         @Bean
         McpServerProperties mcpServerProperties() {
-            return new McpServerProperties(
-                    Path.of("unused"), "test-key-0123456789abcdef0123456789abcdef", List.of("http://allowed.example"));
+            return new McpServerProperties(List.of("http://allowed.example"));
         }
 
         @Bean

@@ -49,7 +49,7 @@ class NrgHttpClientTest {
     void malformedFileIsRejectedBeforeAnythingIsSent() {
         assertThatThrownBy(() -> client.normalize(Map.of(Bureau.EXPERIAN, "{\"x\":1}, \"injected\": {")))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Experian credit file is not valid JSON");
+                .hasMessage("Experian credit report is not valid JSON");
         server.verify();
     }
 

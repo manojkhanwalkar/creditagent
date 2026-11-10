@@ -6,7 +6,6 @@ import com.creditagent.clients.ReportLockHttpClient;
 import com.creditagent.clients.ReportLockProperties;
 import com.creditagent.web.support.ServiceToken;
 import com.creditagent.clients.RetrySettings;
-import com.creditagent.common.CreditFileNames;
 import com.creditagent.web.support.RequestSizeLimitFilter;
 import dev.langchain4j.community.mcp.server.McpServer;
 import dev.langchain4j.mcp.protocol.McpImplementation;
@@ -19,15 +18,11 @@ import org.springframework.web.client.RestClient;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({McpServerProperties.class, NrgProperties.class})
+@org.springframework.context.annotation.Import(com.creditagent.reports.CreditReportsConfiguration.class)
 class McpServerConfiguration {
 
     static final String SERVER_NAME = "credit-report-mcp";
     static final String SERVER_VERSION = "0.1.0";
-
-    @Bean
-    CreditFileNames creditFileNames(McpServerProperties properties) {
-        return new CreditFileNames(properties.hmacKey());
-    }
 
     @Bean
     ReportNormalizerClient reportNormalizerClient(RestClient.Builder builder, NrgProperties properties, RetrySettings retry) {

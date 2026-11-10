@@ -9,13 +9,21 @@ spring:
     name: credit-report-mcp-server
 
 credit:
-  files:
-    # Reports root; each bureau's files are in <root>/Equifax, /Experian, /TransUnion.
-    # CREDIT_FILES_DIR is the pre-multi-bureau name, still honoured so existing setups keep their location.
-    directory: ${CREDIT_REPORTS_DIR:${CREDIT_FILES_DIR:${user.home}/Reports}}
-    # Required. Must equal the credit report generator's key. No default on purpose.
-    hmac-key: ${CREDIT_FILE_HMAC_KEY}
+  mcp:
     allowed-origins: ${MCP_ALLOWED_ORIGINS:}
+  # The CreditReports DynamoDB table, written by the credit report generator.
+  reports:
+    # Required, and the same as the generator's: keys the SSN hash in the table's ssn column.
+    ssn-hash-key: ${CREDIT_FILE_HMAC_KEY}
+    # Required, and the same as the generator's: decrypts each report (AES-256-GCM). No default on purpose.
+    encryption-key: ${CREDIT_REPORT_ENCRYPTION_KEY}
+    # After a rotation: the old keys, comma-separated, so reports written with them can still be read.
+    previous-encryption-keys: ${CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS:}
+    table: ${CREDIT_REPORTS_TABLE:CreditReports}
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    region: ${AWS_REGION:us-east-1}
+    dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
   nrg:
     url: ${NRG_URL:http://localhost:8084}
     timeout: ${DOWNSTREAM_TIMEOUT:5s}

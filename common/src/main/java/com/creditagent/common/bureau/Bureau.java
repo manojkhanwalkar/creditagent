@@ -1,22 +1,22 @@
 package com.creditagent.common.bureau;
 
 /**
- * The three US nationwide credit bureaus. Each writes reports in its own format under
- * {@code <reports-root>/<directoryName>/}.
+ * The three US nationwide credit bureaus. Each writes reports in its own format; the
+ * {@code CreditReports} table holds one per bureau and consumer, keyed by {@link #displayName()}.
  */
 public enum Bureau {
     EQUIFAX("Equifax"),
     EXPERIAN("Experian"),
     TRANSUNION("TransUnion");
 
-    private final String directoryName;
+    private final String displayName;
 
-    Bureau(String directoryName) {
-        this.directoryName = directoryName;
+    Bureau(String displayName) {
+        this.displayName = displayName;
     }
 
-    /** Sub-directory of the reports root that holds this bureau's files, e.g. {@code Equifax}. */
-    public String directoryName() {
-        return directoryName;
+    /** The bureau's name, e.g. {@code Equifax}: the {@code bureau} column of the CreditReports table. */
+    public String displayName() {
+        return displayName;
     }
 }

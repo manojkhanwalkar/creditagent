@@ -65,9 +65,9 @@ class BureauCodesTest {
 
     @Test
     void bureausNameTheirDirectories() {
-        assertThat(Bureau.EQUIFAX.directoryName()).isEqualTo("Equifax");
-        assertThat(Bureau.EXPERIAN.directoryName()).isEqualTo("Experian");
-        assertThat(Bureau.TRANSUNION.directoryName()).isEqualTo("TransUnion");
+        assertThat(Bureau.EQUIFAX.displayName()).isEqualTo("Equifax");
+        assertThat(Bureau.EXPERIAN.displayName()).isEqualTo("Experian");
+        assertThat(Bureau.TRANSUNION.displayName()).isEqualTo("TransUnion");
         assertThat(Bureau.valueOf("EXPERIAN")).isEqualTo(Bureau.EXPERIAN);
     }
 }

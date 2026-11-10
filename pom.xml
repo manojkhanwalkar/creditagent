@@ -20,6 +20,7 @@
 
     <modules>
         <module>common</module>
+        <module>credit-report-store</module>
         <module>service-clients</module>
         <module>web-support</module>
         <module>score-calculator</module>
@@ -73,6 +74,11 @@
             <dependency>
                 <groupId>com.creditagent</groupId>
                 <artifactId>alerts-store</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.creditagent</groupId>
+                <artifactId>credit-report-store</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

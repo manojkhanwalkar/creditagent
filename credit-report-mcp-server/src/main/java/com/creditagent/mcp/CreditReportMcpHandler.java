@@ -25,7 +25,7 @@ import org.springframework.stereotype.Component;
  * JSON-RPC dispatcher for the MCP endpoint.
  *
  * <p>LangChain4j's community {@link McpServer} implements {@code initialize}, {@code tools/list} and
- * {@code tools/call} but not resources. The spec asks for the credit files to be an MCP
+ * {@code tools/call} but not resources. The spec asks for the credit reports to be an MCP
  * <em>resource</em>, so this class answers {@code initialize} itself (to advertise both
  * capabilities), implements {@code resources/*}, and delegates {@code tools/*} to LangChain4j.
  *
@@ -38,7 +38,7 @@ import org.springframework.stereotype.Component;
  * Credit Intelligence Agent (which checks the lock itself), are not checked again here.
  *
  * <p>Resource URIs have the form {@code credit-report://ssn/{ssn}}. {@code resources/list} is
- * intentionally empty: enumerating credit files would enumerate people.
+ * intentionally empty: enumerating credit reports would enumerate people.
  */
 @Component
 public class CreditReportMcpHandler {

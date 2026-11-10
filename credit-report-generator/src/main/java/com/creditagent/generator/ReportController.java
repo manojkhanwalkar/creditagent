@@ -49,6 +49,15 @@ class ReportController {
                 .body(new GenerateReportResponse(reportId, generated.report().ssnMasked(), bureaus));
     }
 
+    /** The store failed (after the SDK's own retries): 503 with Retry-After, which callers back off on. */
+    @ExceptionHandler(software.amazon.awssdk.core.exception.SdkException.class)
+    org.springframework.http.ResponseEntity<ProblemDetail> storeUnavailable(software.amazon.awssdk.core.exception.SdkException e) {
+        return org.springframework.http.ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, "1")
+                .body(ProblemDetail.forStatusAndDetail(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "Credit reports could not be stored."));
+    }
+
     @ExceptionHandler(InvalidSsnException.class)
     ProblemDetail invalidSsn(InvalidSsnException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());

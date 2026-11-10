@@ -8,7 +8,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-/** Generates demo reports for {@code credit.files.seed-ssns} at start-up. */
+/** Generates demo reports for {@code credit.generator.seed-ssns} at start-up. */
 @Component
 class SeedDataRunner implements ApplicationRunner {
 
@@ -32,7 +32,7 @@ class SeedDataRunner implements ApplicationRunner {
             }
         }
         if (!properties.seedSsns().isEmpty()) {
-            log.info("Seeded {} demo credit reports into {}", properties.seedSsns().size(), properties.directory());
+            log.info("Seeded {} demo credit reports", properties.seedSsns().size());
         }
     }
 }
