@@ -17,7 +17,7 @@ credit:
     locations: ${DARKWEB_LOCATIONS:paste-site-alpha,breach-forum-beta,marketplace-gamma}
     # Demo data: addresses always reported as found, and the share of others found at each location.
     placeholder-exposed: ${DARKWEB_PLACEHOLDER_EXPOSED:}
-    placeholder-rate: ${DARKWEB_PLACEHOLDER_RATE:0.02}
+    placeholder-rate: ${DARKWEB_PLACEHOLDER_RATE:0}
     max-emails-per-cycle: ${DARKWEB_MAX_EMAILS_PER_CYCLE:10000}
     page-size: 100
     dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}

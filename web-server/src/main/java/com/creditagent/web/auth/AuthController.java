@@ -3,6 +3,7 @@ package com.creditagent.web.auth;
 import com.creditagent.clients.ServiceUnavailableException;
 import com.creditagent.common.SafeLogging;
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
+import com.creditagent.web.auth.AuthExceptions.EmailAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
 import com.creditagent.web.kyc.DocumentRejectedException;
@@ -165,6 +166,11 @@ class AuthController {
 
     @ExceptionHandler(SsnAlreadyRegisteredException.class)
     ProblemDetail ssnTaken(SsnAlreadyRegisteredException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(EmailAlreadyRegisteredException.class)
+    ProblemDetail emailTaken(EmailAlreadyRegisteredException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 

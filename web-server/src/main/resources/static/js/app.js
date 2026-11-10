@@ -2,7 +2,7 @@ import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
-import { alertsView } from './alerts.js';
+import { RETRY_DELAYS_MS, alertsChecked, alertsView } from './alerts.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -34,7 +34,8 @@ function showSignedIn(userId, ssnMasked, offers, alerts) {
   resetChat();
   loadReportStatus();
   if (offers) renderOffers(offers); else loadOffers();
-  if (alerts) renderAlerts(alerts); else loadAlerts();
+  // Login waits 1.5 s at most: if the alerts service did not answer in time, ask again.
+  if (alertsChecked(alerts)) renderAlerts(alerts); else loadAlerts();
 }
 
 function showSignedOut(message) {
@@ -391,15 +392,23 @@ function renderAlerts(data) {
   banner.hidden = !view.show;
 }
 
-async function loadAlerts() {
-  const generation = ++alertsGeneration;
+async function loadAlerts(attempt = 0) {
+  const generation = attempt === 0 ? ++alertsGeneration : alertsGeneration;
+  let data = null;
   try {
-    const { response, data } = await api('/api/v1/alerts', { method: 'GET' });
-    if (generation !== alertsGeneration) return;
-    if (response.ok) renderAlerts(data);
+    const answer = await api('/api/v1/alerts', { method: 'GET' });
+    if (answer.response.ok) data = answer.data;
   } catch {
-    // No banner is better than a wrong one; the next login checks again.
+    // Treated like an unavailable service below.
   }
+  if (generation !== alertsGeneration) return;
+  if (alertsChecked(data)) {
+    renderAlerts(data);
+  } else if (attempt < RETRY_DELAYS_MS.length) {
+    // Still unavailable: ask again a little later (a sign-out or new sign-in cancels it).
+    setTimeout(() => { if (generation === alertsGeneration) loadAlerts(attempt + 1); }, RETRY_DELAYS_MS[attempt]);
+  }
+  // After that, no banner is better than a wrong one; the next login checks again.
 }
 
 // ---------- card offers ----------

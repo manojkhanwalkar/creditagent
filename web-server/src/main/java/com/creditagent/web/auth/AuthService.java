@@ -2,6 +2,7 @@ package com.creditagent.web.auth;
 
 import com.creditagent.common.Ssn;
 import com.creditagent.web.auth.AuthExceptions.InvalidRegistrationException;
+import com.creditagent.web.auth.AuthExceptions.EmailAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.SsnAlreadyRegisteredException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthExceptions.UserAlreadyExistsException;
@@ -137,6 +138,7 @@ public class AuthService {
         switch (users.create(user)) {
             case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
             case SSN_TAKEN -> throw new SsnAlreadyRegisteredException();
+            case EMAIL_TAKEN -> throw new EmailAlreadyRegisteredException();
             case CREATED -> log.info("Registered user {} (KYC {})", id, verified.verificationId());
         }
         for (RegistrationListener listener : registrationListeners) {

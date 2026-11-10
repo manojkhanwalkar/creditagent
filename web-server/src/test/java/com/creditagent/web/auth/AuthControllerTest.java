@@ -49,11 +49,15 @@ class AuthControllerTest {
 
     /** A registration form for {@code userId} with {@code card} as the SSN card photo. */
     static MockMultipartHttpServletRequestBuilder register(String userId, byte[] card) {
+        return register(userId, card, userId.toLowerCase(java.util.Locale.ROOT) + "@example.com");
+    }
+
+    static MockMultipartHttpServletRequestBuilder register(String userId, byte[] card, String email) {
         return (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
                 .file(new MockMultipartFile("ssnCard", "my card.png", MediaType.IMAGE_PNG_VALUE, card))
                 .param("userId", userId)
                 .param("password", PASSWORD)
-                .param("email", "avery@example.com")
+                .param("email", email)
                 .param("phone", "+1 415 555 0100")
                 .param("zip", "98101");
     }
@@ -99,6 +103,10 @@ class AuthControllerTest {
         mvc.perform(register("imposter", "123-45-6789"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("An account already exists for that SSN."));
+        // Another SSN, but Avery's email in other letter case: refused, so no one can watch someone else's address.
+        mvc.perform(register("copycat", FakeIdentityVerifier.card("234-56-7890"), "AVERY@Example.com"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("An account already exists for that email address."));
 
         String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"avery\",\"password\":\"" + PASSWORD + "\"}"))

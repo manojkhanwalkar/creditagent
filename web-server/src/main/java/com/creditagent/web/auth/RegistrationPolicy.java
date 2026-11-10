@@ -19,7 +19,6 @@ public final class RegistrationPolicy {
     static final int MAX_PASSWORD_BYTES = 72;
 
     private static final Pattern USER_ID = Pattern.compile("^[a-z0-9][a-z0-9._-]{2,31}$");
-    private static final Pattern EMAIL = Pattern.compile("^[^@\\s]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$");
     /** E.164: a plus sign, a country code and up to 15 digits in all. */
     private static final Pattern PHONE = Pattern.compile("^\\+[1-9]\\d{7,14}$");
 
@@ -70,7 +69,7 @@ public final class RegistrationPolicy {
 
     public static String normaliseEmail(String email) {
         String value = email == null ? "" : email.strip();
-        if (value.length() > 254 || !EMAIL.matcher(value).matches()) {
+        if (!com.creditagent.common.EmailAddress.isValid(value)) {
             throw new InvalidRegistrationException("Enter a valid email address.");
         }
         return value;

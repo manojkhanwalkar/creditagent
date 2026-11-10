@@ -69,6 +69,23 @@ class AlertsApiTest {
     }
 
     @Test
+    void everyAddressRegistrationAcceptsCanBeLookedUp() {
+        // Not RFC-clean, but registration accepts it: the look-up must too, or that user never sees alerts.
+        given(alerts.find("a..b@example.com")).willReturn(List.of());
+        assertThat(lookup("{\"email\":\"a..b@example.com\"}", true).status()).isEqualTo(200);
+    }
+
+    @Test
+    void aDynamoDbFailureIs503WithRetryAfter() {
+        given(alerts.find("ada@example.com")).willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("down"));
+        Answer answer = RestClient.create().post().uri("http://localhost:" + port + AlertsController.PATH)
+                .contentType(MediaType.APPLICATION_JSON).headers(h -> h.setBearerAuth(TOKEN))
+                .body("{\"email\":\"ada@example.com\"}")
+                .exchange((rq, rs) -> new Answer(rs.getStatusCode().value(), rs.getHeaders().getFirst("Retry-After")));
+        assertThat(answer).isEqualTo(new Answer(503, "1"));
+    }
+
+    @Test
     void badInputIs400AndHugeBodiesAre413() {
         assertThat(lookup("{\"email\":\"not-an-email\"}", true).status()).isEqualTo(400);
         assertThat(lookup("{}", true).status()).isEqualTo(400);

@@ -38,27 +38,31 @@ public class WatchList {
         return (pageSize, max, page) -> {
             int seen = 0;
             Map<String, AttributeValue> startKey = cursor.getAndSet(null);
-            do {
-                ScanRequest.Builder scan = ScanRequest.builder()
-                        .tableName(usersTable)
-                        .projectionExpression("#email")
-                        .filterExpression("attribute_exists(#pw) AND attribute_exists(#email)")
-                        .expressionAttributeNames(Map.of("#email", "email", "#pw", "passwordHash"))
-                        .limit(Math.min(pageSize, max - seen));
-                if (startKey != null) {
-                    scan.exclusiveStartKey(startKey);
-                }
-                ScanResponse response = dynamo.scan(scan.build());
-                List<String> emails = response.items().stream().map(item -> Alert.normalise(item.get("email").s())).toList();
-                if (!emails.isEmpty()) {
-                    page.accept(emails);
-                }
-                seen += response.scannedCount();
-                startKey = response.hasLastEvaluatedKey() && !response.lastEvaluatedKey().isEmpty()
-                        ? new HashMap<>(response.lastEvaluatedKey()) : null;
-            } while (startKey != null && seen < max);
-            // Stopped early: the next cycle continues from here. Reached the end: it starts over.
-            cursor.set(startKey);
+            try {
+                do {
+                    ScanRequest.Builder scan = ScanRequest.builder()
+                            .tableName(usersTable)
+                            .projectionExpression("#email")
+                            .filterExpression("attribute_exists(#pw) AND attribute_exists(#email)")
+                            .expressionAttributeNames(Map.of("#email", "email", "#pw", "passwordHash"))
+                            .limit(Math.min(pageSize, max - seen));
+                    if (startKey != null) {
+                        scan.exclusiveStartKey(startKey);
+                    }
+                    ScanResponse response = dynamo.scan(scan.build());
+                    List<String> emails = response.items().stream().map(item -> Alert.normalise(item.get("email").s())).toList();
+                    if (!emails.isEmpty()) {
+                        page.accept(emails);
+                    }
+                    seen += response.scannedCount();
+                    startKey = response.hasLastEvaluatedKey() && !response.lastEvaluatedKey().isEmpty()
+                            ? new HashMap<>(response.lastEvaluatedKey()) : null;
+                } while (startKey != null && seen < max);
+            } finally {
+                // Stopped early, or a page failed: the next cycle continues from here (the failed page
+                // is read again). Reached the end: it starts over.
+                cursor.set(startKey);
+            }
             return seen;
         };
     }

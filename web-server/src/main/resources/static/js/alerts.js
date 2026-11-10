@@ -15,6 +15,14 @@ function readableDate(iso) {
   return Number.isNaN(date.getTime()) ? 'an unknown date' : date.toISOString().slice(0, 10);
 }
 
+/** Delays (ms) before asking `GET /api/v1/alerts` again while the alerts service is unavailable. */
+export const RETRY_DELAYS_MS = [5000, 30000];
+
+/** True when the answer settles the question (checked: found or not); false means ask again later. */
+export function alertsChecked(data) {
+  return data?.status === 'OK';
+}
+
 /** @returns {{ show: boolean, message: string|null, findings: string[] }} */
 export function alertsView(data) {
   if (data?.status !== 'OK' || data.exposed !== true) return { show: false, message: null, findings: [] };

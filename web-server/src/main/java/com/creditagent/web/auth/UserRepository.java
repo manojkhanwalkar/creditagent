@@ -4,7 +4,7 @@ import java.util.Optional;
 
 public interface UserRepository {
 
-    enum CreateResult { CREATED, USER_ID_TAKEN, SSN_TAKEN }
+    enum CreateResult { CREATED, USER_ID_TAKEN, SSN_TAKEN, EMAIL_TAKEN }
 
     /**
      * Stores the user only if neither the user id nor the SSN (by its hash) is registered yet. Both

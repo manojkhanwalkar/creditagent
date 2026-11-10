@@ -11,8 +11,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param locations the "known locations" a cycle checks (placeholder ids: nothing is contacted)
  * @param placeholderExposed email addresses the placeholder always reports as found (for demos)
  * @param placeholderRate share of other addresses the placeholder reports as found at each location,
- *     chosen deterministically, 0 to 1
- * @param maxEmailsPerCycle most addresses one cycle checks; the next cycle starts again from the top
+ *     chosen deterministically, 0 to 1. Default 0: invented exposures only when a demo asks for them
+ * @param maxEmailsPerCycle most users-table rows one cycle reads (claim rows count too); the next cycle
+ *     carries on from where this one stopped, and starts from the top after the end of the table
  * @param pageSize addresses read from the users table at a time
  * @param dynamodbEndpoint blank = AWS; {@code http://localhost:8000} for DynamoDB Local
  * @param usersTable the web server's users table, read for addresses only
@@ -40,7 +41,7 @@ public record MonitorProperties(
                 ? List.of("paste-site-alpha", "breach-forum-beta", "marketplace-gamma") : List.copyOf(locations);
         placeholderExposed = placeholderExposed == null ? List.of()
                 : placeholderExposed.stream().filter(e -> !e.isBlank()).map(Alert::normalise).toList();
-        placeholderRate = placeholderRate == null ? 0.02 : placeholderRate;
+        placeholderRate = placeholderRate == null ? 0 : placeholderRate;
         maxEmailsPerCycle = maxEmailsPerCycle == null ? 10_000 : maxEmailsPerCycle;
         pageSize = pageSize == null ? 100 : pageSize;
         region = region == null || region.isBlank() ? "us-east-1" : region;

@@ -74,10 +74,10 @@ class DynamoDbRepositoriesUnitTest {
                 "ssnHash", "hash-" + id, "ssnLastFour", "6789", "createdAt", NOW.toString());
     }
 
-    static TransactionCanceledException cancelled(String first, String second) {
+    static TransactionCanceledException cancelled(String... codes) {
         return TransactionCanceledException.builder()
-                .cancellationReasons(CancellationReason.builder().code(first).build(),
-                        CancellationReason.builder().code(second).build())
+                .cancellationReasons(java.util.Arrays.stream(codes)
+                        .map(code -> CancellationReason.builder().code(code).build()).toList())
                 .build();
     }
 
@@ -92,12 +92,16 @@ class DynamoDbRepositoriesUnitTest {
         ArgumentCaptor<TransactWriteItemsRequest> sent = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(dynamo).transactWriteItems(sent.capture());
         var puts = sent.getValue().transactItems();
-        assertThat(puts).hasSize(2);
+        assertThat(puts).hasSize(3);
         assertThat(puts.get(0).put().item()).containsEntry("userId", AttributeValue.fromS("avery"))
                 .containsEntry("reportStatus", AttributeValue.fromS("LOCKED"))
                 .containsEntry("kycVerificationId", AttributeValue.fromS("kyc_avery"));
         assertThat(puts.get(1).put().item()).containsEntry("userId", AttributeValue.fromS("ssn#hash-avery"))
                 .containsEntry("owner", AttributeValue.fromS("avery"));
+        assertThat(puts.get(2).put().item())
+                .containsEntry("userId", AttributeValue.fromS("email#" + DynamoDbUserRepository.emailKey("AVERY@example.com ")))
+                .containsEntry("owner", AttributeValue.fromS("avery"));
+        assertThat(puts.get(2).put().item().get("userId").s()).doesNotContain("avery@");
         assertThat(puts).allSatisfy(p -> assertThat(p.put().conditionExpression()).isEqualTo("attribute_not_exists(#id)"));
     }
 
@@ -113,11 +117,14 @@ class DynamoDbRepositoriesUnitTest {
 
     @Test
     void aCancelledTransactionSaysWhichItemWasTaken() {
-        doThrow(cancelled("ConditionalCheckFailed", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        doThrow(cancelled("ConditionalCheckFailed", "None", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
         assertThat(users.create(user("avery"))).isEqualTo(UserRepository.CreateResult.USER_ID_TAKEN);
 
-        doThrow(cancelled("None", "ConditionalCheckFailed")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        doThrow(cancelled("None", "ConditionalCheckFailed", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
         assertThat(users.create(user("avery"))).isEqualTo(UserRepository.CreateResult.SSN_TAKEN);
+
+        doThrow(cancelled("None", "None", "ConditionalCheckFailed")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        assertThat(users.create(user("avery"))).isEqualTo(UserRepository.CreateResult.EMAIL_TAKEN);
     }
 
     @Test

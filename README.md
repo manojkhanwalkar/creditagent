@@ -109,10 +109,10 @@ The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP
 | Part | What it does |
 |---|---|
 | `Alerts` table | DynamoDB, key `email` (lower-cased) + `location`, attribute `timestamp` (when it was first found). One row per email and location: finding the same exposure again changes nothing |
-| `dark-web-monitor` | Runs continuously. Each cycle (`DARKWEB_SCAN_INTERVAL`, 1 minute after the previous one ends) it reads registered users' emails from the users table a page at a time (at most `DARKWEB_MAX_EMAILS_PER_CYCLE` rows a cycle; the next cycle carries on where this one stopped), checks each against every location in `DARKWEB_LOCATIONS`, and writes what it finds to `Alerts`. Only registered users are watched, so nothing is stored about anyone else |
-| Placeholder source | Nothing on the dark web is contacted. Emails in `DARKWEB_PLACEHOLDER_EXPOSED` are always "found"; otherwise a fixed hash of the email and location marks about `DARKWEB_PLACEHOLDER_RATE` (2%) of pairs as exposed, the same every time. Replace the `DarkWebSource` bean to plug in a real breach-data provider |
+| `dark-web-monitor` | Runs continuously. Each cycle (`DARKWEB_SCAN_INTERVAL`, 1 minute after the previous one ends) it reads registered users' emails from the users table a page at a time (at most `DARKWEB_MAX_EMAILS_PER_CYCLE` rows a cycle; the next cycle carries on where this one stopped), checks each against every location in `DARKWEB_LOCATIONS`, and writes what it finds to `Alerts`. Only registered users' emails are watched, and an email belongs to at most one account (registration refuses a second one, in any letter case), so no account can see another account's alerts |
+| Placeholder source | Nothing on the dark web is contacted. Emails in `DARKWEB_PLACEHOLDER_EXPOSED` are always "found"; nothing else is, unless `DARKWEB_PLACEHOLDER_RATE` is set (demos only): then a fixed hash of email and location marks that share of pairs as exposed, the same every time (0.02 at 3 locations is about 6% of users). Replace the `DarkWebSource` bean to plug in a real breach-data provider |
 | `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
-| Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down, login still works and the page asks again later via `GET /api/v1/alerts` (retried) |
+| Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s) for the answer (after a quick read of the account). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down or slow, login still works and the page asks `GET /api/v1/alerts` (retried) at once, then again after 5 and 30 seconds |
 
 To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle.
 
@@ -218,7 +218,8 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `ALERTS_URL`, `ALERTS_TIMEOUT`, `ALERTS_LOGIN_TIMEOUT` | web server | `http://localhost:8092`, `3s` a try for `GET /api/v1/alerts` (retried), `1500ms` for the single try at login |
 | `ALERTS_TABLE` | monitor, alerts service | `Alerts` |
 | `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1m`, `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
-| `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0.02` |
+| `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
+| `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
 | `ADVISOR_MEMORY_TTL`, `ADVISOR_MAX_CONVERSATIONS`, `ADVISOR_MAX_TURNS`, `ADVISOR_MEMORY_PRESSURE` | advisor agent | `5m`, `10000`, `20`, `0.85` |
 | `ADVISOR_MAX_PROMPT_CHARS`, `ADVISOR_MAX_REPLY_CHARS` | advisor agent | `1000`, `2000` |

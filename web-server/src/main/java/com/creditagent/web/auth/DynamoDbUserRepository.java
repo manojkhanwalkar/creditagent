@@ -18,11 +18,17 @@ import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledExcepti
  * <p>Each user has a second item, {@code ssn#<hash>}, that claims their SSN. Both items are written
  * in one conditional transaction, so neither a user id nor an SSN can be registered twice, even by
  * concurrent requests. User ids cannot contain {@code #}, so a claim never collides with a user.
+ *
+ * <p>A third item, {@code email#<sha-256 of the lower-cased email>}, claims the email in the same
+ * transaction, so one email belongs to at most one account: dark-web alerts are looked up by email, and
+ * a second account with someone else's address must not see that person's alerts. Accounts created
+ * before the claim existed have none; the first new account to use their email takes it.
  */
 public class DynamoDbUserRepository implements UserRepository {
 
     static final String KEY = "userId";
     static final String SSN_CLAIM_PREFIX = "ssn#";
+    static final String EMAIL_CLAIM_PREFIX = "email#";
     static final String REPORT_STATUS = "reportStatus";
     static final String ZIP = "zip";
     static final String LAST_SCORE = "lastScore";
@@ -57,6 +63,9 @@ public class DynamoDbUserRepository implements UserRepository {
         Map<String, AttributeValue> claim = Map.of(
                 KEY, s(SSN_CLAIM_PREFIX + user.ssnHash()),
                 "owner", s(user.userId()));
+        Map<String, AttributeValue> emailClaim = Map.of(
+                KEY, s(EMAIL_CLAIM_PREFIX + emailKey(user.email())),
+                "owner", s(user.userId()));
         try {
             dynamo.transactWriteItems(r -> r.transactItems(
                     t -> t.put(p -> p.tableName(table).item(item)
@@ -64,16 +73,22 @@ public class DynamoDbUserRepository implements UserRepository {
                             .expressionAttributeNames(Map.of("#id", KEY))),
                     t -> t.put(p -> p.tableName(table).item(claim)
                             .conditionExpression("attribute_not_exists(#id)")
+                            .expressionAttributeNames(Map.of("#id", KEY))),
+                    t -> t.put(p -> p.tableName(table).item(emailClaim)
+                            .conditionExpression("attribute_not_exists(#id)")
                             .expressionAttributeNames(Map.of("#id", KEY)))));
             return CreateResult.CREATED;
         } catch (TransactionCanceledException e) {
             List<CancellationReason> reasons = e.cancellationReasons();
-            if (reasons.size() == 2) {
+            if (reasons.size() == 3) {
                 if (CONDITIONAL_CHECK_FAILED.equals(reasons.get(0).code())) {
                     return CreateResult.USER_ID_TAKEN;
                 }
                 if (CONDITIONAL_CHECK_FAILED.equals(reasons.get(1).code())) {
                     return CreateResult.SSN_TAKEN;
+                }
+                if (CONDITIONAL_CHECK_FAILED.equals(reasons.get(2).code())) {
+                    return CreateResult.EMAIL_TAKEN;
                 }
             }
             throw e;
@@ -82,7 +97,7 @@ public class DynamoDbUserRepository implements UserRepository {
 
     @Override
     public Optional<User> find(String userId) {
-        if (userId == null || userId.startsWith(SSN_CLAIM_PREFIX)) {
+        if (isClaimOrMissing(userId)) {
             return Optional.empty();
         }
         GetItemResponse response = dynamo.getItem(r -> r.tableName(table).key(Map.of(KEY, s(userId))).consistentRead(true));
@@ -126,7 +141,7 @@ public class DynamoDbUserRepository implements UserRepository {
      */
     @Override
     public boolean updateReportStatus(String userId, ReportStatus status) {
-        if (userId == null || userId.startsWith(SSN_CLAIM_PREFIX)) {
+        if (isClaimOrMissing(userId)) {
             return false;
         }
         try {
@@ -145,7 +160,7 @@ public class DynamoDbUserRepository implements UserRepository {
     /** Conditional, like {@link #updateReportStatus}: only an existing user item is changed. */
     @Override
     public boolean updateLastScore(String userId, int score, Instant at) {
-        if (userId == null || userId.startsWith(SSN_CLAIM_PREFIX)) {
+        if (isClaimOrMissing(userId)) {
             return false;
         }
         try {
@@ -170,5 +185,21 @@ public class DynamoDbUserRepository implements UserRepository {
     static String text(Map<String, AttributeValue> item, String name) {
         AttributeValue value = item.get(name);
         return value == null ? null : value.s();
+    }
+
+    /** Claim items ({@code ssn#…}, {@code email#…}) are never users: user ids cannot contain {@code #}. */
+    private static boolean isClaimOrMissing(String userId) {
+        return userId == null || userId.indexOf('#') >= 0;
+    }
+
+    /** The email's claim key: a SHA-256 of the lower-cased address, so the key itself is not the address. */
+    static String emailKey(String email) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(email.strip().toLowerCase(java.util.Locale.ROOT).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is always available", e);
+        }
     }
 }

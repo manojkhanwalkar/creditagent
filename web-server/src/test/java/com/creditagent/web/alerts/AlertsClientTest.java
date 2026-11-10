@@ -45,6 +45,20 @@ class AlertsClientTest {
     }
 
     @Test
+    void atMostTwentyFindingsAreShown() {
+        AuthService auth = mock(AuthService.class);
+        AlertsClient client = mock(AlertsClient.class);
+        com.creditagent.web.auth.User user = new com.creditagent.web.auth.User("ada", "$2a$h", "ada@example.com", "+14155550100",
+                "h", "6789", "k", java.time.Instant.EPOCH, com.creditagent.web.auth.ReportStatus.UNLOCKED);
+        org.mockito.BDDMockito.given(auth.account("ada")).willReturn(Optional.of(user));
+        java.util.List<AlertsClient.Finding> many = java.util.stream.IntStream.range(0, 25)
+                .mapToObj(i -> new AlertsClient.Finding("loc-" + i, java.time.Instant.EPOCH)).toList();
+        org.mockito.BDDMockito.given(client.lookup("ada@example.com")).willReturn(new AlertsClient.Lookup(true, many));
+        AlertsService.View view = new AlertsService(auth, client, client).current("ada");
+        assertThat(view.findings()).hasSize(AlertsService.MAX_FINDINGS).first().extracting(AlertsClient.Finding::location).isEqualTo("loc-0");
+    }
+
+    @Test
     void anAccountWithoutAnEmailHasNoAlertsAndLoginUsesTheQuickClient() {
         AuthService auth = mock(AuthService.class);
         AlertsClient retrying = mock(AlertsClient.class);
