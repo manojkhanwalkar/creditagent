@@ -98,7 +98,8 @@ Check the model provider's data-retention terms before enabling it.
 
 ### S-21 Card offers (Mitigated)
 - **New personal data at rest:** the users table now holds the ZIP code (asked at registration) and the latest credit score with its time. Both are personal data; they live in the same encrypted-at-rest table as the rest of the account and are never logged. The SSN is still never stored: the first score is computed from the SSN the KYC check read, then dropped.
-- **Minimal disclosure:** the Offers service receives a score and a ZIP code only, no identity, so its endpoints need no user authentication; the MCP endpoint refuses browser requests (any `Origin`).
+- **Minimal disclosure:** the Offers service receives a score and a ZIP code only, no identity. Both its interfaces still need the internal service token, and the MCP endpoint refuses browser requests (any `Origin`).
+- **Agent-facing content (reviewed with `owasp-llm-top10`):** terms are the issuer's own, never computed; the tool description says terms are indicative and offers are not pre-approvals; marketplace text is validated (ids, lengths, printable characters) before it reaches agents; unsuitable cards are not offered.
 - **Consumer protection:** every offer and the list carry a "not a firm offer of credit / not a pre-approval" disclosure and the card's Schumer-box terms; approval odds are an estimate. Placeholder issuers are fictional.
 - **Failure:** offers never fail a login; the page says when they are unavailable.
 

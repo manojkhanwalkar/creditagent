@@ -1,6 +1,8 @@
 package com.creditagent.offers;
 
 import com.creditagent.web.support.RequestSizeLimitFilter;
+import com.creditagent.web.support.ServiceTokenFilter;
+import org.springframework.beans.factory.annotation.Value;
 import dev.langchain4j.community.mcp.server.McpServer;
 import dev.langchain4j.mcp.protocol.McpImplementation;
 import java.time.Clock;
@@ -15,6 +17,15 @@ class OffersConfiguration {
 
     static final String SERVER_NAME = "credit-card-offers";
     static final String SERVER_VERSION = "0.1.0";
+
+    /**
+     * Only holders of the internal token (the web server, internal agents) may call either interface.
+     * Before the inbound limits, so callers without it cannot use up the shared bucket.
+     */
+    @Bean
+    FilterRegistrationBean<ServiceTokenFilter> serviceTokenFilter(@Value("${credit.offers.service-token:}") String token) {
+        return ServiceTokenFilter.registration(token);
+    }
 
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilter() {

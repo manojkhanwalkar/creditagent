@@ -1,7 +1,7 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
-import { offersView } from './offers.js';
+import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -44,6 +44,7 @@ function showSignedOut(message) {
   chatWidget.hidden = true;
   offersWidget.hidden = true;
   offersGeneration += 1;
+  signInGeneration += 1;
   $('offers-list').replaceChildren();
   resetLockWidget();
   resetChat();
@@ -252,6 +253,7 @@ registerForm.addEventListener('submit', async (event) => {
     if (await logIn(form.userId, form.password, error)) {
       registerForm.reset();
       selectTab(false);
+      waitForFirstOffers();
     }
   } catch {
     showFormError(error, 'Could not reach the server. Check your connection and try again.');
@@ -374,7 +376,14 @@ function render({ score, ssnMasked }) {
 // Bumped on every sign-in and sign-out, so offers for an earlier session are ignored.
 let offersGeneration = 0;
 
+// The status of the offers last shown: after registration, NO_SCORE means "not computed yet".
+let offersStatus = null;
+// Bumped at every sign-out only (loadOffers bumps offersGeneration on each call), so pending
+// re-checks after a registration stop when that user signs out.
+let signInGeneration = 0;
+
 function renderOffers(data) {
+  offersStatus = data?.status ?? null;
   const view = offersView(data);
   const message = $('offers-message');
   message.textContent = view.message ?? '';
@@ -397,7 +406,10 @@ function renderOffers(data) {
       dd.textContent = value;
       terms.append(dt, dd);
     }
-    item.append(title, headline, terms);
+    const disclosure = document.createElement('p');
+    disclosure.className = 'offer-disclosure';
+    disclosure.textContent = offer.disclosure;
+    item.append(title, headline, terms, disclosure);
     return item;
   }));
   const basis = $('offers-basis');
@@ -406,6 +418,19 @@ function renderOffers(data) {
   const disclaimer = $('offers-disclaimer');
   disclaimer.textContent = view.disclaimer ?? '';
   disclaimer.hidden = !view.disclaimer;
+}
+
+/**
+ * Right after registration the first score is still being computed in the background: ask again a
+ * few times, stopping once offers arrive or the user signs out.
+ */
+function waitForFirstOffers() {
+  const generation = signInGeneration;
+  NO_SCORE_RETRY_DELAYS.forEach((delay) => {
+    setTimeout(() => {
+      if (offersStatus === 'NO_SCORE' && !offersWidget.hidden && generation === signInGeneration) loadOffers();
+    }, delay);
+  });
 }
 
 async function loadOffers() {

@@ -19,9 +19,12 @@ public class OffersClient {
     static final String PATH = "/api/v1/offers";
 
     private final RestClient restClient;
+    private final String serviceToken;
 
-    public OffersClient(RestClient restClient) {
+    /** @param serviceToken {@code INTERNAL_API_TOKEN}: the Offers service answers only internal callers */
+    public OffersClient(RestClient restClient, String serviceToken) {
         this.restClient = Objects.requireNonNull(restClient);
+        this.serviceToken = serviceToken;
     }
 
     /** @throws ServiceUnavailableException if the service cannot answer */
@@ -33,6 +36,7 @@ public class OffersClient {
         }
         try {
             JsonNode answer = restClient.post().uri(PATH)
+                    .header(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer " + serviceToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(body)

@@ -27,8 +27,11 @@ import java.util.Optional;
  *       open in the ZIP code's state (without a usable ZIP, only nationwide products).
  *   <li><b>Priced:</b> the APR quoted for this score sits in the product's range, higher for lower
  *       scores, as issuers price risk.
- *   <li><b>Suitable:</b> starter cards (secured, credit builder) are offered only below
- *       {@link #GOOD_CREDIT} (670), where mainstream cards are not yet in reach.
+ *   <li><b>Suitable:</b> cards for building or rebuilding credit (secured, credit builder, student,
+ *       fair credit) are offered only below {@link #GOOD_CREDIT} (670), where mainstream cards are
+ *       not yet in reach. A student card also needs a student, which a score cannot tell.
+ *   <li><b>Valid:</b> a product whose data fails {@link #valid} (ids, lengths, printable text) is
+ *       skipped, so marketplace text cannot carry markup or instructions into agents' context.
  *   <li><b>Ranked</b> by a match score from 0 to 1:
  *       <ul>
  *         <li>35% approval likelihood: how far the score clears the minimum, full at 80 points above;
@@ -78,7 +81,11 @@ public class OfferEngine {
         Instant now = clock.instant();
 
         List<Scored> eligible = new ArrayList<>();
-        for (CardProduct product : marketplace.products()) {
+        List<CardProduct> products = marketplace.products();
+        for (CardProduct product : products.subList(0, Math.min(products.size(), MAX_PRODUCTS))) {
+            if (!valid(product)) {
+                continue;
+            }
             boolean inArea = product.nationwide() || state.map(product.states()::contains).orElse(false);
             if (score >= product.minScore() && inArea && suitable(product, score)) {
                 eligible.add(new Scored(product, matchScore(product, score, state.orElse(null))));
@@ -97,9 +104,29 @@ public class OfferEngine {
 
     private record Scored(CardProduct product, double match) {}
 
+    static final java.util.Set<Category> BUILDING_CREDIT =
+            java.util.EnumSet.of(Category.SECURED, Category.CREDIT_BUILDER, Category.STUDENT, Category.FAIR_CREDIT);
+
     static boolean suitable(CardProduct product, int score) {
-        boolean starter = product.category() == Category.SECURED || product.category() == Category.CREDIT_BUILDER;
-        return !starter || score < GOOD_CREDIT;
+        return !BUILDING_CREDIT.contains(product.category()) || score < GOOD_CREDIT;
+    }
+
+    static final java.util.regex.Pattern PRODUCT_ID = java.util.regex.Pattern.compile("^[a-z0-9-]{1,40}$");
+    /** Printable text: letters, digits, spaces and ordinary punctuation; no markup, control or invisible characters. */
+    static final java.util.regex.Pattern SAFE_TEXT = java.util.regex.Pattern.compile("^[\\p{L}\\p{N} .,;:'%$&()/+\\-]*$");
+    static final int MAX_PRODUCTS = 500;
+
+    /** Whether a marketplace product is safe to rank and pass on to people and agents. */
+    static boolean valid(CardProduct p) {
+        return p != null && PRODUCT_ID.matcher(p.productId()).matches()
+                && text(p.issuer(), 80) && text(p.name(), 80) && text(p.network(), 20) && text(p.rewardsType(), 20)
+                && text(p.rewardsBonus(), 200) && p.category() != null && p.states() != null && p.fees() != null
+                && p.minScore() >= 300 && p.minScore() <= 850 && p.aprMin() >= 0 && p.aprMax() >= p.aprMin()
+                && p.aprMax() <= 36;
+    }
+
+    private static boolean text(String value, int max) {
+        return value != null && !value.isBlank() && value.length() <= max && SAFE_TEXT.matcher(value).matches();
     }
 
     /** 1 while the card's minimum is within 80 points of the score, falling to 0 at 280 below. */
@@ -108,7 +135,11 @@ public class OfferEngine {
         return 1 - Math.min(1.0, Math.max(0.0, gap / 200.0));
     }
 
+    /** A card with no minimum (300, the bottom of the scale) is always within reach. */
     static double approval(CardProduct product, int score) {
+        if (product.minScore() <= 300) {
+            return 1.0;
+        }
         return Math.min(1.0, Math.max(0.0, (score - product.minScore()) / 80.0));
     }
 
@@ -148,11 +179,13 @@ public class OfferEngine {
     private Offer offer(Scored scored, int rank, int score, Instant now) {
         CardProduct p = scored.product();
         double apr = likelyApr(p, score);
-        Apr purchase = new Apr(p.introPurchase(), p.aprMin(), p.aprMax(), apr, p.aprMin() != p.aprMax());
-        Apr transfer = new Apr(p.introBalanceTransfer(), p.aprMin(), p.aprMax(), apr, p.aprMin() != p.aprMax());
-        Double penalty = p.category() == Category.SECURED || p.category() == Category.CREDIT_BUILDER ? null : 29.99;
-        Terms terms = new Terms(purchase, transfer, Math.min(29.99, p.aprMax() + 2), penalty, p.annualFee(),
-                p.balanceTransferFeePercent(), 5, p.foreignTransactionFeePercent(), 41, 25, p.securityDeposit());
+        boolean variable = p.fees().variableRate();
+        Apr purchase = new Apr(p.introPurchase(), p.aprMin(), p.aprMax(), apr, variable);
+        Apr transfer = new Apr(p.introBalanceTransfer(), p.aprMin(), p.aprMax(), apr, variable);
+        // Every term comes from the product as published; nothing is filled in here.
+        Terms terms = new Terms(purchase, transfer, p.fees().cashAdvanceApr(), p.fees().penaltyApr(), p.annualFee(),
+                p.balanceTransferFeePercent(), p.fees().cashAdvanceFeePercent(), p.foreignTransactionFeePercent(),
+                p.fees().latePaymentFeeMax(), p.fees().gracePeriodDays(), p.securityDeposit());
         Rewards rewards = new Rewards(p.rewardsType(), p.rewardsRate(), p.rewardsBonus(),
                 Math.round(yearlyValue(p) * 100) / 100.0);
         return new Offer(
@@ -177,8 +210,8 @@ public class OfferEngine {
     static String headline(CardProduct p) {
         String fee = p.annualFee() == 0 ? "no annual fee" : String.format(Locale.ROOT, "$%d annual fee", p.annualFee());
         return switch (p.category()) {
-            case PREMIUM_TRAVEL, TRAVEL_REWARDS -> String.format(Locale.ROOT, "%.0fx %s on travel, %s", p.rewardsRate(), p.rewardsType(), fee);
-            case CASH_BACK, ROTATING_CASH_BACK -> String.format(Locale.ROOT, "%s%% cash back, %s", trim(p.rewardsRate()), fee);
+            // The issuer's own description of the rewards, never a rate reworded here.
+            case PREMIUM_TRAVEL, TRAVEL_REWARDS, CASH_BACK, ROTATING_CASH_BACK -> p.rewardsBonus() + "; " + fee;
             case BALANCE_TRANSFER -> String.format(Locale.ROOT, "0%% intro APR on balance transfers for %d months, %s",
                     p.introBalanceTransfer().months(), fee);
             case LOW_INTEREST -> String.format(Locale.ROOT, "Low variable APR from %s%%, %s", trim(p.aprMin()), fee);

@@ -51,9 +51,8 @@ public class OffersMcpHandler {
         if (id == null || id.isNull()) {
             return Optional.empty();
         }
-        if (!id.isIntegralNumber()) {
-            // LangChain4j's McpServer only accepts numeric ids.
-            return Optional.of(error(id, INVALID_REQUEST, "Request id must be a number"));
+        if (!id.isIntegralNumber() && !id.isTextual()) {
+            return Optional.of(error(id, INVALID_REQUEST, "Request id must be a string or a number"));
         }
         if ("ping".equals(message.path("method").asText(""))) {
             ObjectNode envelope = nodes.objectNode().put("jsonrpc", "2.0");
@@ -62,8 +61,16 @@ public class OffersMcpHandler {
             return Optional.of(envelope.toString());
         }
         try {
-            McpJsonRpcMessage response = server.handle(message);
-            return Optional.of(response == null ? error(id, INTERNAL_ERROR, "Internal error") : mapper.writeValueAsString(response));
+            // LangChain4j's McpServer only takes numeric ids: give it one, and put the caller's back.
+            ObjectNode numbered = ((ObjectNode) message).deepCopy();
+            numbered.put("id", internalIds.incrementAndGet());
+            McpJsonRpcMessage response = server.handle(numbered);
+            if (response == null) {
+                return Optional.of(error(id, INTERNAL_ERROR, "Internal error"));
+            }
+            ObjectNode answer = mapper.valueToTree(response);
+            answer.set("id", id);
+            return Optional.of(mapper.writeValueAsString(answer));
         } catch (JsonProcessingException | RuntimeException e) {
             log.error("MCP request failed: {}", SafeLogging.describe(e));
             return Optional.of(error(id, INTERNAL_ERROR, "Internal error"));

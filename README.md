@@ -95,11 +95,12 @@ At registration the user also gives their **ZIP code**. The web server keeps eac
 |---|---|
 | Eligible | The score reaches the card's typical minimum (secured: none; builder: about 500–550; student and fair credit: about 580; cash back and low interest: about 670; balance transfer and travel: 690–740; premium: 740+). Regional cards (credit unions, state banks) only for ZIP codes in their states; the state comes from the ZIP's 3-digit prefix |
 | Priced | The APR quoted for this score sits in the card's range: the top at its minimum score, the bottom at 850 |
-| Suitable | Starter cards (secured, credit builder) only below 670, where mainstream cards are not yet in reach |
+| Suitable | Cards for building credit (secured, credit builder, student, fair credit) only below 670, where mainstream cards are not yet in reach |
+| Valid | Marketplace data is checked before use (ids, lengths, printable text, APR bounds), so issuer text cannot carry markup or instructions to agents |
 | Ranked | Match score: 35% approval likelihood (how far the score clears the minimum), 20% fit (cards meant for scores more than 80 points lower are marked down, to zero at 280), 25% value (rewards on $15,000 a year, less the annual fee), 15% cost (likely APR, 0% intro months), 5% local. Up to 10 offers, best first |
-| Format | Each offer carries the terms of a Schumer box (Regulation Z, 12 CFR 1026.60): purchase, balance transfer, cash advance and penalty APRs, annual fee, transaction fees, grace period, plus rewards, approval odds, availability, expiry and a "not a firm offer of credit" disclosure |
+| Format | Each offer carries the terms of a Schumer box (Regulation Z, 12 CFR 1026.60) exactly as the product lists them, never computed: purchase, balance transfer, cash advance and penalty APRs, annual fee, transaction fees, grace period (null = see issuer terms). Plus rewards in the issuer's words, estimated approval odds, availability, expiry and a "not a firm offer of credit" disclosure on the list and on every offer |
 
-The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP `tools/call` and runs it through the same MCP server, so both always answer the same. The catalogue is a placeholder (`OfferMarketplace.placeholder()`, fictional issuers) until an offers marketplace exists; replace the `OfferMarketplace` bean to plug one in. If the Offers service is down, login still works and the widget says offers are unavailable; a user with no recorded score is asked to look up their score first.
+The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP `tools/call` and runs it through the same MCP server, so both always answer the same. The catalogue is a placeholder (`OfferMarketplace.placeholder()`, fictional issuers) until an offers marketplace exists; replace the `OfferMarketplace` bean to plug one in. Both interfaces need the internal service token. Login asks once and waits at most `OFFERS_LOGIN_TIMEOUT` (1.5 s, no retry), so a slow or down Offers service never holds up a login: the widget says offers are unavailable, and `GET /api/v1/offers` (retried) fetches them later. Right after registration, while the first score is still being computed, the page asks again after 2, 5 and 10 seconds. A user with no recorded score is asked to look up their score first.
 
 ## Chat
 
@@ -185,7 +186,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
 | `REPORT_LOCK_URL` | agent, MCP server | `http://localhost:8080` (the web server, which owns the users table) |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |
@@ -199,7 +200,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `OAUTH_ISSUER` | web server, connector | `http://localhost:8080`: the web server's public URL, exactly as Claude and browsers reach it |
 | `CONNECTOR_RESOURCE_URL` | web server | `http://localhost:8088/mcp`: the only audience tokens are issued for; must equal the connector's `<CONNECTOR_PUBLIC_URL>/mcp` |
 | `OAUTH_ACCESS_TOKEN_TTL`, `OAUTH_ALLOW_LOOPBACK_REDIRECTS` | web server | `1h`, `true` (loopback redirects serve Claude Code and Desktop; Claude's two web callbacks are always allowed) |
-| `OFFERS_URL`, `OFFERS_TIMEOUT` | web server | `http://localhost:8090`, `3s` (login waits for offers, so keep it short) |
+| `OFFERS_URL`, `OFFERS_TIMEOUT`, `OFFERS_LOGIN_TIMEOUT` | web server | `http://localhost:8090`, `3s` a try for `GET /api/v1/offers` (retried), `1500ms` for the single try at login |
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
 | `ADVISOR_MEMORY_TTL`, `ADVISOR_MAX_CONVERSATIONS`, `ADVISOR_MAX_TURNS`, `ADVISOR_MEMORY_PRESSURE` | advisor agent | `5m`, `10000`, `20`, `0.85` |
 | `ADVISOR_MAX_PROMPT_CHARS`, `ADVISOR_MAX_REPLY_CHARS` | advisor agent | `1000`, `2000` |

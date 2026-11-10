@@ -119,6 +119,8 @@ services:
   offers-service:
     <<: *service
     build: { context: ., args: { MODULE: offers-service } }
+    environment:
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
 
   # Chatbot back end: answers a signed-in user's questions about their own report, behind input and
   # output guardrails, with conversation memory in RAM only. Called only by the web server.

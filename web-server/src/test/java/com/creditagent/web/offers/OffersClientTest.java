@@ -17,11 +17,13 @@ class OffersClientTest {
 
     final RestClient.Builder builder = RestClient.builder().baseUrl("http://offers");
     final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-    final OffersClient client = new OffersClient(builder.build());
+    final OffersClient client = new OffersClient(builder.build(), "service-token-service-token-service-token");
 
     @Test
     void sendsOnlyTheScoreAndZip() {
         server.expect(requestTo("http://offers/api/v1/offers"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("Authorization",
+                        "Bearer service-token-service-token-service-token"))
                 .andExpect(content().json("{\"score\":720,\"zip\":\"98101\"}", org.springframework.test.json.JsonCompareMode.STRICT))
                 .andRespond(withSuccess("{\"offers\":[{\"offerId\":\"a\"}]}", MediaType.APPLICATION_JSON));
         assertThat(client.offers(720, "98101").path("offers").size()).isEqualTo(1);

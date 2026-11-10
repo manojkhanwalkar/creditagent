@@ -1,6 +1,5 @@
-package com.creditagent.advisor;
+package com.creditagent.web.support;
 
-import com.creditagent.web.support.ServiceToken;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,11 +10,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.UrlPathHelper;
 
 /**
- * Only the web server may talk to this agent: everything but actuator health needs
- * {@code Authorization: Bearer <INTERNAL_API_TOKEN>}. Without a configured token the API is off (404).
- * The path is the decoded one Spring MVC routes on, so encoded paths cannot skip the check.
+ * For internal-only services (the User Advisor Agent, the Offers service): everything but actuator
+ * health needs {@code Authorization: Bearer <INTERNAL_API_TOKEN>}. Without a configured token the API
+ * is off (404). The path is the decoded one Spring MVC routes on, so encoded paths cannot skip the
+ * check. Register it before the inbound limits ({@link #registration}), so callers without the token
+ * cannot use up the shared bucket.
  */
-class ServiceTokenFilter extends OncePerRequestFilter {
+public class ServiceTokenFilter extends OncePerRequestFilter {
 
     private static final UrlPathHelper PATHS = new UrlPathHelper();
 
@@ -27,7 +28,7 @@ class ServiceTokenFilter extends OncePerRequestFilter {
 
     private final ServiceToken token;
 
-    ServiceTokenFilter(ServiceToken token) {
+    public ServiceTokenFilter(ServiceToken token) {
         this.token = token;
     }
 
@@ -50,5 +51,14 @@ class ServiceTokenFilter extends OncePerRequestFilter {
             return;
         }
         chain.doFilter(request, response);
+    }
+
+    /** The filter on every path, ordered just before the inbound limits. */
+    public static org.springframework.boot.web.servlet.FilterRegistrationBean<ServiceTokenFilter> registration(String token) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<ServiceTokenFilter> registration =
+                new org.springframework.boot.web.servlet.FilterRegistrationBean<>(new ServiceTokenFilter(new ServiceToken(token)));
+        registration.addUrlPatterns("/*");
+        registration.setOrder(WebSupportAutoConfiguration.INBOUND_LIMIT_ORDER - 1);
+        return registration;
     }
 }

@@ -3,6 +3,15 @@
 
 export const MAX_OFFERS = 10;
 
+/**
+ * Right after registration the first score is still being computed in the background, so the login
+ * usually finds none. The page asks again after these delays (ms) until offers arrive.
+ */
+export const NO_SCORE_RETRY_DELAYS = Object.freeze([2000, 5000, 10000]);
+
+/** Shown on every offer when the offer carries no disclosure of its own. */
+export const DEFAULT_DISCLOSURE = 'Not a pre-approval. Confirm the terms with the issuer before applying.';
+
 const STATUS_TEXT = Object.freeze({
   NO_SCORE: 'Look up your credit score above to see card offers matched to it.',
   UNAVAILABLE: 'Card offers are not available right now. Please try again later.',
@@ -49,6 +58,7 @@ export function offersView(data) {
       title: `${o.productName ?? 'Card'} · ${o.issuer ?? ''}`.trim(),
       headline: o.headline ?? '',
       rows: offerRows(o),
+      disclosure: typeof o.disclosure === 'string' && o.disclosure.trim() ? o.disclosure : DEFAULT_DISCLOSURE,
     })),
     basis,
     disclaimer: typeof data.disclaimer === 'string' ? data.disclaimer : null,

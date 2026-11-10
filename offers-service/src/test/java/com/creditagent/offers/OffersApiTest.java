@@ -19,7 +19,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** The real server: the REST API and the MCP interface give the same offers. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@org.springframework.test.context.TestPropertySource(properties = "credit.offers.service-token=" + OffersApiTest.TOKEN)
 class OffersApiTest {
+
+    static final String TOKEN = "service-token-service-token-service-token";
+    static final Map<String, String> AUTH = Map.of("Authorization", "Bearer " + TOKEN);
 
     @LocalServerPort
     int port;
@@ -30,8 +34,10 @@ class OffersApiTest {
     record Answer(int status, String body) {}
 
     Answer post(String path, String body, Map<String, String> headers) {
+        java.util.Map<String, String> all = new java.util.HashMap<>(AUTH);
+        all.putAll(headers);
         return RestClient.create().post().uri("http://localhost:" + port + path)
-                .contentType(MediaType.APPLICATION_JSON).headers(h -> headers.forEach(h::add)).body(body)
+                .contentType(MediaType.APPLICATION_JSON).headers(h -> all.forEach(h::set)).body(body)
                 .exchange((rq, rs) -> new Answer(rs.getStatusCode().value(), new String(rs.getBody().readAllBytes())));
     }
 
@@ -45,7 +51,7 @@ class OffersApiTest {
 
         try (McpClient client = DefaultMcpClient.builder().key("offers-test")
                 .transport(StreamableHttpMcpTransport.builder().url("http://localhost:" + port + "/mcp")
-                        .timeout(Duration.ofSeconds(10)).build())
+                        .customHeaders(AUTH).timeout(Duration.ofSeconds(10)).build())
                 .protocolVersion("2025-11-25").build()) {
             assertThat(client.listTools()).anySatisfy(t -> assertThat(t.name()).isEqualTo(OfferTools.TOOL));
             String text = client.executeTool(ToolExecutionRequest.builder().id("1").name(OfferTools.TOOL)
@@ -78,14 +84,32 @@ class OffersApiTest {
                 .isEqualTo(403);
         assertThat(post("/mcp", "not json", Map.of()).body()).contains("-32700");
         assertThat(post("/mcp", "[1]", Map.of()).body()).contains("-32600");
-        assertThat(post("/mcp", "{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"method\":\"ping\"}", Map.of()).body()).contains("-32600");
+        // String ids are fine (JSON-RPC allows them) and come back as sent.
+        assertThat(post("/mcp", "{\"jsonrpc\":\"2.0\",\"id\":\"req-7\",\"method\":\"tools/list\"}", Map.of()).body())
+                .contains("\"id\":\"req-7\"").contains("get_credit_card_offers");
+        assertThat(post("/mcp", "{\"jsonrpc\":\"2.0\",\"id\":{\"a\":1},\"method\":\"ping\"}", Map.of()).body()).contains("-32600");
         String badArgs = post("/mcp", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\""
                 + OfferTools.TOOL + "\",\"arguments\":{\"score\":10}}}", Map.of()).body();
         assertThat(badArgs).contains("\"isError\":true");
-        Integer get = RestClient.create().get().uri("http://localhost:" + port + "/mcp").exchange((rq, rs) -> rs.getStatusCode().value());
-        Integer delete = RestClient.create().delete().uri("http://localhost:" + port + "/mcp").exchange((rq, rs) -> rs.getStatusCode().value());
+        Integer get = RestClient.create().get().uri("http://localhost:" + port + "/mcp").header("Authorization", "Bearer " + TOKEN)
+                .exchange((rq, rs) -> rs.getStatusCode().value());
+        Integer delete = RestClient.create().delete().uri("http://localhost:" + port + "/mcp").header("Authorization", "Bearer " + TOKEN)
+                .exchange((rq, rs) -> rs.getStatusCode().value());
         assertThat(get).isEqualTo(405);
         assertThat(delete).isEqualTo(405);
+    }
+
+    @Test
+    void bothInterfacesNeedTheServiceToken() {
+        for (String path : new String[] {OffersRestController.OFFERS_PATH, OffersRestController.MCP_PATH}) {
+            Integer status = RestClient.create().post().uri("http://localhost:" + port + path)
+                    .contentType(MediaType.APPLICATION_JSON).body("{\"score\":700}")
+                    .exchange((rq, rs) -> rs.getStatusCode().value());
+            assertThat(status).as(path).isEqualTo(401);
+        }
+        Integer health = RestClient.create().get().uri("http://localhost:" + port + "/actuator/health")
+                .exchange((rq, rs) -> rs.getStatusCode().value());
+        assertThat(health).isEqualTo(200);
     }
 
     @Test

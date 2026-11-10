@@ -23,6 +23,6 @@ class OffersController {
 
     @GetMapping(path = PATH, produces = MediaType.APPLICATION_JSON_VALUE)
     OffersService.View offers(@RequestAttribute(AuthenticatedUser.REQUEST_ATTRIBUTE) AuthenticatedUser user) {
-        return offers.offersFor(user.userId());
+        return offers.current(user.userId());
     }
 }

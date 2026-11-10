@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Internal API for the web server (guarded by {@link ServiceTokenFilter}). A conversation id is an
+ * Internal API for the web server (guarded by {@link com.creditagent.web.support.ServiceTokenFilter}). A conversation id is an
  * opaque value the web server derives from the user's session; the agent never sees who the user is.
  *
  * <ul>

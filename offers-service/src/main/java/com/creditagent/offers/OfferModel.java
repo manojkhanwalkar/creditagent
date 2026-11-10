@@ -52,22 +52,37 @@ public final class OfferModel {
      */
     public record Apr(IntroRate intro, double min, double max, double yourRate, boolean variable) {}
 
-    /** The Schumer box. */
+    /** The Schumer box, as the issuer publishes it; a null term is unknown ("see issuer terms"). */
     public record Terms(
             Apr purchaseApr,
             Apr balanceTransferApr,
-            double cashAdvanceApr,
+            Double cashAdvanceApr,
             Double penaltyApr,
             int annualFee,
             double balanceTransferFeePercent,
-            double cashAdvanceFeePercent,
+            Double cashAdvanceFeePercent,
             double foreignTransactionFeePercent,
-            int latePaymentFeeMax,
-            int gracePeriodDays,
+            Integer latePaymentFeeMax,
+            Integer gracePeriodDays,
             Integer securityDeposit) {}
 
     /** What the card earns. {@code baseRate} is percent cash back or points per dollar. */
     public record Rewards(String type, double baseRate, String bonus, double estimatedAnnualValue) {}
+
+    /**
+     * The cost terms a product's issuer publishes, beyond its purchase APR range. Never computed here:
+     * an unknown term is null and is shown as "see issuer terms".
+     *
+     * @param penaltyApr null when the card has none (or the issuer does not say)
+     * @param variableRate whether the purchase APR is variable (follows the prime rate)
+     */
+    public record Fees(
+            Double penaltyApr,
+            Double cashAdvanceApr,
+            Double cashAdvanceFeePercent,
+            Integer latePaymentFeeMax,
+            Integer gracePeriodDays,
+            boolean variableRate) {}
 
     /** One product as the marketplace lists it, before it is fitted to a score. */
     public record CardProduct(
@@ -88,7 +103,8 @@ public final class OfferModel {
             double aprMax,
             double balanceTransferFeePercent,
             double foreignTransactionFeePercent,
-            Integer securityDeposit) {
+            Integer securityDeposit,
+            Fees fees) {
 
         public boolean nationwide() {
             return states.isEmpty();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAX_OFFERS, offerRows, offersView } from '../../main/resources/static/js/offers.js';
+import { DEFAULT_DISCLOSURE, MAX_OFFERS, NO_SCORE_RETRY_DELAYS, offerRows, offersView } from '../../main/resources/static/js/offers.js';
 
 const offer = (rank, extra = {}) => ({
   rank,
@@ -53,4 +53,15 @@ test('rows carry the terms people compare', () => {
   assert.equal(secured['Security deposit'], '$200');
   assert.equal(secured.Availability, 'Residents of OR, WA');
   assert.ok(offerRows({}).length >= 3);
+});
+
+test('every offer shows a disclosure, its own or the default', () => {
+  const view = offersView({ status: 'OK', score: 700, offers: [offer(1, { disclosure: 'Issuer note.' }), offer(2)] });
+  assert.equal(view.offers[0].disclosure, 'Issuer note.');
+  assert.equal(view.offers[1].disclosure, DEFAULT_DISCLOSURE);
+});
+
+test('after registration the page asks again a few times, then stops', () => {
+  assert.ok(NO_SCORE_RETRY_DELAYS.length >= 2 && NO_SCORE_RETRY_DELAYS.length <= 5);
+  assert.deepEqual([...NO_SCORE_RETRY_DELAYS].sort((a, b) => a - b), [...NO_SCORE_RETRY_DELAYS]);
 });

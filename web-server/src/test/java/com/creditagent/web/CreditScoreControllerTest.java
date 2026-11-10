@@ -99,6 +99,15 @@ class CreditScoreControllerTest {
     }
 
     @Test
+    void aFailedScoreWriteStillReturnsTheScore() throws Exception {
+        given(service.scoreFor(Ssn.parse("123-45-6789"))).willReturn(CreditScore.of(689));
+        org.mockito.BDDMockito.willThrow(new IllegalStateException("DynamoDB down")).given(auth).recordScore(AVERY.userId(), 689);
+        mvc.perform(post("/api/v1/credit-score").header("Authorization", BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"123-45-6789\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.score").value(689));
+    }
+
+    @Test
     void invalidSsnIs400WithoutCallingDownstream() throws Exception {
         mvc.perform(post("/api/v1/credit-score").header("Authorization", BEARER).contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"000-12-3456\"}"))
                 .andExpect(status().isBadRequest())

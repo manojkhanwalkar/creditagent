@@ -306,8 +306,10 @@ sequenceDiagram
 
 **REST plugs into MCP.** The Offers service has one entry to its logic, the MCP tool `get_credit_card_offers`. `POST /api/v1/offers` builds an MCP `tools/call` and runs it through the same LangChain4j `McpServer`, so the two interfaces cannot drift apart. The price is a JSON round trip inside the process, small next to the HTTP hop.
 
-**What the service sees.** A score and a ZIP code only: no name, SSN or user id, so neither interface needs to know who is asking. The MCP endpoint refuses requests that carry an `Origin` (browsers have no business there).
+**What the service sees.** A score and a ZIP code only: no name, SSN or user id. Both interfaces still need the internal service token (only the web server and internal agents call them), and the MCP endpoint refuses requests that carry an `Origin`. It accepts string or numeric JSON-RPC ids (LangChain4j's `McpServer` takes numbers only, so the handler maps them).
 
-**Resilience.** The web server waits at most `OFFERS_TIMEOUT` (3 s) a try; offers are a pure computation, so transient failures are retried. A failure never fails the login: the answer says `UNAVAILABLE` and the page shows that. Up to 10 offers are shown even if the service returned more.
+**Honest terms, sensible ranking.** Every Schumer-box term is the product's own; an unknown one is null ("see issuer terms"), never a default. Cards for building credit (secured, builder, student, fair credit) are offered only below 670, and the match score gives 20% to fit, so a 700 sees cash-back and travel cards, not a student card. Marketplace data is validated before ranking, since issuer text reaches agents' context.
+
+**Resilience.** Login asks once and waits at most `OFFERS_LOGIN_TIMEOUT` (1.5 s, no retry), so a hung Offers service costs a login 1.5 s, not the ~11 s three retried tries would. `GET /api/v1/offers` uses `OFFERS_TIMEOUT` (3 s) a try with retries. Any failure, the account read included, becomes `UNAVAILABLE`, never an error; a failed score write never fails a score look-up. Up to 10 offers are shown even if the service returned more, and the web server adds its own disclaimer if the service sent none. After registration the page re-asks at 2, 5 and 10 s, since the first score is computed in the background.
 
 **Placeholder marketplace.** Fictional issuers modelled on typical market score floors per card type. Real offers will come from a marketplace with many issuers; `OfferMarketplace` is the seam.

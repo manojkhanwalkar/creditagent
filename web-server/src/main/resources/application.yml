@@ -28,6 +28,8 @@ credit:
     # The Offers service: card offers for the user's last score and ZIP code, at login.
     url: ${OFFERS_URL:http://localhost:8090}
     timeout: ${OFFERS_TIMEOUT:3s}
+    # Login asks once and waits at most this; the page fetches offers again if they were not ready.
+    login-timeout: ${OFFERS_LOGIN_TIMEOUT:1500ms}
   chat:
     # The User Advisor Agent behind the chat (it needs the same INTERNAL_API_TOKEN).
     advisor-url: ${ADVISOR_URL:http://localhost:8089}

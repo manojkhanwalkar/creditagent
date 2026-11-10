@@ -67,9 +67,10 @@ class OffersFlowTest {
                     Duration.ofMinutes(5), CLOCK);
         }
 
+        /** The same mock for both: these tests are about what login and GET do with the answer. */
         @Bean
         OffersService offersService(AuthService auth, OffersClient client) {
-            return new OffersService(auth, client);
+            return new OffersService(auth, client, client);
         }
     }
 
@@ -143,6 +144,13 @@ class OffersFlowTest {
         String body = login("ada");
         assertThat((String) JsonPath.read(body, "$.offers.status")).isEqualTo("UNAVAILABLE");
         assertThat((String) JsonPath.read(body, "$.token")).isNotBlank();
+    }
+
+    @Test
+    void aMissingDisclaimerIsReplacedByTheWebServersOwn() throws Exception {
+        auth.recordScore("ada", 720);
+        given(client.offers(720, "98101")).willReturn(json.readTree("{\"offers\":[{\"offerId\":\"a\"}]}"));
+        assertThat((String) JsonPath.read(login("ada"), "$.offers.disclaimer")).isEqualTo(OffersService.DEFAULT_DISCLAIMER);
     }
 
     @Test

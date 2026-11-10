@@ -27,10 +27,11 @@ public class OfferTools {
      *     turns it into an error result
      */
     @Tool(name = TOOL, value = "Returns up to 10 credit card offers ranked for a credit score (300-850) and a US ZIP"
-            + " code, with each card's Schumer-box terms (APRs, fees), rewards and approval odds. Not firm offers.")
+            + " code, with indicative terms (APRs, fees) as each issuer publishes them, rewards and estimated approval"
+            + " odds. These are not firm offers or pre-approvals; terms must be confirmed with the issuer.")
     public String getCreditCardOffers(
-            @P("Credit score, 300 to 850") int score,
-            @P(value = "5-digit US ZIP code; leave empty for nationwide offers only", required = false) String zip) {
+            @P(name = "score", value = "Credit score, 300 to 850") int score,
+            @P(name = "zip", value = "5-digit US ZIP code; leave empty for nationwide offers only", required = false) String zip) {
         return json.writeValueAsString(engine.offers(score, zip));
     }
 }
