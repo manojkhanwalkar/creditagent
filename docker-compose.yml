@@ -1,5 +1,5 @@
 # Local stack. Build the jars first: mvn -B package -DskipTests
-# Then: cp .env.example .env  (and set CREDIT_FILE_HMAC_KEY), docker compose up --build
+# Then: cp .env.example .env  (and set the keys it lists), docker compose up --build
 #
 # Only the web UI and OAuth server (8080), the client agent (8086), the dummy KYC provider's sample
 # cards (8087), the Claude connector (8088) and Mailpit's inbox (8025: every alert email, unauthenticated,
@@ -18,11 +18,15 @@ services:
     <<: *service
     build: { context: ., args: { MODULE: credit-report-generator } }
     environment:
-      CREDIT_REPORTS_DIR: /data/Reports
       CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
+      CREDIT_REPORT_ENCRYPTION_KEY: ${CREDIT_REPORT_ENCRYPTION_KEY:?Set CREDIT_REPORT_ENCRYPTION_KEY in .env}
+      CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS: ${CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS:-}
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      DYNAMODB_CREATE_TABLES: "true"
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
       CREDIT_SEED_SSNS: ${CREDIT_SEED_SSNS:-}
-    volumes:
-      - credit-reports:/data/Reports
+    depends_on: [dynamodb]
 
   normalized-report-generator:
     <<: *service
@@ -32,16 +36,19 @@ services:
     <<: *service
     build: { context: ., args: { MODULE: credit-report-mcp-server } }
     environment:
-      CREDIT_REPORTS_DIR: /data/Reports
       CREDIT_FILE_HMAC_KEY: ${CREDIT_FILE_HMAC_KEY:?Set CREDIT_FILE_HMAC_KEY in .env}
+      CREDIT_REPORT_ENCRYPTION_KEY: ${CREDIT_REPORT_ENCRYPTION_KEY:?Set CREDIT_REPORT_ENCRYPTION_KEY in .env}
+      CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS: ${CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS:-}
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      DYNAMODB_CREATE_TABLES: "true"
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
       NRG_URL: http://normalized-report-generator:8084
       # The get_credit_report tool checks report locks with the web server (no depends_on: the
       # web server depends on this service, and the check connects lazily).
       REPORT_LOCK_URL: http://web-server:8080
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
-    volumes:
-      - credit-reports:/data/Reports:ro
-    depends_on: [normalized-report-generator]
+    depends_on: [normalized-report-generator, dynamodb]
 
   score-calculator:
     <<: *service
@@ -59,7 +66,8 @@ services:
     ports:
       - "127.0.0.1:8087:8087"
 
-  # Users and sessions. DynamoDB Local in memory: accounts are lost when the stack stops.
+  # Users, sessions, alerts and the encrypted credit reports. DynamoDB Local in memory: everything is
+  # lost when the stack stops (the generator re-seeds CREDIT_SEED_SSNS at start-up).
   # In AWS, point DYNAMODB_ENDPOINT at nothing and give the web server an IAM role instead.
   dynamodb:
     image: amazon/dynamodb-local:3.3.2
@@ -210,5 +218,4 @@ services:
     depends_on: [web-server, credit-report-mcp-server, score-calculator, client-agent]
 
 volumes:
-  credit-reports:
   advisor-evals:

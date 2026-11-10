@@ -16,7 +16,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open; first step: the report-lock check uses a shared internal token (`INTERNAL_API_TOKEN`) |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Open |
-| S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed |
+| S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed; now the `CreditReports` table's key is the SSN's HMAC, and each report is encrypted (S-24) |
 | S-6 | Medium | Path traversal through the MCP resource URI | Fixed |
 | S-7 | Medium | SSNs could leak into logs, error messages and exception chains | Fixed |
 | S-8 | Medium | DNS-rebinding attacks on the MCP HTTP endpoint | Fixed |
@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-24 | Medium | Credit reports move from files to the `CreditReports` DynamoDB table | Mitigated: key is the SSN's HMAC (never the SSN); each report AES-256-GCM encrypted in the service, bound to its row; key rotation; DynamoDB encryption at rest. Open: keys from the environment rather than KMS |
 | S-23 | Low | Alert emails: the service emails users about dark-web findings | Mitigated: one email per alert (conditional claims), fixed plain-text wording with no locations or links from outside, no addresses in logs, SMTP over STARTTLS by default, sending paced |
 | S-22 | Low | Dark-web alerts: a new table links users' emails to the places they were exposed | Mitigated: only registered users are checked; one account per email; internal look-up behind the service token, email in the body, never logged; placeholder source contacts nothing. Open: emails are not verified |
 | S-21 | Low | Card offers: the account now keeps the user's ZIP code and latest credit score | Mitigated: only score and ZIP go to the Offers service; offers are not firm offers of credit and say so |
@@ -56,10 +57,10 @@ Files are owner-only (`rw-------` in an `rwx------` directory) and hold only a m
 **Fix:** use an encrypted volume, or envelope encryption with a KMS key inside `CreditFileWriter` and `CreditFileRepository`.
 
 ### S-5 SSN as file name (Fixed)
-A file is named `HMAC-SHA256(key, ssn).json`. The generator and the MCP server share the key, it must be at least 32 bytes, and it has no default value. `resources/list` returns an empty list, so the server never enumerates people.
+Reports were files named `HMAC-SHA256(key, ssn).json`; they are now rows of the `CreditReports` table keyed by the same HMAC (S-24). The generator and the MCP server share the key, it must be at least 32 bytes, and it has no default value. `resources/list` returns an empty list, so the server never enumerates people.
 
 ### S-6 Path traversal (Fixed)
-Resource URIs must match `^credit-report://ssn/[0-9-]{9,11}$`, then pass SSN validation. File names are hex by construction. The resolved path must sit directly inside the data directory, and symlinks are not followed (`NOFOLLOW_LINKS`). Covered by `CreditReportMcpHandlerTest.pathTraversalStyleUrisAreRejected`.
+Resource URIs must match `^credit-report://ssn/[0-9-]{9,11}$`, then pass SSN validation. Reports are now looked up in DynamoDB by the SSN's HMAC, so no path is built from input at all. Covered by `CreditReportMcpHandlerTest.pathTraversalStyleUrisAreRejected`.
 
 ### S-7 PII in logs and errors (Fixed)
 - `Ssn.toString()` is masked, and request records override `toString()` to redact the SSN.
@@ -97,6 +98,14 @@ Check the model provider's data-retention terms before enabling it.
 - `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
+
+### S-24 Credit report storage (Mitigated)
+- The table's key never holds an SSN: `ssn` is HMAC-SHA256 with `CREDIT_FILE_HMAC_KEY` (at least 32 bytes, no default), so a copy of the table cannot be reversed by brute force over the SSN space.
+- Each report is encrypted in the service with AES-256-GCM, using a fresh random nonce and a key derived from `CREDIT_REPORT_ENCRYPTION_KEY` (at least 32 bytes, required, no default). Someone with read access to DynamoDB, a backup or an export sees only ciphertext.
+- The associated data is the row's key. A ciphertext moved to another consumer's row, or altered, fails to decrypt. Tested on DynamoDB Local (`CreditReportsTableIntegrationTest`).
+- Values carry a key id, so keys can be rotated; old keys only decrypt.
+- Decryption failures and store outages return no details: an internal error from the MCP server, and 503 from the generator.
+- Open: the keys come from the environment. In AWS, use KMS (a customer-managed key for the table, and envelope encryption in `ReportCipher`) and IAM so that only the generator can write and only the MCP server can read.
 
 ### S-23 Alert emails (Mitigated)
 - Recipients are only registered users' addresses from the Alerts table; an address belongs to one account. Addresses are not verified (S-22), so an email can reach someone who never registered: it then only tells the owner of that address about their own address, and says to sign in, never to reply or click.
@@ -175,7 +184,7 @@ Every service also refuses excess load before doing any work: a token bucket (42
 - Release images carry SBOM and provenance attestations.
 
 ### S-16 Container runtime (Fixed)
-Containers run as non-root UID 10001 with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. The MCP server mounts the credit files read-only.
+Containers run as non-root UID 10001 with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. No container holds credit reports on disk any more: they are in the `CreditReports` table, encrypted.
 
 ### S-17 HMAC key rotation (Info, open)
 Changing the key orphans every existing file.

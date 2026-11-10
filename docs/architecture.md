@@ -13,7 +13,7 @@ flowchart LR
     subgraph MCP["credit-report-mcp-server :8082"]
         M[/mcp Streamable HTTP<br/>resource credit-report://ssn/&#123;ssn&#125;<br/>tool get_credit_report/]
     end
-    FS[(~/Reports/&lt;Bureau&gt;/<br/>Equifax · Experian · TransUnion<br/>HMAC-named JSON)]
+    FS[(CreditReports table · DynamoDB<br/>key: HMAC of SSN + bureau<br/>report: AES-256-GCM JSON)]
     NRG[normalized-report-generator :8084<br/>merges 3 bureau reports]
     GEN[credit-report-generator :8083]
     SC[score-calculator :8081<br/>five-factor scorecard 300–850]
@@ -35,14 +35,14 @@ flowchart LR
     UI -- "1 · SSN (POST)" --> WS
     WS -- "2 · resources/read" --> M
     M -- "3 · read 3 reports" --> FS
-    FS -. "4 · 3 bureau files" .-> M
+    FS -. "4 · 3 bureau reports (decrypted)" .-> M
     M -- "5 · 3 reports" --> NRG
     NRG -. "6 · merged" .-> M
     M -. "7 · credit report" .-> WS
     WS -- "8 · report" --> SC
     SC -. "9 · score" .-> WS
     WS -. "10 · score" .-> UI
-    GEN -- "writes 3 bureau reports" --> FS
+    GEN -- "writes 3 bureau reports (encrypted, one transaction)" --> FS
     UI -- "R1 · register + card photo (multipart)" --> WS
     WS -- "R2 · card photo" --> KYC
     KYC -. "R3 · SSN + verification id, or REJECTED (IMAGE_BLURRY…)" .-> WS
@@ -148,7 +148,7 @@ On the last try the caller sees the real failure, and maps it to 503 (or 502 in 
 
 ## Multi-bureau model
 
-The generator writes each consumer's history three times, to `~/Reports/Equifax/`, `~/Reports/Experian/` and `~/Reports/TransUnion/`, under the same HMAC file name. The bureaus do not publish JSON schemas, so each format is an assumption modelled on public descriptions of their reports and of the Metro 2 furnisher format. The records are in `common/…/bureau/`, and `BureauCodes` holds the code tables both sides use.
+The generator writes each consumer's history three times, one report per bureau, to the `CreditReports` table (see [Credit report storage](#credit-report-storage)). The bureaus do not publish JSON schemas, so each format is an assumption modelled on public descriptions of their reports and of the Metro 2 furnisher format. The records are in `common/…/bureau/`, and `BureauCodes` holds the code tables both sides use.
 
 | Bureau | Dates | Account type | Status and late payments | Other differences |
 |---|---|---|---|---|
@@ -389,4 +389,26 @@ sequenceDiagram
 **What the email says.** Fixed wording, plain text: how many places and the first date, what to do (identity protection, change passwords), a sign-in pointer, and that we never ask for a password or SSN by email. No location names (they stay behind sign-in) and nothing else from outside the service, so the email cannot carry markup or attacker-chosen links. The sender comes from config; the recipient is the registered address (validated at registration, unique per account).
 
 **Resilience.** SMTP calls have a 5 s connect and 10 s read/write timeout. Sends are paced (`NOTIFIER_SENDS_PER_SECOND`, 10) to stay within the relay's limits, and a run reads at most `NOTIFIER_MAX_ALERTS_PER_RUN` alerts. Sends are not retried within a run: a timed-out send may have been delivered, and a second try could duplicate it. The mail health indicator is off, so a relay outage does not mark the notifier unhealthy or get it restarted. Without `MAIL_HOST` the run is skipped with a warning. SMTP needs STARTTLS: the notifier refuses to start with it off unless the relay is local (`localhost`, `mailpit`), which compose's Mailpit is.
+
+## Credit report storage
+
+The bureau reports live in the DynamoDB table `CreditReports`, written by the generator and read by the MCP server (library `credit-report-store`).
+
+| Attribute | Type | What |
+|---|---|---|
+| `ssn` (partition key) | S | HMAC-SHA256 of the SSN (`CREDIT_FILE_HMAC_KEY`), hex |
+| `bureau` (sort key) | S | `Equifax`, `Experian` or `TransUnion` |
+| `report` | B | the bureau's report JSON, encrypted: 12-byte nonce, AES-256-GCM ciphertext and tag |
+| `keyId` | S | which encryption key wrote it |
+| `updatedAt` | S | when |
+
+**Key design.** The spec asks for bureau and SSN together as the composite primary key. The SSN is the partition key and the bureau the sort key, so one `Query` returns a consumer's three reports. The other order would put every consumer in three partitions, one per bureau, which become hot under load. The `ssn` column holds the SSN's keyed hash, never the SSN itself. DynamoDB cannot encrypt key attributes client-side. A plain hash of the roughly 10^9 possible SSNs can be reversed by brute force in minutes. A keyed hash is still a stable look-up key, as the HMAC file names were.
+
+**Encryption.** Each report is encrypted in the service before it is stored: AES-256-GCM with a fresh random nonce. The AES key is derived from `CREDIT_REPORT_ENCRYPTION_KEY` with HMAC-SHA256, so the secret is never used directly. The associated data is the row's own key (`CreditReports|<ssn hash>|<bureau>`), so a ciphertext copied into another consumer's row fails its integrity check instead of showing one person's report as another's. A tampered value fails the same way. Decryption failures surface as an internal error, with no details. The table also has DynamoDB's encryption at rest; in AWS, use a customer-managed KMS key for it as well. Trade-off: a key in the environment, not KMS envelope encryption. The `ReportCipher` seam is where a KMS data-key would go.
+
+**Rotation.** Every value records its `keyId`. New writes use the current key. Keys in `CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS` still decrypt, so a rotation needs no downtime. Regenerating a consumer's reports re-encrypts them with the new key.
+
+**Writes.** The generator replaces a consumer's whole set in one `TransactWriteItems`: a put for each bureau with a report, and a delete for each without. Readers see the old set or the new one, never a mix, which the file version needed per-SSN locks and staged moves to approximate. Two writers of the same consumer conflict; the loser retries, up to 3 times, since replacing a set is idempotent. A report is limited to 300 KB, well under DynamoDB's 400 KB item limit. A store failure answers 503 with `Retry-After`.
+
+**Migration.** Nothing is migrated from the old `~/Reports` files: they hold synthetic demo data, and the generator re-seeds `CREDIT_SEED_SSNS` at start-up.
 

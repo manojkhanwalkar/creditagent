@@ -12,8 +12,6 @@ import dev.langchain4j.mcp.client.McpReadResourceResult;
 import dev.langchain4j.mcp.client.McpTextResourceContents;
 import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
