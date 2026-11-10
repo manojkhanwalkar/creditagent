@@ -56,6 +56,7 @@ public class AuthService {
     private final Duration touchInterval;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
+    private final java.util.List<RegistrationListener> registrationListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** Hash of a random password, checked when the user id is unknown so both paths cost the same. */
     private final String dummyHash;
 
@@ -95,10 +96,21 @@ public class AuthService {
      * @throws SsnAlreadyRegisteredException if another account already has the SSN on the card
      */
     public String register(String userId, String password, String email, String phone, byte[] ssnCardImage) {
+        return register(userId, password, email, phone, null, ssnCardImage);
+    }
+
+    /**
+     * {@link #register(String, String, String, String, byte[])} with the user's ZIP code, which card
+     * offers are matched on. Null is allowed only for callers that predate it (the API requires it).
+     * Once the account exists, registration listeners are told about the new user and the SSN read
+     * from their card, so a first credit score can be recorded.
+     */
+    public String register(String userId, String password, String email, String phone, String zip, byte[] ssnCardImage) {
         String id = RegistrationPolicy.normaliseUserId(userId);
         RegistrationPolicy.checkPassword(password, id);
         String normalisedEmail = RegistrationPolicy.normaliseEmail(email);
         String normalisedPhone = RegistrationPolicy.normalisePhone(phone);
+        String normalisedZip = zip == null ? null : RegistrationPolicy.normaliseZip(zip);
         if (ssnCardImage == null || ssnCardImage.length == 0) {
             throw new InvalidRegistrationException("Upload a photo of your Social Security card.");
         }
@@ -117,14 +129,41 @@ public class AuthService {
                 ssn.digits().substring(5),
                 verified.verificationId(),
                 clock.instant(),
-                ReportStatus.UNLOCKED);
+                ReportStatus.UNLOCKED,
+                normalisedZip,
+                null,
+                null);
         // The conditional transaction is the real uniqueness check; there is no read-then-write race.
         switch (users.create(user)) {
             case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
             case SSN_TAKEN -> throw new SsnAlreadyRegisteredException();
             case CREATED -> log.info("Registered user {} (KYC {})", id, verified.verificationId());
         }
+        for (RegistrationListener listener : registrationListeners) {
+            try {
+                listener.registered(id, ssn);
+            } catch (RuntimeException e) {
+                log.warn("Registration listener failed: {}", com.creditagent.common.SafeLogging.describe(e));
+            }
+        }
         return id;
+    }
+
+    /** Adds a listener told about every new account (see {@link RegistrationListener}). */
+    public void addRegistrationListener(RegistrationListener listener) {
+        registrationListeners.add(Objects.requireNonNull(listener));
+    }
+
+    /** Records the user's latest credit score, for offers at their next login. Unknown users are ignored. */
+    public void recordScore(String userId, int score) {
+        if (!users.updateLastScore(userId, score, clock.instant())) {
+            log.info("Score not recorded: no user {}", userId);
+        }
+    }
+
+    /** The stored account, for features that read its profile (ZIP code, last score). */
+    public Optional<User> account(String userId) {
+        return users.find(userId);
     }
 
     /** Checks the password and opens a session. @throws UnauthenticatedException on any mismatch */

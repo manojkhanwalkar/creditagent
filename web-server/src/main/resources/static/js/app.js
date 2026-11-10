@@ -1,6 +1,7 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
+import { offersView } from './offers.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -14,10 +15,11 @@ const authWidget = $('auth-widget');
 const scoreWidget = $('score-widget');
 const lockWidget = $('lock-widget');
 const chatWidget = $('chat-widget');
+const offersWidget = $('offers-widget');
 
 // ---------- signed-in / signed-out view ----------
 
-function showSignedIn(userId, ssnMasked) {
+function showSignedIn(userId, ssnMasked, offers) {
   accountUser.textContent = userId;
   $('ssn-hint').textContent = ssnHint(ssnMasked || session.ssnMasked());
   account.hidden = false;
@@ -25,10 +27,12 @@ function showSignedIn(userId, ssnMasked) {
   scoreWidget.hidden = false;
   lockWidget.hidden = false;
   chatWidget.hidden = false;
+  offersWidget.hidden = false;
   hideNotice();
   resetLockWidget();
   resetChat();
   loadReportStatus();
+  if (offers) renderOffers(offers); else loadOffers();
 }
 
 function showSignedOut(message) {
@@ -38,6 +42,9 @@ function showSignedOut(message) {
   scoreWidget.hidden = true;
   lockWidget.hidden = true;
   chatWidget.hidden = true;
+  offersWidget.hidden = true;
+  offersGeneration += 1;
+  $('offers-list').replaceChildren();
   resetLockWidget();
   resetChat();
   $('result').hidden = true;
@@ -169,7 +176,8 @@ async function logIn(userId, password, errorElement) {
     return false;
   }
   session.save(data.token, data.userId, data.ssnMasked);
-  showSignedIn(data.userId, data.ssnMasked);
+  // The login answer carries the offers matched to the user's last score and ZIP code.
+  showSignedIn(data.userId, data.ssnMasked, data.offers);
   return true;
 }
 
@@ -201,6 +209,7 @@ registerForm.addEventListener('submit', async (event) => {
     confirm: $('reg-confirm').value,
     email: $('reg-email').value.trim(),
     phone: $('reg-phone').value.trim(),
+    zip: $('reg-zip').value.trim(),
     ssnCard: $('reg-ssn-card').files[0] || null,
   };
   const problem = checkRegistration(form);
@@ -219,6 +228,7 @@ registerForm.addEventListener('submit', async (event) => {
     body.append('password', form.password);
     body.append('email', form.email);
     body.append('phone', form.phone);
+    body.append('zip', form.zip);
     body.append('ssnCard', form.ssnCard, form.ssnCard.name);
     const response = await fetch('/api/v1/auth/register', {
       method: 'POST',
@@ -336,6 +346,8 @@ scoreForm.addEventListener('submit', async (event) => {
     render(data);
     // Do not leave the SSN sitting in the field.
     input.value = '';
+    // The server recorded this score: offers may have changed.
+    loadOffers();
   } catch {
     showFormError(scoreError, 'Could not reach the server. Check your connection and try again.');
   } finally {
@@ -355,6 +367,60 @@ function render({ score, ssnMasked }) {
   ringScore.style.fill = band.color;
   $('ring-caption').textContent = `${band.label} · ${ssnMasked}`;
   result.hidden = false;
+}
+
+// ---------- card offers ----------
+
+// Bumped on every sign-in and sign-out, so offers for an earlier session are ignored.
+let offersGeneration = 0;
+
+function renderOffers(data) {
+  const view = offersView(data);
+  const message = $('offers-message');
+  message.textContent = view.message ?? '';
+  message.hidden = !view.message;
+  const list = $('offers-list');
+  list.replaceChildren(...view.offers.map((offer) => {
+    const item = document.createElement('li');
+    item.className = 'offer-card';
+    const title = document.createElement('h3');
+    title.textContent = offer.title;
+    const headline = document.createElement('p');
+    headline.className = 'offer-headline';
+    headline.textContent = offer.headline;
+    const terms = document.createElement('dl');
+    terms.className = 'offer-terms';
+    for (const [name, value] of offer.rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = name;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      terms.append(dt, dd);
+    }
+    item.append(title, headline, terms);
+    return item;
+  }));
+  const basis = $('offers-basis');
+  basis.textContent = view.basis ?? '';
+  basis.hidden = !view.basis;
+  const disclaimer = $('offers-disclaimer');
+  disclaimer.textContent = view.disclaimer ?? '';
+  disclaimer.hidden = !view.disclaimer;
+}
+
+async function loadOffers() {
+  const generation = ++offersGeneration;
+  try {
+    const { response, data } = await api('/api/v1/offers', { method: 'GET' });
+    if (generation !== offersGeneration) return;
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    renderOffers(response.ok ? data : { status: 'UNAVAILABLE' });
+  } catch {
+    if (generation === offersGeneration) renderOffers({ status: 'UNAVAILABLE' });
+  }
 }
 
 // ---------- chat ----------

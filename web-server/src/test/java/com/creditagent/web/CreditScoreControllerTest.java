@@ -94,6 +94,8 @@ class CreditScoreControllerTest {
                 .andExpect(jsonPath("$.ssnMasked").value("***-**-6789"))
                 .andExpect(content().string(Matchers.not(Matchers.containsString("123-45"))))
                 .andExpect(header().string("Cache-Control", "no-store"));
+        // The score is kept (never the SSN) so offers can be matched at the next login.
+        org.mockito.Mockito.verify(auth).recordScore(AVERY.userId(), 689);
     }
 
     @Test

@@ -80,6 +80,7 @@ jobs:
             client-agent/target/*.jar
             claude-connector/target/*.jar
             user-advisor-agent/target/*.jar
+            offers-service/target/*.jar
           retention-days: 7
 
   ui:
@@ -120,6 +121,7 @@ jobs:
           - client-agent
           - claude-connector
           - user-advisor-agent
+          - offers-service
     env:
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:

@@ -55,4 +55,14 @@ class RegistrationPolicyTest {
         assertThatThrownBy(() -> RegistrationPolicy.normalisePhone("415 555 0100"))
                 .isInstanceOf(InvalidRegistrationException.class);
     }
+
+    @org.junit.jupiter.api.Test
+    void zipCodesAreFiveDigitsOrZipPlusFour() {
+        org.assertj.core.api.Assertions.assertThat(RegistrationPolicy.normaliseZip(" 98101 ")).isEqualTo("98101");
+        org.assertj.core.api.Assertions.assertThat(RegistrationPolicy.normaliseZip("98101-1234")).isEqualTo("98101");
+        for (String bad : new String[] {null, "", "9810", "981011", "ABCDE", "98101-12"}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> RegistrationPolicy.normaliseZip(bad))
+                    .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
+        }
+    }
 }

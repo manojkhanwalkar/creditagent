@@ -24,6 +24,9 @@ public class DynamoDbUserRepository implements UserRepository {
     static final String KEY = "userId";
     static final String SSN_CLAIM_PREFIX = "ssn#";
     static final String REPORT_STATUS = "reportStatus";
+    static final String ZIP = "zip";
+    static final String LAST_SCORE = "lastScore";
+    static final String LAST_SCORE_AT = "lastScoreAt";
     private static final String CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailed";
 
     private final DynamoDbClient dynamo;
@@ -48,6 +51,9 @@ public class DynamoDbUserRepository implements UserRepository {
         }
         item.put("createdAt", s(user.createdAt().toString()));
         item.put(REPORT_STATUS, s(user.reportStatus().name()));
+        if (user.zip() != null) {
+            item.put(ZIP, s(user.zip()));
+        }
         Map<String, AttributeValue> claim = Map.of(
                 KEY, s(SSN_CLAIM_PREFIX + user.ssnHash()),
                 "owner", s(user.userId()));
@@ -93,7 +99,10 @@ public class DynamoDbUserRepository implements UserRepository {
                 text(item, "ssnLastFour"),
                 text(item, "kycVerificationId"),
                 Instant.parse(item.get("createdAt").s()),
-                ReportStatus.fromStored(text(item, REPORT_STATUS))));
+                ReportStatus.fromStored(text(item, REPORT_STATUS)),
+                text(item, ZIP),
+                item.containsKey(LAST_SCORE) ? Integer.valueOf(item.get(LAST_SCORE).n()) : null,
+                item.containsKey(LAST_SCORE_AT) ? Instant.parse(item.get(LAST_SCORE_AT).s()) : null));
     }
 
     /** Reads the {@code ssn#<hash>} claim, then its owner. Two consistent reads. */
@@ -127,6 +136,26 @@ public class DynamoDbUserRepository implements UserRepository {
                     .conditionExpression("attribute_exists(#id) AND attribute_exists(#pw)")
                     .expressionAttributeNames(Map.of("#id", KEY, "#pw", "passwordHash", "#status", REPORT_STATUS))
                     .expressionAttributeValues(Map.of(":status", s(status.name()))));
+            return true;
+        } catch (ConditionalCheckFailedException missing) {
+            return false;
+        }
+    }
+
+    /** Conditional, like {@link #updateReportStatus}: only an existing user item is changed. */
+    @Override
+    public boolean updateLastScore(String userId, int score, Instant at) {
+        if (userId == null || userId.startsWith(SSN_CLAIM_PREFIX)) {
+            return false;
+        }
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(userId)))
+                    .updateExpression("SET #score = :score, #at = :at")
+                    .conditionExpression("attribute_exists(#id) AND attribute_exists(#pw)")
+                    .expressionAttributeNames(Map.of("#id", KEY, "#pw", "passwordHash", "#score", LAST_SCORE, "#at", LAST_SCORE_AT))
+                    .expressionAttributeValues(Map.of(":score", AttributeValue.fromN(Integer.toString(score)),
+                            ":at", s(at.toString()))));
             return true;
         } catch (ConditionalCheckFailedException missing) {
             return false;

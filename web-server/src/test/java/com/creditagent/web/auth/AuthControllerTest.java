@@ -54,7 +54,8 @@ class AuthControllerTest {
                 .param("userId", userId)
                 .param("password", PASSWORD)
                 .param("email", "avery@example.com")
-                .param("phone", "+1 415 555 0100");
+                .param("phone", "+1 415 555 0100")
+                .param("zip", "98101");
     }
 
     static MockMultipartHttpServletRequestBuilder register(String userId, String ssnOnCard) {
@@ -130,6 +131,18 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.detail").value(Matchers.containsString("blurry")));
 
         mvc.perform(register("dana", "456-78-9012")).andExpect(status().isCreated());
+    }
+
+    @Test
+    void theZipCodeIsRequiredAndStoredAsFiveDigits() throws Exception {
+        MockMultipartHttpServletRequestBuilder noZip = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
+                .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("567-89-0123")))
+                .param("userId", "zoe").param("password", PASSWORD).param("email", "zoe@example.com")
+                .param("phone", "+1 415 555 0100");
+        mvc.perform(noZip).andExpect(status().isBadRequest());
+        mvc.perform(register("zoe", "567-89-0123").param("zip", "nope")).andExpect(status().isBadRequest());
+        mvc.perform(register("yuri", "567-89-0124")).andExpect(status().isCreated());
+        assertThat(Wiring.USERS.find("yuri").orElseThrow().zip()).isEqualTo("98101");
     }
 
     @Test

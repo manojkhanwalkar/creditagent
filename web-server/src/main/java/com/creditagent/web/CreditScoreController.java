@@ -59,6 +59,8 @@ class CreditScoreController {
         Ssn ssn = Ssn.parse(request.ssn());
         auth.requireOwnSsn(user, ssn);
         CreditScore score = service.scoreFor(ssn);
+        // Kept for offers at the next login; the SSN itself is never stored.
+        auth.recordScore(user.userId(), score.value());
         return new CreditScoreResponse(ssn.masked(), score.value(), score.max(), score.band());
     }
 

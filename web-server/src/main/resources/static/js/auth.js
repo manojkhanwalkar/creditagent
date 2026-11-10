@@ -77,7 +77,7 @@ export function ssnHint(ssnMasked) {
  * @param ssnCard the chosen File (or anything with name, type and size), or null
  * @returns an error message, or null if the form looks valid
  */
-export function checkRegistration({ userId, password, confirm, email, phone, ssnCard }) {
+export function checkRegistration({ userId, password, confirm, email, phone, zip, ssnCard }) {
   const id = (userId || '').trim();
   if (!USER_ID.test(id)) return 'User id must be 3–32 characters: letters, digits, ".", "_" or "-".';
   if ((password || '').length < 12) return 'Password must be at least 12 characters.';
@@ -88,6 +88,7 @@ export function checkRegistration({ userId, password, confirm, email, phone, ssn
   if (!PHONE.test((phone || '').trim().replace(PHONE_SEPARATORS, ''))) {
     return 'Enter the phone number in international form, e.g. +1 415 555 0100.';
   }
+  if (!/^\d{5}(-\d{4})?$/.test((zip || '').trim())) return 'Enter your 5-digit ZIP code.';
   return checkCardPhoto(ssnCard);
 }
 
