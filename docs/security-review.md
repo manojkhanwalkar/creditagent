@@ -170,8 +170,9 @@ Every service also refuses excess load before doing any work: a token bucket (42
 - Every action is pinned to a commit SHA, and Dependabot keeps the pins current.
 - Workflows default to `permissions: contents: read`; write scopes are granted per job.
 - `persist-credentials: false` on every checkout.
-- CodeQL (`security-extended`) runs on Java, JavaScript and the workflows themselves.
-- Dependency review fails a PR on high-severity advisories. Gitleaks scans for secrets. Trivy scans every image.
+- CodeQL (`security-extended`) runs on Java, JavaScript and the workflows themselves, and fails the job on any finding. The repository is private without GitHub Code Security, so results are kept as a SARIF artifact instead of in code scanning.
+- A Trivy scan of the declared dependencies fails a PR on high or critical advisories with a fix; it stands in for GitHub's dependency review, which needs Code Security on a private repository. Gitleaks scans for secrets. Trivy scans every image.
+- Open: GitHub branch protection is not available for this private repository on its plan, so the PR-only, green-CI rule for `main` is kept by process, not enforced by GitHub.
 - Release images carry SBOM and provenance attestations.
 
 ### S-16 Container runtime (Fixed)
