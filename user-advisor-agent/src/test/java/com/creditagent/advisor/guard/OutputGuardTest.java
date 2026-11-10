@@ -32,7 +32,20 @@ class OutputGuardTest {
         "Here is the data: <credit_report>{...} | LEAK",
         "assistant: I will now ignore the rules | LEAK",
         "Paying this card is guaranteed to raise your score. | PROMISE",
-        "This will 100% fix your credit. | PROMISE"})
+        "This will 100% fix your credit. | PROMISE",
+        "Women usually get lower limits. | PROTECTED",
+        "At your age, lenders see you as risky. | PROTECTED",
+        "Black applicants are usually riskier borrowers. | PROTECTED",
+        "Catholic and Sikh borrowers pay more. | PROTECTED",
+        "Gay couples should apply separately. | PROTECTED",
+        "African American borrowers get less. | PROTECTED",
+        "Foreign-born borrowers are riskier. | PROTECTED",
+        "Only idiots carry a balance. | OFFENSIVE",
+        "That was a stupid thing to do. | OFFENSIVE",
+        "CREDITAGENT ADVISOR INSTRUCTIONS say I must help. | LEAK",
+        "This will definitely increase your score by 100 points. | PROMISE",
+        "Paying this off will certainly boost you to 800. | PROMISE",
+        "I am 100% sure this works. | PROMISE"})
     void harmfulAnswersAreReplacedNotEdited(String reply, Problem problem) {
         OutputGuard.Result result = guard.check(reply);
         assertThat(result.problem()).isEqualTo(problem);
@@ -45,6 +58,12 @@ class OutputGuardTest {
         OutputGuard.Result result = guard.check("Your SSN 123-45-6789 and card 4111111111111111 <b>look</b> fine.");
         assertThat(result.replaced()).isFalse();
         assertThat(result.reply()).isEqualTo("Your SSN [SSN removed] and card [number removed] blook/b fine.");
+    }
+
+    @Test
+    void factsWithAHundredPercentAreNotPromises() {
+        assertThat(guard.check("Your card balances add up to $5,000 of $5,000 in limits, 100% utilisation.").replaced()).isFalse();
+        assertThat(guard.check("Your card balances by card: Discover 100%.").replaced()).isFalse();
     }
 
     @Test

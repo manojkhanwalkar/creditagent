@@ -1,6 +1,6 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
-import { appendEntry, assistantEntry, checkChat, userEntry } from './chat.js';
+import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -371,6 +371,7 @@ let chatEntries = [];
 // at sign-out. Asked for once per sign-in.
 let chatSsnValue = null;
 let chatGeneration = 0;
+const chatGate = createSendGate();
 
 function resetChat() {
   chatGeneration += 1;
@@ -380,6 +381,9 @@ function resetChat() {
   chatSsn.value = '';
   chatMessage.value = '';
   chatSsnRow.hidden = false;
+  chatGate.reset();
+  chatSend.disabled = false;
+  chatSend.textContent = 'Send';
   showFormError(chatError, '');
 }
 
@@ -408,9 +412,11 @@ chatForm.addEventListener('submit', async (event) => {
   const needSsn = chatSsnValue === null;
   const ssn = needSsn ? chatSsn.value.trim() : chatSsnValue;
   const message = chatMessage.value;
+  if (chatGate.busy) return; // Enter while "Thinking…": wait for the answer
   const problem = checkChat(message, ssn, needSsn);
   showFormError(chatError, problem || '');
   if (problem) return;
+  chatGate.begin();
 
   const generation = chatGeneration;
   addChatEntry(userEntry(message));
@@ -438,8 +444,12 @@ chatForm.addEventListener('submit', async (event) => {
     if (generation !== chatGeneration) return;
     showFormError(chatError, 'Could not reach the server. Check your connection and try again.');
   } finally {
-    chatSend.disabled = false;
-    chatSend.textContent = 'Send';
+    // A request from before a sign-out or sign-in must not unlock the new session's form.
+    if (generation === chatGeneration) {
+      chatGate.end();
+      chatSend.disabled = false;
+      chatSend.textContent = 'Send';
+    }
   }
 });
 

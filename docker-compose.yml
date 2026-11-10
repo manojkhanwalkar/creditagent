@@ -120,6 +120,10 @@ services:
     build: { context: ., args: { MODULE: user-advisor-agent } }
     environment:
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
+      # One JSON line per chat turn for offline evals (redacted; never the report).
+      ADVISOR_EVAL_LOG_DIR: /data/evals
+    volumes:
+      - advisor-evals:/data/evals
 
   # Remote MCP server for Claude (Settings > Connectors > Add custom connector). Claude reaches it
   # from the internet, so put both this and the web server behind public HTTPS (see the README).
@@ -140,3 +144,4 @@ services:
 
 volumes:
   credit-reports:
+  advisor-evals:

@@ -113,9 +113,22 @@ class ConversationMemoryTest {
         assertThat(memory.history("d")).isEmpty();
         assertThat(memory.history("a")).isNotEmpty();
         assertThat(memory.history("e")).isNotEmpty();
-        // Adding to an existing conversation does not trigger eviction.
+        // The check runs on every write: existing conversations grow too.
         memory.remember("a", turn(2));
+        assertThat(memory.size()).isEqualTo(2);
+        heap.set(0.1);
+        memory.remember("f", turn(1));
         assertThat(memory.size()).isEqualTo(3);
+    }
+
+    @Test
+    void readingCountsAsActivity() {
+        ConversationMemory memory = memory(10, 10);
+        memory.remember("c", turn(1));
+        clock.now = clock.now.plus(Duration.ofMinutes(4));
+        assertThat(memory.history("c")).hasSize(1);   // a refused question still reads the history
+        clock.now = clock.now.plus(Duration.ofMinutes(4));
+        assertThat(memory.history("c")).hasSize(1);
     }
 
     @Test

@@ -9,8 +9,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Builds the prompt an LLM-backed {@link AdvisorModel} would send. Instructions and data are kept
  * apart (OWASP LLM01): the instructions are fixed, and the report, the history and the question go in
- * tagged blocks that the instructions call data, never instructions. The input guardrails already
- * refuse the closing tags and role markers a user could type to break out of a block.
+ * tagged blocks that the instructions call data, never instructions. Their content is escaped, so
+ * nothing in it can close a block; the input guardrails also refuse role markers and closing tags.
  */
 public final class PromptBuilder {
 
@@ -30,16 +30,24 @@ public final class PromptBuilder {
 
     public record Prompt(String system, String user) {}
 
+    /**
+     * Encodes {@code &}, {@code <} and {@code >} in everything placed inside a block, so no spelling
+     * of a closing tag ({@code < /user_message>}, with any whitespace) can end a block early.
+     */
+    static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
     public Prompt build(String question, List<Turn> history, CreditReport report) {
         StringBuilder user = new StringBuilder();
-        user.append("<credit_report>\n").append(json.writeValueAsString(report)).append("\n</credit_report>\n");
+        user.append("<credit_report>\n").append(escape(json.writeValueAsString(report))).append("\n</credit_report>\n");
         user.append("<history>\n");
         for (Turn turn : history) {
-            user.append("User: ").append(turn.question()).append('\n');
-            user.append("Assistant: ").append(turn.answer()).append('\n');
+            user.append("User: ").append(escape(turn.question())).append('\n');
+            user.append("Assistant: ").append(escape(turn.answer())).append('\n');
         }
         user.append("</history>\n");
-        user.append("<user_message>\n").append(question).append("\n</user_message>");
+        user.append("<user_message>\n").append(escape(question)).append("\n</user_message>");
         return new Prompt(INSTRUCTIONS, user.toString());
     }
 }

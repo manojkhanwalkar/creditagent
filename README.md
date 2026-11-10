@@ -93,19 +93,23 @@ The agent runs every question through **input guardrails**, then the model, then
 
 | Stage | What it checks | What the user gets |
 |---|---|---|
-| Normalise | Unicode NFKC; invisible characters removed; Cyrillic and Greek look-alikes and digit-for-letter spellings folded, so tricks like `Іgnоrе` or `sh1t` don't slip past the checks | — |
-| Input | Empty, or longer than 1,000 characters | Ask for a (shorter) question |
+| Normalise | Unicode NFKC; invisible characters removed; Cyrillic, Greek and Armenian look-alikes, digit-for-letter spellings and spaced or dotted letters (`i g n o r e`) folded, so tricks like `Іgnоrе` or `sh1t` don't slip past the checks | — |
+| Input | Empty, or longer than 1,000 characters (checked again after NFKC, which can expand a character 18 times) | Ask for a (shorter) question |
 | Input | Profanity and abuse, including masked forms like `f*ck` | Rephrase politely |
 | Input | Prompt injection: "ignore previous instructions", role play, requests for the system prompt, chat-template markers (`<\|system\|>`, `[INST]`), base64, hex or Morse payloads | Fixed refusal |
-| Input | Protected characteristics (race, religion, national origin, sex, marital status, …) | Why credit reports don't use them |
+| Input | Protected characteristics as a factor (race, colour, religion, national origin, sex, sexual orientation, age, marital status, public assistance, …). Asking about a divorce or a joint mortgage is fine | Why credit reports don't use them |
 | Input | Someone else's credit; fraud (CPNs, synthetic identities, disputing accurate items) | Refusal |
-| Input | Off topic (short follow-ups are allowed once a conversation exists) | Examples of what it can answer |
-| Input | SSNs, card and account numbers, emails, phone numbers | Redacted before the model or memory sees them |
-| Output | Offensive or discriminatory text; mention of a protected characteristic; leak of the instructions or prompt delimiters; promises ("guaranteed", "100%") | The answer is replaced, not edited |
+| Input | Off topic. A short follow-up with no credit word passes only if it points back at the last answer ("why?", "tell me more about that"); greetings are not remembered as context | Examples of what it can answer |
+| Input | SSNs (any dash, slash or digit script), card and account numbers, emails, phone numbers | Redacted before the model or memory sees them |
+| Output | Offensive text or insults; mention of a protected characteristic or group; leak of the instructions or prompt delimiters; promises ("guaranteed", "will boost you to 800"; a fact like "100% utilisation" is fine) | The answer is replaced, not edited |
 | Output | Identifiers redacted, markup removed, length capped | — |
 | Output | Every answer | "Educational purposes only … consult a qualified professional" disclaimer |
 
-**Memory.** Conversations live in the agent's RAM, keyed by a hash of the login session, so the agent never learns who the user is. A conversation ends at logout, after `ADVISOR_MEMORY_TTL` (5 minutes) idle, or when it is evicted: least recently used past `ADVISOR_MAX_CONVERSATIONS`, and the least recently used half when the heap is over `ADVISOR_MEMORY_PRESSURE` (85%). A conversation keeps its last `ADVISOR_MAX_TURNS` turns. Only text that passed the guardrails is stored.
+**Memory.** Conversations live in the agent's RAM, keyed by a hash of the login session, so the agent never learns who the user is. The web server sends the report without the name, masked SSN or report id. A conversation ends at logout, after `ADVISOR_MEMORY_TTL` (5 minutes) without being read or written, or when it is evicted: least recently used past `ADVISOR_MAX_CONVERSATIONS`, and the least recently used half when live heap (the old generation after the last GC) passes `ADVISOR_MEMORY_PRESSURE` (85%). A conversation keeps its last `ADVISOR_MAX_TURNS` turns. Only text that passed the guardrails is stored.
+
+**Eval log.** Every turn, refused or not, is written as one JSON line to `ADVISOR_EVAL_LOG_DIR/advisor-eval.jsonl` (compose: the `advisor-evals` volume), for offline evaluation of answers and guardrails. A line holds the time, the conversation hash, the turn number, the question, the input verdict, the model's raw answer, what was shown, the output verdict, the model and its latency. Identifiers are redacted, and neither the report nor who the user is is written. Files roll daily and at 10 MB, are gzipped, kept 30 days and capped at 500 MB. The appender is asynchronous and drops lines rather than delay a chat. `ADVISOR_EVAL_LOG_ENABLED=false` turns it off.
+
+**Limits of the guardrails.** They are deterministic word lists and patterns, a first layer and not a classifier. Known gaps: other languages, ROT13, base64 split into short chunks, and paraphrases. Add a moderation or injection classifier when a real LLM is plugged in, and re-run `owasp-llm-top10`.
 
 **The model.** `PlaceholderAdvisorModel` answers from the report by rules, and uses the memory for follow-ups ("tell me more"). To plug in an LLM, replace the `AdvisorModel` bean; `PromptBuilder` already builds a prompt that keeps the instructions apart from the report, history and question. The guardrails stay around whichever model is plugged in.
 
@@ -182,6 +186,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
 | `ADVISOR_MEMORY_TTL`, `ADVISOR_MAX_CONVERSATIONS`, `ADVISOR_MAX_TURNS`, `ADVISOR_MEMORY_PRESSURE` | advisor agent | `5m`, `10000`, `20`, `0.85` |
 | `ADVISOR_MAX_PROMPT_CHARS`, `ADVISOR_MAX_REPLY_CHARS` | advisor agent | `1000`, `2000` |
+| `ADVISOR_EVAL_LOG_ENABLED`, `ADVISOR_EVAL_LOG_DIR` | advisor agent | `true`, `logs` (compose: `/data/evals` on the `advisor-evals` volume) |
 | `CONNECTOR_PUBLIC_URL` | connector | `http://localhost:8088` |
 | `WEB_SERVER_URL`, `CLIENT_AGENT_URL` | connector | `http://localhost:8080`, `http://localhost:8086` (internal URLs) |
 | `ADVICE_TIMEOUT` | connector | `95s` (longer than the client agent's own 90 s) |

@@ -17,9 +17,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
- && mkdir -p /app /data/Reports \
+ && mkdir -p /app /data/Reports /data/evals \
  && chown -R app:app /app /data \
- && chmod 700 /data/Reports
+ && chmod 700 /data/Reports /data/evals
 
 WORKDIR /app
 COPY --chown=app:app ${MODULE}/target/*.jar /app/app.jar

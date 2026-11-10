@@ -26,3 +26,15 @@ test('the transcript keeps only the latest entries', () => {
   assert.equal(entries[0].text, 'q5');
   assert.equal(entries.at(-1).text, `q${MAX_ENTRIES + 4}`);
 });
+
+test('only one question is in flight at a time', async () => {
+  const { createSendGate } = await import('../../main/resources/static/js/chat.js');
+  const gate = createSendGate();
+  assert.equal(gate.begin(), true);
+  assert.equal(gate.busy, true);
+  assert.equal(gate.begin(), false);
+  gate.end();
+  assert.equal(gate.begin(), true);
+  gate.reset();
+  assert.equal(gate.busy, false);
+});

@@ -8,7 +8,11 @@ import com.creditagent.advisor.model.PlaceholderAdvisorModel;
 import com.creditagent.web.support.RequestSizeLimitFilter;
 import com.creditagent.web.support.ServiceToken;
 import com.creditagent.web.support.WebSupportAutoConfiguration;
+import com.creditagent.advisor.eval.EvalLog;
+import com.creditagent.advisor.eval.JsonEvalLog;
 import java.time.Clock;
+import org.springframework.beans.factory.annotation.Value;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -49,10 +53,16 @@ class AdvisorConfiguration {
         return new PlaceholderAdvisorModel();
     }
 
+    /** Offline-eval log of every turn; {@code credit.advisor.eval-log.enabled=false} turns it off. */
     @Bean
-    AdvisorService advisorService(AdvisorProperties properties, AdvisorModel model, ConversationMemory memory) {
+    EvalLog evalLog(JsonMapper json, @Value("${credit.advisor.eval-log.enabled:true}") boolean enabled) {
+        return enabled ? new JsonEvalLog(json) : EvalLog.NONE;
+    }
+
+    @Bean
+    AdvisorService advisorService(AdvisorProperties properties, AdvisorModel model, ConversationMemory memory, EvalLog evals) {
         return new AdvisorService(new InputGuard(properties.maxPromptChars()), new OutputGuard(properties.maxReplyChars()),
-                model, memory);
+                model, memory, evals, Clock.systemUTC());
     }
 
     @Bean

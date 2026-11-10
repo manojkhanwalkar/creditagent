@@ -13,7 +13,8 @@ package com.creditagent.advisor.guard;
  *   <li>someone else's credit;
  *   <li>credit fraud (CPNs, synthetic identities, disputing accurate items);
  *   <li>topic: the question has to be about the credit report. Small talk gets a polite answer, and a
- *       short follow-up is allowed once a conversation has started.
+ *       short follow-up that points back at the last answer ("why?", "tell me more about that") is
+ *       allowed once a conversation has started.
  * </ol>
  *
  * <p>Every check reads {@link TextNormalizer folded} text, so look-alike letters, invisible characters
@@ -24,6 +25,14 @@ public class InputGuard {
 
     /** Words in a follow-up that may stand on its own ("why?", "tell me more about that"). */
     static final int MAX_FOLLOW_UP_WORDS = 12;
+
+    /**
+     * A question with no credit word is accepted as a follow-up only if it points back at the previous
+     * answer with one of these, so "hi" followed by any short request does not get past the topic check.
+     */
+    static final java.util.Set<String> FOLLOW_UP_CUES = java.util.Set.of(
+            "more", "why", "that", "this", "it", "those", "these", "them", "explain", "elaborate", "detail", "details",
+            "example", "examples", "mean", "else", "again", "so");
 
     /** Why a question was refused. The text is what the user is told. */
     public enum Refusal {
@@ -81,6 +90,10 @@ public class InputGuard {
             return Verdict.refuse(Refusal.TOO_LONG);
         }
         String cleaned = TextNormalizer.clean(prompt);
+        if (cleaned.length() > maxChars) {
+            // NFKC can expand a character many times over (U+FDFA becomes 18): check the length again.
+            return Verdict.refuse(Refusal.TOO_LONG);
+        }
         String folded = TextNormalizer.fold(cleaned);
         String leet = TextNormalizer.foldLeet(cleaned);
         if (folded.isEmpty()) {
@@ -89,7 +102,9 @@ public class InputGuard {
         if (abusive(folded) || abusive(leet) || GuardTerms.MASKED_ABUSE.matcher(cleaned.toLowerCase(java.util.Locale.ROOT)).find()) {
             return Verdict.refuse(Refusal.ABUSIVE);
         }
+        String squashed = leet.replace(" ", "");
         if (GuardTerms.INJECTION.matcher(folded).find() || GuardTerms.INJECTION.matcher(leet).find()
+                || GuardTerms.SQUASHED_INJECTION.matcher(squashed).find()
                 || GuardTerms.ROLE_MARKERS.matcher(cleaned).find() || GuardTerms.ENCODED.matcher(cleaned).find()) {
             return Verdict.refuse(Refusal.INJECTION);
         }
@@ -99,7 +114,7 @@ public class InputGuard {
         if (GuardTerms.OTHER_PERSON.matcher(folded).find()) {
             return Verdict.refuse(Refusal.OTHER_PERSON);
         }
-        if (GuardTerms.FRAUD.matcher(folded).find()) {
+        if (GuardTerms.FRAUD.matcher(folded).find() || GuardTerms.SQUASHED_FRAUD.matcher(folded.replace(" ", "")).find()) {
             return Verdict.refuse(Refusal.FRAUD);
         }
         String text = PiiRedactor.redact(cleaned);
@@ -107,7 +122,8 @@ public class InputGuard {
             return new Verdict(null, text, true);
         }
         boolean onTopic = GuardTerms.anyTokenStartsWith(folded, GuardTerms.TOPIC_STEMS);
-        boolean followUp = conversationStarted && folded.split(" ").length <= MAX_FOLLOW_UP_WORDS;
+        boolean followUp = conversationStarted && folded.split(" ").length <= MAX_FOLLOW_UP_WORDS
+                && GuardTerms.anyToken(folded, FOLLOW_UP_CUES);
         if (!onTopic && !followUp) {
             return Verdict.refuse(Refusal.OFF_TOPIC);
         }

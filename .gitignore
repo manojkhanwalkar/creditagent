@@ -28,3 +28,7 @@ data/
 credit-files/
 Reports/
 *.log
+
+# Advisor agent eval logs (local runs)
+logs/
+*.jsonl

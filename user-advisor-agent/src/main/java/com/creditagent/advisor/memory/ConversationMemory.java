@@ -17,13 +17,16 @@ import java.util.function.DoubleSupplier;
  * everything. Bounded on every axis:
  *
  * <ul>
- *   <li><b>Idle time:</b> a conversation unused for {@code ttl} is gone (checked on every read, and
+ *   <li><b>Idle time:</b> a conversation unused (neither read nor written) for {@code ttl} is gone (checked on every read, and
  *       swept by {@link #sweep()}). The web server also {@link #forget forgets} it at logout.
  *   <li><b>Turns:</b> at most {@code maxTurns} per conversation; the oldest are dropped.
  *   <li><b>Conversations:</b> at most {@code maxConversations}; adding one more drops the least
  *       recently used (LRU).
- *   <li><b>Memory pressure:</b> when heap use passes {@code pressureThreshold}, the least recently
- *       used half is dropped. A forgotten conversation only costs the user their context.
+ *   <li><b>Memory pressure:</b> when live heap use passes {@code pressureThreshold} at any write, the
+ *       least recently used half is dropped. A forgotten conversation only costs the user their context.
+ *   <li><b>Size:</b> each turn's question and answer are already capped by the guardrails
+ *       ({@code max-prompt-chars}, {@code max-reply-chars}), so a conversation holds at most
+ *       {@code maxTurns} × their sum.
  * </ul>
  *
  * <p>Thread safe: every method holds the instance lock, and each call is short.
@@ -64,8 +67,19 @@ public class ConversationMemory {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    /** Share of the JVM's maximum heap in use. */
+    /**
+     * Share of the old generation still in use after the last collection: live data, not garbage
+     * that the next young collection would free. Falls back to the whole heap where the collector
+     * reports no such figure.
+     */
     public static double jvmHeapUsage() {
+        for (java.lang.management.MemoryPoolMXBean pool : java.lang.management.ManagementFactory.getMemoryPoolMXBeans()) {
+            java.lang.management.MemoryUsage afterGc = pool.getCollectionUsage();
+            if (pool.getType() == java.lang.management.MemoryType.HEAP && afterGc != null && afterGc.getMax() > 0
+                    && (pool.getName().contains("Old") || pool.getName().contains("Tenured"))) {
+                return (double) afterGc.getUsed() / afterGc.getMax();
+            }
+        }
         Runtime runtime = Runtime.getRuntime();
         return (double) (runtime.totalMemory() - runtime.freeMemory()) / runtime.maxMemory();
     }
@@ -79,9 +93,10 @@ public class ConversationMemory {
     /** Appends a turn, starting the conversation if needed. */
     public synchronized void remember(String conversationId, Turn turn) {
         Instant now = clock.instant();
+        // Checked on every write, not only for new conversations: existing ones grow too.
+        relieveMemoryPressure();
         Conversation conversation = live(conversationId);
         if (conversation == null) {
-            relieveMemoryPressure();
             conversation = new Conversation(now);
             conversations.put(conversationId, conversation);
             evictBeyondCapacity();
@@ -110,11 +125,16 @@ public class ConversationMemory {
         return conversations.size();
     }
 
+    /** The conversation if it has not expired; using it (reading included) counts as activity. */
     private Conversation live(String conversationId) {
+        Instant now = clock.instant();
         Conversation conversation = conversations.get(conversationId);
-        if (conversation != null && expired(conversation, clock.instant())) {
+        if (conversation != null && expired(conversation, now)) {
             conversations.remove(conversationId);
             return null;
+        }
+        if (conversation != null) {
+            conversation.lastUsed = now;
         }
         return conversation;
     }

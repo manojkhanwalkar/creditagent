@@ -18,7 +18,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** The real server: service-token filter, size limit, validation and the JSON contract the web server uses. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = "credit.advisor.service-token=" + AdvisorApiTest.TOKEN)
+@TestPropertySource(properties = {
+    "credit.advisor.service-token=" + AdvisorApiTest.TOKEN,
+    "credit.advisor.eval-log.directory=target/test-evals"})
 class AdvisorApiTest {
 
     static final String TOKEN = "service-token-service-token-service-token";
@@ -68,6 +70,24 @@ class AdvisorApiTest {
                 .exchange((rq, rs) -> rs.getStatusCode().value());
         assertThat(status).isEqualTo(204);
         assertThat(memory.history(ID)).isEmpty();
+    }
+
+    @Test
+    void eachTurnLandsInTheEvalLogFile() throws Exception {
+        java.nio.file.Path file = java.nio.file.Path.of("target/test-evals/advisor-eval.jsonl");
+        client(TOKEN).post().uri("/internal/v1/conversations/{id}/messages", "eval-conversation-0001")
+                .contentType(MediaType.APPLICATION_JSON).body(body("My SSN is 123-45-6789. How many inquiries do I have?"))
+                .retrieve().toBodilessEntity();
+        // The appender is asynchronous: wait for the line.
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(10).toNanos();
+        String content = "";
+        while (System.nanoTime() < deadline && !content.contains("eval-conversation-0001")) {
+            content = java.nio.file.Files.exists(file) ? java.nio.file.Files.readString(file) : "";
+            Thread.sleep(50);
+        }
+        String line = content.lines().filter(l -> l.contains("eval-conversation-0001")).findFirst().orElseThrow();
+        assertThat(json.readTree(line).path("inputVerdict").asString()).isEqualTo("ALLOWED");
+        assertThat(line).contains("[SSN removed]").doesNotContain("6789").doesNotContain("Northwind");
     }
 
     @Test

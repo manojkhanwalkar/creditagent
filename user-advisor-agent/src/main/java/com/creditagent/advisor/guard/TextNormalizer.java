@@ -19,6 +19,8 @@ public final class TextNormalizer {
     private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}&&[^\\n\\t]]");
     private static final Pattern SPACES = Pattern.compile("\\s+");
     private static final Pattern NOT_WORD = Pattern.compile("[^a-z0-9 ]");
+    /** Three or more single characters in a row: "i g n o r e", or "i.g.n.o.r.e" once dots are spaces. */
+    private static final Pattern SPACED_LETTERS = Pattern.compile("\\b[a-z0-9](?: [a-z0-9]\\b){2,}");
 
     /** Cyrillic and Greek letters drawn like Latin ones. */
     private static final Map<Character, Character> HOMOGLYPHS = Map.ofEntries(
@@ -27,11 +29,12 @@ public final class TextNormalizer {
             Map.entry('һ', 'h'), Map.entry('ԁ', 'd'), Map.entry('ӏ', 'l'), Map.entry('к', 'k'), Map.entry('м', 'm'),
             Map.entry('т', 't'), Map.entry('в', 'b'), Map.entry('н', 'h'),
             Map.entry('α', 'a'), Map.entry('ε', 'e'), Map.entry('ο', 'o'), Map.entry('ρ', 'p'), Map.entry('ι', 'i'),
-            Map.entry('κ', 'k'), Map.entry('ν', 'v'), Map.entry('τ', 't'), Map.entry('υ', 'u'), Map.entry('χ', 'x'));
+            Map.entry('κ', 'k'), Map.entry('ν', 'v'), Map.entry('τ', 't'), Map.entry('υ', 'u'), Map.entry('χ', 'x'),
+            Map.entry('ı', 'i'), Map.entry('օ', 'o'), Map.entry('ս', 'u'), Map.entry('ց', 'g'), Map.entry('ɡ', 'g'));
 
     /** Digits and symbols written in place of letters. */
     private static final Map<Character, Character> LEET = Map.of(
-            '0', 'o', '1', 'i', '3', 'e', '4', 'a', '5', 's', '7', 't', '@', 'a', '$', 's', '!', 'i');
+            '0', 'o', '1', 'i', '3', 'e', '4', 'a', '5', 's', '7', 't', '9', 'g', '@', 'a', '$', 's', '!', 'i');
 
     private TextNormalizer() {}
 
@@ -46,8 +49,9 @@ public final class TextNormalizer {
     }
 
     /**
-     * {@link #clean}, then lower case, look-alike letters mapped to Latin, accents dropped, and
-     * everything but letters, digits and spaces turned into spaces. For matching phrases.
+     * {@link #clean}, then lower case, look-alike letters mapped to Latin, accents dropped,
+     * everything but letters, digits and spaces turned into spaces, and runs of single letters joined
+     * ({@code i g n o r e} → {@code ignore}). For matching phrases.
      */
     public static String fold(String text) {
         String lower = clean(text).toLowerCase(Locale.ROOT);
@@ -56,7 +60,8 @@ public final class TextNormalizer {
             mapped.append(HOMOGLYPHS.getOrDefault(c, c));
         }
         String noAccents = Normalizer.normalize(mapped, Normalizer.Form.NFD).replaceAll("\\p{M}", "");
-        return SPACES.matcher(NOT_WORD.matcher(noAccents).replaceAll(" ")).replaceAll(" ").strip();
+        String words = SPACES.matcher(NOT_WORD.matcher(noAccents).replaceAll(" ")).replaceAll(" ").strip();
+        return SPACED_LETTERS.matcher(words).replaceAll(m -> m.group().replace(" ", ""));
     }
 
     /**

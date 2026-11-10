@@ -34,3 +34,22 @@ export function appendEntry(entries, entry) {
   const next = [...entries, entry];
   return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
 }
+
+/**
+ * One question at a time: begin() refuses while a question is in flight, so pressing Enter twice
+ * cannot send two at once (and the second lose the first as context). reset() is for sign-in and
+ * sign-out, where an old request's answer must not unlock the new session's form.
+ */
+export function createSendGate() {
+  let busy = false;
+  return {
+    begin() {
+      if (busy) return false;
+      busy = true;
+      return true;
+    },
+    end() { busy = false; },
+    reset() { busy = false; },
+    get busy() { return busy; },
+  };
+}

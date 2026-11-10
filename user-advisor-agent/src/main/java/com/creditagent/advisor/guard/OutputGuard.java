@@ -36,8 +36,16 @@ public class OutputGuard {
     private static final Pattern LEAK = Pattern.compile(
             "(?i)(</?\\s*(credit_report|user_message|history|instructions)\\b|system prompt|my instructions|"
                     + PromptMarkers.SENTINEL + ")");
-    private static final Pattern PROMISE = Pattern.compile("\\b(guarantee[ds]?|guaranteed|100 percent|definitely will raise|certain to raise)\\b");
-    private static final Pattern PERCENT_PROMISE = Pattern.compile("\\b100\\s*%");
+    /** On folded text. Not a bare "100": a maxed-out card is "100% utilisation", a fact, not a promise. */
+    private static final Pattern PROMISE = Pattern.compile("\\b(guarantee[ds]?|guaranteed|100 percent (sure|certain|guaranteed)"
+            + "|(definitely|certainly|surely) (will )?(raise|increase|boost|improve|fix|lift)"
+            + "|(will|going to) (definitely |certainly |surely )?(raise|increase|boost|improve|lift) (your score |you |it )?"
+            + "(by \\d+ points|to \\d{3})"
+            + "|certain to (raise|increase|boost|improve))\\b");
+    /** On cleaned text: "100%" next to a promise word ("will 100% fix", "100% sure"). */
+    private static final Pattern PERCENT_PROMISE = Pattern.compile(
+            "(?i)\\b(will|would|going to)\\s+100\\s*%|\\b100\\s*%\\s+(sure|certain|guaranteed|chance)\\b");
+    private static final String SENTINEL_FOLDED = TextNormalizer.fold(PromptMarkers.SENTINEL);
     private static final Pattern MARKUP = Pattern.compile("[<>]");
 
     private final int maxChars;
@@ -65,13 +73,15 @@ public class OutputGuard {
     private static Problem problem(String cleaned) {
         String folded = TextNormalizer.fold(cleaned);
         if (InputGuard.abusive(folded) || InputGuard.abusive(TextNormalizer.foldLeet(cleaned))
+                || GuardTerms.anyToken(folded, GuardTerms.OUTPUT_INSULTS)
                 || GuardTerms.MASKED_ABUSE.matcher(cleaned.toLowerCase(java.util.Locale.ROOT)).find()) {
             return Problem.OFFENSIVE;
         }
         if (GuardTerms.PROTECTED.matcher(folded).find()) {
             return Problem.PROTECTED;
         }
-        if (LEAK.matcher(cleaned).find() || GuardTerms.ROLE_MARKERS.matcher(cleaned).find()) {
+        if (LEAK.matcher(cleaned).find() || GuardTerms.ROLE_MARKERS.matcher(cleaned).find()
+                || folded.contains(SENTINEL_FOLDED)) {
             return Problem.LEAK;
         }
         if (PROMISE.matcher(folded).find() || PERCENT_PROMISE.matcher(cleaned).find()) {

@@ -22,11 +22,13 @@ public class PlaceholderAdvisorModel implements AdvisorModel {
     enum Topic {
         GREETING("hi", "hello", "hey", "good morning", "good afternoon", "good evening"),
         THANKS("thank", "thanks"),
-        IMPROVE("improv", "raise", "increas", "boost", "better", "build", "rebuild", "tip", "advice", "should i"),
-        UTILIZATION("utiliz", "utilis", "balance", "limit", "card", "revolv", "owe", "debt"),
-        PAYMENTS("late", "miss", "payment", "pay", "paid", "overdue", "delinquen", "on time"),
+        // Specific topics before broad ones: "late payments on my card" is about payments, and
+        // "should I pay off my collection account" about collections.
+        PAYMENTS("late", "miss", "payment", "overdue", "delinquen", "on time"),
         INQUIRIES("inquir", "enquir", "applied", "apply", "applica", "hard pull"),
         NEGATIVES("collection", "charge", "public record", "bankrupt", "lien", "negative"),
+        UTILIZATION("utiliz", "utilis", "balance", "limit", "card", "revolv", "owe", "debt"),
+        IMPROVE("improv", "raise", "increas", "boost", "better", "build", "rebuild", "tip", "advice", "should i"),
         ACCOUNTS("account", "oldest", "newest", "age", "how long", "loan", "mortgage", "open", "closed", "mix"),
         SUMMARY("score", "report", "summary", "overview", "explain", "why", "how am i doing");
 
@@ -122,11 +124,16 @@ public class PlaceholderAdvisorModel implements AdvisorModel {
     private String detail(Topic topic, CreditReport report) {
         String start = opening(topic) + " ";
         return switch (topic) {
-            case UTILIZATION -> start + "by card: " + String.join("; ", report.accounts().stream()
-                    .filter(a -> a.isOpen() && a.creditLimit() > 0 && a.type().name().equals("CREDIT_CARD"))
-                    .sorted(Comparator.comparingDouble((CreditAccount a) -> (double) a.balance() / a.creditLimit()).reversed())
-                    .map(a -> String.format(Locale.ROOT, "%s %d%%", a.creditor(), percent((double) a.balance() / a.creditLimit())))
-                    .toList()) + ". Paying down the highest first helps most.";
+            case UTILIZATION -> {
+                List<String> cards = report.accounts().stream()
+                        .filter(a -> a.isOpen() && a.creditLimit() > 0 && a.type().name().equals("CREDIT_CARD"))
+                        .sorted(Comparator.comparingDouble((CreditAccount a) -> (double) a.balance() / a.creditLimit()).reversed())
+                        .map(a -> String.format(Locale.ROOT, "%s %d%%", a.creditor(), percent((double) a.balance() / a.creditLimit())))
+                        .toList();
+                yield cards.isEmpty()
+                        ? start + "by card: you have no open cards with a credit limit, so there is no card utilisation."
+                        : start + "by card: " + String.join("; ", cards) + ". Paying down the highest first helps most.";
+            }
             case PAYMENTS -> start + "by account: " + String.join("; ", report.accounts().stream()
                     .filter(a -> a.totalLatePayments() > 0)
                     .map(a -> String.format(Locale.ROOT, "%s %d late", a.creditor(), a.totalLatePayments()))

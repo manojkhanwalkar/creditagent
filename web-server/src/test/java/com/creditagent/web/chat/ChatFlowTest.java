@@ -57,7 +57,7 @@ class ChatFlowTest {
 
     static final String PASSWORD = "correct horse battery staple";
     static final String SSN = "123-45-6789";
-    static final CreditReport REPORT = new CreditReport("r-1", "***-**-6789", "Avery Doe", Instant.EPOCH, List.of(), 0, 0, 0);
+    static final CreditReport REPORT = new CreditReport("r-1", "***-**-6789", "Avery Doe", Instant.EPOCH, List.of(), 2, 1, 0);
 
     @TestConfiguration
     @EnableConfigurationProperties(WebServerProperties.class)
@@ -74,9 +74,10 @@ class ChatFlowTest {
                     Duration.ofMinutes(5), CLOCK);
         }
 
+        /** Runs the logout-time forget at once, so tests can check it. */
         @Bean
         ChatService chatService(AuthService auth, CreditReportSource reports, AdvisorClient advisor) {
-            return new ChatService(auth, reports, advisor);
+            return new ChatService(auth, reports, advisor, Runnable::run);
         }
     }
 
@@ -124,8 +125,14 @@ class ChatFlowTest {
                 .andExpect(jsonPath("$.disclaimer").value("Educational only."))
                 .andExpect(jsonPath("$.refused").value(false));
         ArgumentCaptor<String> conversation = ArgumentCaptor.forClass(String.class);
-        verify(advisor).chat(conversation.capture(), eq("What is my utilization?"), eq(REPORT));
+        ArgumentCaptor<CreditReport> sent = ArgumentCaptor.forClass(CreditReport.class);
+        verify(advisor).chat(conversation.capture(), eq("What is my utilization?"), sent.capture());
         assertThat(conversation.getValue()).matches("[A-Za-z0-9_-]{43}");
+        // The agent gets the accounts and counts, not who the report belongs to.
+        assertThat(sent.getValue().fullName()).isNull();
+        assertThat(sent.getValue().ssnMasked()).isNull();
+        assertThat(sent.getValue().reportId()).isNull();
+        assertThat(sent.getValue().accounts()).isEqualTo(REPORT.accounts());
     }
 
     @Test
@@ -174,6 +181,18 @@ class ChatFlowTest {
         signIn();
         willThrow(new ServiceUnavailableException("down", null)).given(advisor).forget(anyString());
         mvc.perform(post("/api/v1/auth/logout").header("Authorization", bearer)).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void theForgetRunsOffTheLogoutThread() throws Exception {
+        java.util.List<Runnable> queued = new java.util.ArrayList<>();
+        ChatService background = new ChatService(auth, reports, advisor, queued::add);
+        background.sessionEnded(new com.creditagent.web.auth.AuthenticatedUser("avery", "session", "h", "6789"));
+        verify(advisor, never()).forget(anyString());   // nothing ran on the caller's thread
+        willThrow(new ServiceUnavailableException("down", null)).given(advisor).forget(anyString());
+        queued.getFirst().run();                         // and a failure there is swallowed
+        verify(advisor).forget(ChatService.conversationId(
+                new com.creditagent.web.auth.AuthenticatedUser("avery", "session", "h", "6789")));
     }
 
     @Test

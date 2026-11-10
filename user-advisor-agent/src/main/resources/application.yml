@@ -21,6 +21,15 @@ credit:
     max-prompt-chars: ${ADVISOR_MAX_PROMPT_CHARS:1000}
     max-reply-chars: ${ADVISOR_MAX_REPLY_CHARS:2000}
     sweep-interval: 30s
+    # One JSON line per chat turn for offline evals: the question, the model's raw answer, what was
+    # shown, both guardrail verdicts, the model and its latency. Identifiers are redacted and the credit
+    # report is never written. Rolled daily and at max-file-size, gzipped, capped at total-size-cap.
+    eval-log:
+      enabled: ${ADVISOR_EVAL_LOG_ENABLED:true}
+      directory: ${ADVISOR_EVAL_LOG_DIR:logs}
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 500MB
 
 management:
   endpoints:

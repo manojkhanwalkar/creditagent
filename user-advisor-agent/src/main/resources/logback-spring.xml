@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Console logging as Spring Boot sets it up, plus the eval log: one JSON line per chat turn
+  (JsonEvalLog), in its own rolling file, for offline evaluation of the agent and its guardrails.
+  Lines are already redacted of identifiers and never contain the credit report.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <springProperty name="evalDir" source="credit.advisor.eval-log.directory" defaultValue="logs"/>
+    <springProperty name="evalMaxFileSize" source="credit.advisor.eval-log.max-file-size" defaultValue="10MB"/>
+    <springProperty name="evalTotalSizeCap" source="credit.advisor.eval-log.total-size-cap" defaultValue="500MB"/>
+    <springProperty name="evalMaxHistory" source="credit.advisor.eval-log.max-history" defaultValue="30"/>
+
+    <appender name="EVAL_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${evalDir}/advisor-eval.jsonl</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${evalDir}/advisor-eval.%d{yyyy-MM-dd}.%i.jsonl.gz</fileNamePattern>
+            <maxFileSize>${evalMaxFileSize}</maxFileSize>
+            <maxHistory>${evalMaxHistory}</maxHistory>
+            <totalSizeCap>${evalTotalSizeCap}</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Bounded queue; when full, lines are dropped rather than block a chat request. -->
+    <appender name="EVAL" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="EVAL_FILE"/>
+    </appender>
+
+    <!-- A name outside every package, so no class logger (warnings included) ends up in the eval file. -->
+    <logger name="advisor-eval" level="INFO" additivity="false">
+        <appender-ref ref="EVAL"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
