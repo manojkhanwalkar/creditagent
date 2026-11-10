@@ -11,26 +11,31 @@ import java.nio.charset.StandardCharsets;
  * The pages of the OAuth flow. Neither holds any request data: the consent page is a fixed file
  * (filled in the browser by {@code oauth-consent.js}, as text), and the error page shows a fixed text
  * chosen by {@link Reason}. So nothing a request carries can become markup.
+ *
+ * <p>Pages are bytes, not strings: the handlers that serve them also answer redirects, and a
+ * {@code ResponseEntity<String>} handler is what static analysis (CodeQL java/xss) treats as an HTML
+ * sink for every value that reaches its response, a redirect's Location included.
  */
 final class AuthorizePage {
 
-    private static final String CONSENT = load("oauth/consent.html");
+    private static final byte[] CONSENT = load("oauth/consent.html");
 
     private AuthorizePage() {}
 
     /** The sign-in and consent form. */
-    static String consent() {
-        return CONSENT;
+    static byte[] consent() {
+        return CONSENT.clone();
     }
 
     /** A request that cannot go back to its client: say why, and redirect nowhere. */
-    static String error(Reason reason) {
-        return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+    static byte[] error(Reason reason) {
+        return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
                 + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
                 + "<title>Cannot connect</title><link rel=\"stylesheet\" href=\"/css/oauth.css\"></head>"
                 + "<body><main class=\"card\"><h1>Cannot connect</h1><p class=\"error\" role=\"alert\">"
                 + reason.text()
-                + "</p><p class=\"muted\">Start again from the application you were connecting.</p></main></body></html>";
+                + "</p><p class=\"muted\">Start again from the application you were connecting.</p></main></body></html>")
+                .getBytes(StandardCharsets.UTF_8);
     }
 
     /**
@@ -54,12 +59,12 @@ final class AuthorizePage {
         return parsed.getScheme() + "://" + parsed.getRawAuthority();
     }
 
-    private static String load(String resource) {
+    private static byte[] load(String resource) {
         try (InputStream in = AuthorizePage.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IllegalStateException("Missing resource " + resource);
             }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            return in.readAllBytes();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

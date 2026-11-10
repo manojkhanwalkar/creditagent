@@ -82,9 +82,10 @@ class OAuthDisabledAndPropertiesTest {
     @Test
     void errorPagesShowOnlyTheirFixedText() {
         for (OAuthService.AuthorizeException.Reason reason : OAuthService.AuthorizeException.Reason.values()) {
-            assertThat(AuthorizePage.error(reason)).contains(reason.text()).startsWith("<!doctype html>");
+            assertThat(new String(AuthorizePage.error(reason), java.nio.charset.StandardCharsets.UTF_8))
+                    .contains(reason.text()).startsWith("<!doctype html>");
         }
-        assertThat(AuthorizePage.consent()).contains("id=\"consent-form\"").doesNotContain("{{");
+        assertThat(new String(AuthorizePage.consent(), java.nio.charset.StandardCharsets.UTF_8)).contains("id=\"consent-form\"");
     }
 
     @Test

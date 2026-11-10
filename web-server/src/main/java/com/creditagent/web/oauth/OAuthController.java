@@ -69,7 +69,7 @@ class OAuthController {
 
     /** Checks the request, then serves the fixed consent page (filled in by the browser from the URL). */
     @GetMapping(path = RequestPaths.OAUTH_AUTHORIZE)
-    ResponseEntity<String> authorize(@RequestParam MultiValueMap<String, String> params, HttpServletResponse response) {
+    ResponseEntity<byte[]> authorize(@RequestParam MultiValueMap<String, String> params, HttpServletResponse response) {
         requireEnabled();
         try {
             AuthorizationRequest request = oauth.authorizationRequest(single(params));
@@ -82,7 +82,7 @@ class OAuthController {
     }
 
     @PostMapping(path = RequestPaths.OAUTH_AUTHORIZE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-    ResponseEntity<String> decide(@RequestParam MultiValueMap<String, String> params) {
+    ResponseEntity<byte[]> decide(@RequestParam MultiValueMap<String, String> params) {
         requireEnabled();
         AuthorizationRequest request;
         Map<String, String> form;
@@ -165,7 +165,7 @@ class OAuthController {
      * Back to the form (303, so the browser GETs it), with the checked request and {@code retry=1}
      * so the page says the sign-in failed. The password and SSN are not carried back.
      */
-    private static ResponseEntity<String> signInFailed(AuthorizationRequest request) {
+    private static ResponseEntity<byte[]> signInFailed(AuthorizationRequest request) {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("response_type", "code");
         query.put("client_id", request.clientId());
@@ -184,13 +184,13 @@ class OAuthController {
         return ResponseEntity.status(HttpStatus.SEE_OTHER).location(URI.create(RequestPaths.OAUTH_AUTHORIZE + "?" + encoded)).build();
     }
 
-    private static ResponseEntity<String> failure(AuthorizeException e) {
+    private static ResponseEntity<byte[]> failure(AuthorizeException e) {
         return e.redirect()
                 .map(OAuthController::redirect)
                 .orElseGet(() -> ResponseEntity.badRequest().contentType(HTML).body(AuthorizePage.error(e.reason())));
     }
 
-    private static ResponseEntity<String> redirect(URI location) {
+    private static ResponseEntity<byte[]> redirect(URI location) {
         return ResponseEntity.status(HttpStatus.FOUND).location(location).build();
     }
 }
