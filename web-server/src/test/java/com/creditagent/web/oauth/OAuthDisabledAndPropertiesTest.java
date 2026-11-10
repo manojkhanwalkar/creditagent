@@ -29,7 +29,7 @@ class OAuthDisabledAndPropertiesTest {
                 controller::metadata,
                 () -> controller.register(new OAuthController.RegistrationRequest(List.of(), null)),
                 () -> controller.authorize(new LinkedMultiValueMap<>(), new MockHttpServletResponse()),
-                () -> controller.decide(new LinkedMultiValueMap<>(), new MockHttpServletResponse()),
+                () -> controller.decide(new LinkedMultiValueMap<>()),
                 () -> controller.token(new LinkedMultiValueMap<>()),
                 () -> controller.revoke("t"))) {
             assertThatThrownBy(call::run).isInstanceOfSatisfying(ResponseStatusException.class,
@@ -76,7 +76,15 @@ class OAuthDisabledAndPropertiesTest {
     void theConsentPageOriginKeepsThePort() {
         assertThat(AuthorizePage.origin("http://localhost:53682/callback?x=1")).isEqualTo("http://localhost:53682");
         assertThat(AuthorizePage.csp("https://claude.ai/api/mcp/auth_callback"))
-                .contains("form-action 'self' https://claude.ai").contains("frame-ancestors 'none'");
+                .contains("form-action 'self' https://claude.ai").contains("script-src 'self'").contains("frame-ancestors 'none'");
+    }
+
+    @Test
+    void errorPagesShowOnlyTheirFixedText() {
+        for (OAuthService.AuthorizeException.Reason reason : OAuthService.AuthorizeException.Reason.values()) {
+            assertThat(AuthorizePage.error(reason)).contains(reason.text()).startsWith("<!doctype html>");
+        }
+        assertThat(AuthorizePage.consent()).contains("id=\"consent-form\"").doesNotContain("{{");
     }
 
     @Test

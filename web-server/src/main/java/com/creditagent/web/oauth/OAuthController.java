@@ -10,6 +10,9 @@ import com.creditagent.web.oauth.OAuthService.OAuthException;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletResponse;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +39,6 @@ import org.springframework.web.server.ResponseStatusException;
 class OAuthController {
 
     static final String METADATA = "/.well-known/oauth-authorization-server";
-    static final String SIGN_IN_FAILED = "User id, password or SSN is incorrect.";
     static final MediaType HTML = new MediaType(MediaType.TEXT_HTML, java.nio.charset.StandardCharsets.UTF_8);
 
     private final OAuthService oauth;
@@ -65,19 +67,22 @@ class OAuthController {
         return ResponseEntity.status(HttpStatus.CREATED).body(oauth.register(request.redirectUris(), request.clientName()));
     }
 
+    /** Checks the request, then serves the fixed consent page (filled in by the browser from the URL). */
     @GetMapping(path = RequestPaths.OAUTH_AUTHORIZE)
     ResponseEntity<String> authorize(@RequestParam MultiValueMap<String, String> params, HttpServletResponse response) {
         requireEnabled();
         try {
             AuthorizationRequest request = oauth.authorizationRequest(single(params));
-            return page(response, request, HttpStatus.OK, null);
+            // Replaces the site-wide CSP that SecurityHeadersFilter set: see AuthorizePage#csp.
+            response.setHeader("Content-Security-Policy", AuthorizePage.csp(request.redirectUri()));
+            return ResponseEntity.ok().contentType(HTML).body(AuthorizePage.consent());
         } catch (AuthorizeException e) {
             return failure(e);
         }
     }
 
     @PostMapping(path = RequestPaths.OAUTH_AUTHORIZE, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-    ResponseEntity<String> decide(@RequestParam MultiValueMap<String, String> params, HttpServletResponse response) {
+    ResponseEntity<String> decide(@RequestParam MultiValueMap<String, String> params) {
         requireEnabled();
         AuthorizationRequest request;
         Map<String, String> form;
@@ -94,11 +99,11 @@ class OAuthController {
         try {
             ssn = Ssn.parse(form.get("ssn"));
         } catch (InvalidSsnException e) {
-            return page(response, request, HttpStatus.UNAUTHORIZED, SIGN_IN_FAILED);
+            return signInFailed(request);
         }
         Optional<AuthService.VerifiedOwner> owner = auth.verifyOwner(form.get("userId"), form.get("password"), ssn);
         if (owner.isEmpty()) {
-            return page(response, request, HttpStatus.UNAUTHORIZED, SIGN_IN_FAILED);
+            return signInFailed(request);
         }
         return redirect(oauth.approve(request, owner.get(), ssn));
     }
@@ -149,27 +154,43 @@ class OAuthController {
         Map<String, String> single = new LinkedHashMap<>();
         for (Map.Entry<String, List<String>> entry : params.entrySet()) {
             if (entry.getValue().size() != 1) {
-                throw new AuthorizeException("The request repeats the parameter " + entry.getKey() + ".", null);
+                throw new AuthorizeException(AuthorizeException.Reason.REPEATED_PARAMETER, null);
             }
             single.put(entry.getKey(), entry.getValue().getFirst());
         }
         return single;
     }
 
-    private static ResponseEntity<String> page(
-            HttpServletResponse response, AuthorizationRequest request, HttpStatus status, String error) {
-        // Replaces the site-wide CSP that SecurityHeadersFilter set: see AuthorizePage#csp.
-        response.setHeader("Content-Security-Policy", AuthorizePage.csp(request.redirectUri()));
-        return ResponseEntity.status(status).contentType(HTML).body(AuthorizePage.form(request, error));
+    /**
+     * Back to the form (303, so the browser GETs it), with the checked request and {@code retry=1}
+     * so the page says the sign-in failed. The password and SSN are not carried back.
+     */
+    private static ResponseEntity<String> signInFailed(AuthorizationRequest request) {
+        Map<String, String> query = new LinkedHashMap<>();
+        query.put("response_type", "code");
+        query.put("client_id", request.clientId());
+        query.put("redirect_uri", request.redirectUri());
+        query.put("code_challenge", request.codeChallenge());
+        query.put("code_challenge_method", "S256");
+        query.put("resource", request.resource());
+        query.put("scope", request.scope());
+        if (request.state() != null) {
+            query.put("state", request.state());
+        }
+        query.put("retry", "1");
+        String encoded = String.join("&", query.entrySet().stream()
+                .map(e -> e.getKey() + "=" + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .toList());
+        return ResponseEntity.status(HttpStatus.SEE_OTHER).location(URI.create(RequestPaths.OAUTH_AUTHORIZE + "?" + encoded)).build();
     }
 
     private static ResponseEntity<String> failure(AuthorizeException e) {
         return e.redirect()
                 .map(OAuthController::redirect)
-                .orElseGet(() -> ResponseEntity.badRequest().contentType(HTML).body(AuthorizePage.error(e.getMessage())));
+                .orElseGet(() -> ResponseEntity.badRequest().contentType(HTML).body(AuthorizePage.error(e.reason())));
     }
 
-    private static ResponseEntity<String> redirect(java.net.URI location) {
+    private static ResponseEntity<String> redirect(URI location) {
         return ResponseEntity.status(HttpStatus.FOUND).location(location).build();
     }
 }

@@ -96,11 +96,14 @@ class DynamoDbRepositoriesTest {
         assertThat(sessions.touch("live", now, now.plusSeconds(300))).isFalse();
         assertThat(sessions.find("live")).isEmpty();
 
-        // create() is single use per id: the second write of a grant is refused.
+        // create() is single use per id: another write with the same id is refused...
         Session grant = new Session("grant", "avery", "hash-a", "6789", now, now, now.plusSeconds(3600));
         assertThat(sessions.create(grant)).isTrue();
-        assertThat(sessions.create(grant)).isFalse();
+        Session other = new Session("grant", "avery", "hash-a", "6789", now.plusMillis(1), now, now.plusSeconds(3600));
+        assertThat(sessions.create(other)).isFalse();
         assertThat(sessions.find("grant")).contains(grant);
+        // ...but the same write repeated (an SDK retry of a put that had been stored) succeeds.
+        assertThat(sessions.create(grant)).isTrue();
     }
 
     @Test

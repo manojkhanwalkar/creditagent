@@ -211,10 +211,13 @@ class OAuthFlowTest {
         mvc.perform(withParams(get("/oauth/authorize"), authorizeParams(clientId)))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
-                .andExpect(content().string(Matchers.containsString("<strong>Claude</strong>")))
-                .andExpect(content().string(Matchers.containsString("name=\"state\" value=\"state-1\"")))
+                .andExpect(content().string(Matchers.containsString("<h1>Connect CreditAgent</h1>")))
+                .andExpect(content().string(Matchers.containsString("src=\"/js/oauth-consent.js\"")))
+                // The page is fixed: the browser fills it from the URL, so no request value is in it.
+                .andExpect(content().string(Matchers.not(Matchers.containsString("state-1"))))
                 .andExpect(header().string("Content-Security-Policy",
                         Matchers.containsString("form-action 'self' https://claude.ai")))
+                .andExpect(header().string("Content-Security-Policy", Matchers.containsString("script-src 'self'")))
                 .andExpect(header().string("Cache-Control", "no-store"));
 
         String location = mvc.perform(signIn(authorizeParams(clientId), PASSWORD, SSN))
@@ -298,13 +301,19 @@ class OAuthFlowTest {
     // ------------------------------------------------------------------ sign-in refusals
 
     @Test
-    void aWrongPasswordOrSsnShowsTheFormAgain() throws Exception {
+    void aWrongPasswordOrSsnSendsTheBrowserBackToTheForm() throws Exception {
         String clientId = registerClient("Claude", CALLBACK);
         for (String[] attempt : new String[][] {{"wrong password", SSN}, {PASSWORD, "234-56-7890"}, {PASSWORD, "not an ssn"}}) {
-            mvc.perform(signIn(authorizeParams(clientId), attempt[0], attempt[1]))
-                    .andExpect(status().isUnauthorized())
-                    .andExpect(content().string(Matchers.containsString(OAuthController.SIGN_IN_FAILED)))
-                    .andExpect(content().string(Matchers.not(Matchers.containsString(attempt[0].equals(PASSWORD) ? PASSWORD : "wrong password"))));
+            String location = mvc.perform(signIn(authorizeParams(clientId), attempt[0], attempt[1]))
+                    .andExpect(status().isSeeOther())
+                    .andReturn().getResponse().getHeader("Location");
+            assertThat(location).startsWith("/oauth/authorize?");
+            Map<String, String> back = query(location);
+            assertThat(back).containsEntry("retry", "1").containsEntry("state", "state-1")
+                    .containsEntry("client_id", clientId).containsEntry("code_challenge", challenge(VERIFIER))
+                    .doesNotContainKeys("password", "ssn", "userId", "code");
+            // The form it leads back to is served as usual.
+            mvc.perform(get(URI.create(location))).andExpect(status().isOk());
         }
     }
 
@@ -320,11 +329,14 @@ class OAuthFlowTest {
     }
 
     @Test
-    void theClientNameIsEscaped() throws Exception {
+    void nothingFromTheRequestIsReflectedIntoThePage() throws Exception {
         String clientId = registerClient("<b>x</b>", CALLBACK);
-        mvc.perform(withParams(get("/oauth/authorize"), authorizeParams(clientId)))
-                .andExpect(content().string(Matchers.containsString("&lt;b&gt;x&lt;/b&gt;")))
-                .andExpect(content().string(Matchers.not(Matchers.containsString("<b>x</b>"))));
+        Map<String, String> params = authorizeParams(clientId);
+        params.put("state", "<script>alert(1)</script>");
+        mvc.perform(withParams(get("/oauth/authorize"), params))
+                .andExpect(status().isOk())
+                .andExpect(content().string(Matchers.not(Matchers.containsString("<b>x</b>"))))
+                .andExpect(content().string(Matchers.not(Matchers.containsString("alert(1)"))));
     }
 
     // ------------------------------------------------------------------ bad authorization requests
@@ -350,7 +362,7 @@ class OAuthFlowTest {
 
         mvc.perform(withParams(get("/oauth/authorize"), authorizeParams(clientId)).param("state", "again"))
                 .andExpect(status().isBadRequest())
-                .andExpect(content().string(Matchers.containsString("repeats the parameter state")));
+                .andExpect(content().string(Matchers.containsString("repeats a parameter")));
     }
 
     @Test

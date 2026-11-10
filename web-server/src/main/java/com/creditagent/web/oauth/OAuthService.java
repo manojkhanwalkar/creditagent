@@ -81,17 +81,41 @@ public class OAuthService {
 
     /**
      * A bad authorization request. If the client and redirect URI could be trusted, the error goes back
-     * to the client ({@link #redirect()} is set); otherwise it is shown to the user and nothing is
-     * redirected, so the server is never an open redirector.
+     * to the client ({@link #redirect()} is set); otherwise the user is shown {@link #reason()}'s fixed
+     * text and nothing is redirected, so the server is never an open redirector.
      */
     public static class AuthorizeException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
+        /** Why a request could not go back to its client. The text is fixed: it never echoes input. */
+        public enum Reason {
+            UNKNOWN_CLIENT("This application is not registered with CreditAgent."),
+            BAD_REDIRECT("The application's return address is not one it registered."),
+            REPEATED_PARAMETER("The request repeats a parameter."),
+            REDIRECTED("The request was sent back to the application.");
+
+            private final String text;
+
+            Reason(String text) {
+                this.text = text;
+            }
+
+            public String text() {
+                return text;
+            }
+        }
+
+        private final Reason reason;
         private final transient URI redirect;
 
-        AuthorizeException(String message, URI redirect) {
-            super(message, null, false, false);
+        AuthorizeException(Reason reason, URI redirect) {
+            super(reason.name(), null, false, false);
+            this.reason = reason;
             this.redirect = redirect;
+        }
+
+        public Reason reason() {
+            return reason;
         }
 
         public Optional<URI> redirect() {
@@ -224,13 +248,13 @@ public class OAuthService {
     public AuthorizationRequest authorizationRequest(Map<String, String> params) {
         String clientId = params.get("client_id");
         OAuthTokens.Client client = tokens.client(clientId)
-                .orElseThrow(() -> new AuthorizeException("This application is not registered with CreditAgent.", null));
+                .orElseThrow(() -> new AuthorizeException(AuthorizeException.Reason.UNKNOWN_CLIENT, null));
         String redirectUri = params.get("redirect_uri");
         if (redirectUri == null && client.redirectUris().size() == 1) {
             redirectUri = client.redirectUris().getFirst();
         }
         if (redirectUri == null || !client.redirectUris().contains(redirectUri) || !redirectAllowed(redirectUri)) {
-            throw new AuthorizeException("The application's return address is not one it registered.", null);
+            throw new AuthorizeException(AuthorizeException.Reason.BAD_REDIRECT, null);
         }
         // From here on, errors go back to the client.
         String state = params.get("state");
@@ -275,7 +299,7 @@ public class OAuthService {
     }
 
     private AuthorizeException redirectError(String redirectUri, String state, String error, String description) {
-        return new AuthorizeException(description,
+        return new AuthorizeException(AuthorizeException.Reason.REDIRECTED,
                 redirect(redirectUri, state, Map.of("error", error, "error_description", description)));
     }
 

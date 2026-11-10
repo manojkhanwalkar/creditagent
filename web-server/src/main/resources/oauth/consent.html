@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect CreditAgent</title>
+  <link rel="stylesheet" href="/css/oauth.css">
+  <script type="module" src="/js/oauth-consent.js"></script>
+</head>
+<body>
+  <!-- Served by OAuthController only after the request has been checked. It holds no request data:
+       oauth-consent.js copies the request from the URL into the form, as text, never as HTML. -->
+  <main class="card">
+    <h1>Connect CreditAgent</h1>
+    <p><strong id="client-name">An application</strong> is asking to use your CreditAgent account: read your
+      credit score, credit report and advice, and lock or unlock your credit report.</p>
+    <p class="muted" id="return-line" hidden>After you allow it, you go back to <code id="return-origin"></code>.</p>
+    <p class="error" id="sign-in-error" role="alert" hidden>User id, password or SSN is incorrect.</p>
+    <form id="consent-form" method="post" action="/oauth/authorize">
+      <label>User id <input name="userId" autocomplete="username" maxlength="64" required></label>
+      <label>Password <input type="password" name="password" autocomplete="current-password" maxlength="256" required></label>
+      <label>Your SSN <input name="ssn" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="123-45-6789" required></label>
+      <p class="muted">Your SSN confirms the account is yours and lets CreditAgent fetch your report. It is never
+        shown to the application.</p>
+      <div class="actions">
+        <button type="submit" name="decision" value="allow">Allow</button>
+        <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Deny</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
