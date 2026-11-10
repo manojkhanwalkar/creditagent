@@ -72,6 +72,18 @@ class RateLimitFilterTest {
     }
 
     @Test
+    void theOAuthSignInFormIsLimitedButTheServerToServerEndpointsAreNot() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            assertThat(call("10.0.0.3", "/oauth/authorize")).isEqualTo(200);
+        }
+        assertThat(call("10.0.0.3", "/OAuth/Authorize")).isEqualTo(429);
+        for (int i = 0; i < 10; i++) {
+            assertThat(call("10.0.0.4", "/oauth/token")).isEqualTo(200);
+            assertThat(call("10.0.0.4", "/oauth/register")).isEqualTo(200);
+        }
+    }
+
+    @Test
     void staticContentIsNotLimited() throws Exception {
         for (int i = 0; i < 10; i++) {
             assertThat(call("10.0.0.1", "/index.html")).isEqualTo(200);

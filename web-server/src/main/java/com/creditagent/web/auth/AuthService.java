@@ -35,6 +35,17 @@ public class AuthService {
     /** What a successful login returns. */
     public record LoginResult(String token, String userId, String ssnMasked, Duration idleTimeout) {}
 
+    /**
+     * An account holder who proved, with their password and their SSN, that they own the account; what
+     * an OAuth consent is given by.
+     */
+    public record VerifiedOwner(String userId, String ssnHash, String ssnLastFour) {
+        @Override
+        public String toString() {
+            return "VerifiedOwner[userId=" + userId + "]";
+        }
+    }
+
     private final UserRepository users;
     private final SessionRepository sessions;
     private final PasswordEncoder passwords;
@@ -118,23 +129,90 @@ public class AuthService {
 
     /** Checks the password and opens a session. @throws UnauthenticatedException on any mismatch */
     public LoginResult login(String userId, String password) {
-        String id = RegistrationPolicy.canonicalUserId(userId);
-        Optional<User> user = id.isEmpty() ? Optional.empty() : users.find(id);
-        String candidate = password == null ? "" : password;
-        // Always run BCrypt, so response time does not reveal whether the user id exists.
-        boolean matches = passwords.matches(candidate, user.map(User::passwordHash).orElse(dummyHash));
-        if (user.isEmpty() || !matches) {
+        User found = checkPassword(userId, password).orElseThrow(() -> {
             log.info("Failed login");
-            throw new UnauthenticatedException(BAD_CREDENTIALS);
-        }
+            return new UnauthenticatedException(BAD_CREDENTIALS);
+        });
+        String id = found.userId();
         Instant now = clock.instant();
-        User found = user.get();
         Session session = new Session(
                 randomId(), id, found.ssnHash(), found.ssnLastFour(), now, now, now.plus(idleTimeout));
         sessions.save(session);
         log.info("User {} logged in", id);
         return new LoginResult(
                 jwt.issue(id, session.sessionId()), id, AuthenticatedUser.mask(found.ssnLastFour()), idleTimeout);
+    }
+
+    /** The user, if the password is theirs. Always runs BCrypt, so timing does not reveal unknown ids. */
+    private Optional<User> checkPassword(String userId, String password) {
+        String id = RegistrationPolicy.canonicalUserId(userId);
+        Optional<User> user = id.isEmpty() ? Optional.empty() : users.find(id);
+        String candidate = password == null ? "" : password;
+        boolean matches = passwords.matches(candidate, user.map(User::passwordHash).orElse(dummyHash));
+        return matches ? user : Optional.empty();
+    }
+
+    /**
+     * Checks the password and that {@code ssn} is the account's own SSN, for the OAuth consent form.
+     * The SSN is asked for because only its keyed hash is stored, and the connector needs the SSN
+     * itself to fetch the owner's report.
+     *
+     * @return the owner, or empty on any mismatch (which one is not revealed)
+     */
+    public Optional<VerifiedOwner> verifyOwner(String userId, String password, Ssn ssn) {
+        Optional<User> user = checkPassword(userId, password)
+                .filter(u -> ssn != null && ssnHasher.matches(ssn, u.ssnHash()));
+        if (user.isEmpty()) {
+            log.info("Failed connector sign-in");
+            return Optional.empty();
+        }
+        User found = user.get();
+        return Optional.of(new VerifiedOwner(found.userId(), found.ssnHash(), found.ssnLastFour()));
+    }
+
+    /** Prefix of the rows that mark an authorization code as used; never a grant or login session id. */
+    static final String USED_CODE_PREFIX = "code#";
+
+    /**
+     * Turns a consent into a connector grant: an access token's session, with its own expiry.
+     *
+     * <p>Each authorization code works once. Before the grant is opened, a separate "code used" row
+     * ({@code code#<grantId>}) is written with a conditional put. It lives until the code itself
+     * expires, so revoking the grant (or a replay revoking it) never makes the code usable again:
+     * the marker, not the grant row, is what refuses the second exchange.
+     *
+     * @param codeExpiresAt when the authorization code stops being valid; the marker lives until then
+     * @return false if the code was already used (the caller must revoke the grant it opened)
+     */
+    public boolean openGrant(String grantId, String userId, Ssn ssn, Instant codeExpiresAt, Instant expiresAt) {
+        Instant now = clock.instant();
+        String ssnHash = ssnHasher.hash(ssn);
+        String lastFour = ssn.digits().substring(5);
+        if (!sessions.create(new Session(USED_CODE_PREFIX + grantId, userId, ssnHash, lastFour, now, now, codeExpiresAt))) {
+            return false;
+        }
+        // The id is new (the marker above was), so this never collides; save() keeps it simple.
+        sessions.save(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt));
+        return true;
+    }
+
+    /**
+     * The owner of an open connector grant. Unlike a login session it is not extended by use: it
+     * ends at the expiry it was opened with, or when revoked.
+     *
+     * @return empty if the grant was revoked, has expired or belongs to someone else
+     */
+    public Optional<AuthenticatedUser> activeGrant(String grantId, String userId) {
+        Instant now = clock.instant();
+        return sessions.find(grantId)
+                .filter(s -> s.userId().equals(userId) && !s.isExpired(now))
+                .map(s -> new AuthenticatedUser(s.userId(), s.sessionId(), s.ssnHash(), s.ssnLastFour()));
+    }
+
+    /** Ends a connector grant, so its access token stops working at once. */
+    public void revokeGrant(String grantId) {
+        sessions.delete(grantId);
+        log.info("Connector grant revoked");
     }
 
     /**

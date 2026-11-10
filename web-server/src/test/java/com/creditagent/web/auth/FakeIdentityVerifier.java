@@ -10,11 +10,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A KYC provider for tests. An "image" is text: {@code card:123-45-6789} is a sharp card with that
  * SSN, {@code blurry} is a blurred photo, anything else is not a card.
  */
-final class FakeIdentityVerifier implements IdentityVerifier {
+public final class FakeIdentityVerifier implements IdentityVerifier {
 
     final AtomicInteger calls = new AtomicInteger();
 
-    static byte[] card(String ssn) {
+    public static byte[] card(String ssn) {
         return ("card:" + ssn).getBytes(StandardCharsets.UTF_8);
     }
 

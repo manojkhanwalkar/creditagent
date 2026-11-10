@@ -1,0 +1,80 @@
+/* The OAuth sign-in and consent page (served by OAuthController). */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1c1f24;
+  --muted: #5d6470;
+  --accent: #2463eb;
+  --error: #b42318;
+  --border: #d5d9e0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121418;
+    --card: #1c1f25;
+    --text: #e8eaee;
+    --muted: #a3a9b4;
+    --accent: #6d9bff;
+    --error: #ff8a80;
+    --border: #353a44;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  padding: 28px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+h1 { margin: 0 0 12px; font-size: 1.4rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.error { color: var(--error); font-weight: 600; }
+code { overflow-wrap: anywhere; }
+
+label { display: block; margin: 14px 0 0; font-weight: 600; }
+
+input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.actions { display: flex; gap: 12px; margin-top: 20px; }
+
+button {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary { background: transparent; color: var(--accent); }

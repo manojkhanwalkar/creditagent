@@ -22,6 +22,8 @@ flowchart LR
         CA[client-agent :8086]
         CIA[credit-intelligence-agent :8085]
     end
+    CL([Claude])
+    CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
 
     UI -- "1 · SSN (POST)" --> WS
     WS -- "2 · resources/read" --> M
@@ -43,6 +45,12 @@ flowchart LR
     CIA -- "D · report" --> SC
     SC -. "E · score" .-> CIA
     CIA -. "F · recommendations" .-> CA
+    CL -- "O1 · OAuth: register, sign in (password + SSN), token" --> WS
+    CL -- "C1 · tools/call + Bearer token" --> CC
+    CC -- "C2 · introspect token → user + SSN" --> WS
+    CC -- "C3 · report (resources/read)" --> M
+    CC -- "C4 · score" --> SC
+    CC -- "C5 · advice (POST /api/v1/advice)" --> CA
 ```
 
 ## Modules
@@ -60,6 +68,7 @@ flowchart LR
 | `web-server` | Serves the UI, registers users after a KYC check of their SSN card, logs them in (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
+| `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
 
 ## Design decisions
 
@@ -187,3 +196,45 @@ The check is `POST /internal/v1/report-locks/lookup` on the web server, which ow
 **Session end.** A session ends on logout, when a request arrives after 5 idle minutes (the session is deleted and the request refused), or when `SessionSweeper` finds it expired (every minute). DynamoDB's TTL is a last resort, since it can take days. The JWT itself also expires after 1 hour, whatever the activity. To save writes, `lastActivityAt` is refreshed at most every 30 seconds.
 
 **Why not Spring Security.** The app needs one bearer-token filter and a password hasher, so it uses `spring-security-crypto` and Nimbus JOSE directly. Moving to Spring Security's resource server (and OIDC) is the natural next step for production.
+
+## Claude connector
+
+```mermaid
+sequenceDiagram
+    participant U as User (browser)
+    participant C as Claude
+    participant CC as claude-connector
+    participant W as web-server (OAuth)
+    C->>CC: POST /mcp (no token)
+    CC-->>C: 401 WWW-Authenticate: resource_metadata=…
+    C->>CC: GET /.well-known/oauth-protected-resource
+    C->>W: GET /.well-known/oauth-authorization-server
+    C->>W: POST /oauth/register (redirect_uris)
+    W-->>C: client_id (signed, stateless)
+    C->>U: open /oauth/authorize?…&code_challenge (S256)&resource
+    U->>W: user id + password + SSN, Allow
+    W-->>U: 302 to Claude's callback ?code&state&iss
+    C->>W: POST /oauth/token (code, code_verifier)
+    W->>W: open grant row (single use per code)
+    W-->>C: access token (JWE: user, grant, SSN, aud = connector)
+    C->>CC: POST /mcp tools/call + Bearer
+    CC->>W: POST /internal/v1/connector/introspect (service token)
+    W-->>CC: user id, SSN (grant still open)
+    CC-->>C: tool result
+```
+
+**Where it runs.** The connector is its own service, so the web server stays the UI and the identity owner, and the connector can be scaled or switched off on its own. The web server is the authorization server, because it holds the accounts.
+
+**No SSN from Claude.** Tools have no SSN argument. The SSN the connector uses comes from the access token, which the web server encrypted (JWE `dir`/`A256GCM`) when the user consented. Claude holds the token but cannot read it, and the SSN never appears in a prompt or a transcript. The consent form asks for the SSN because the users table keeps only its keyed hash; it is checked against that hash before a code is issued.
+
+**Mostly stateless OAuth.** Client ids are signed JWTs holding the client's redirect URIs, so dynamic registration writes nothing. Authorization codes are encrypted JWTs with a 60-second life. The state is two rows in the sessions table, written when a code is exchanged. A *code used* marker (`code#<grant id>`, a conditional put that lives as long as the code) makes each code single use, even after the grant is revoked; a reused code is refused and the grant it opened is revoked. The *grant* row makes tokens revocable (`/oauth/revoke`) before they expire. A grant is not extended by use, unlike a login session.
+
+**Trade-offs.**
+* *No refresh tokens.* Rotating refresh tokens safely needs reuse detection and more state. Access tokens therefore last one hour (`OAUTH_ACCESS_TOKEN_TTL`) and the user reconnects after that. Add refresh tokens with rotation if reconnecting becomes a nuisance.
+* *Introspection on every request.* The connector asks the web server about the token on every MCP request (one DynamoDB read). Revocation therefore takes effect at once, at the cost of a hop. A short, bounded cache would cut the load if it ever matters, but revocation would then take that long to apply.
+* *Owner reads are not lock-checked.* Like the web UI, the connector reads the report with the service token: the owner can always see their own report. Advice comes from the Credit Intelligence Agent, a third party, so it is refused while the report is locked, and the tool says how to unlock it.
+* *Two public hosts.* Claude must reach both the connector and the web server. A reverse proxy can put both behind one host by path.
+
+**Limits.** The connector has the shared inbound limits (token bucket and concurrency cap), plus a per-user window (`CONNECTOR_REQUESTS_PER_USER_PER_MINUTE`, through the same `KeyedRateLimiter` the web server uses per IP). A request with no token, or one that is not even shaped like a JWE (five base64url parts, at most 4 KB), is refused without calling the web server. A JWE-shaped forgery still costs one introspection call, but the web server rejects it after a local decryption failure, with no DynamoDB read, and the shared inbound limits bound how many arrive. On the web server, the sign-in form (`/oauth/authorize`) is limited per IP like the API. The token, registration and revocation endpoints are not, because Claude's servers share a few addresses among every user. A guessed code or token is useless anyway.
+
+**Timeouts.** Every outbound call is bounded: the web server takes 12 s (one try may wait on two DynamoDB calls), the report read 20 s, the score 12 s, and advice 95 s (longer than the client agent's own 90 s). Introspection, status reads and lock changes are retried with backoff (setting the lock to a value is idempotent). Advice is retried only when it never arrived.

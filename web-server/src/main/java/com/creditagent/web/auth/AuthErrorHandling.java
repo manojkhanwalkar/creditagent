@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * The 401 answer for the auth controllers: a problem detail with {@code WWW-Authenticate: Bearer},
  * the same as {@link AuthenticationFilter} sends for a missing or invalid token.
  */
-@RestControllerAdvice(assignableTypes = {AuthController.class, ReportStatusController.class})
+@RestControllerAdvice(assignableTypes = {
+        AuthController.class, ReportStatusController.class, com.creditagent.web.oauth.ConnectorApiController.class})
 class AuthErrorHandling {
 
     @ExceptionHandler(UnauthenticatedException.class)

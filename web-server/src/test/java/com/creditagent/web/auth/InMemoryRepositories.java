@@ -9,12 +9,12 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Test doubles with the same contract as the DynamoDB repositories. */
-final class InMemoryRepositories {
+public final class InMemoryRepositories {
 
     private InMemoryRepositories() {}
 
-    static final class Users implements UserRepository {
-        final Map<String, User> byId = new ConcurrentHashMap<>();
+    public static final class Users implements UserRepository {
+        public final Map<String, User> byId = new ConcurrentHashMap<>();
 
         @Override
         public synchronized CreateResult create(User user) {
@@ -46,12 +46,17 @@ final class InMemoryRepositories {
         }
     }
 
-    static class Sessions implements SessionRepository {
-        final Map<String, Session> byId = new ConcurrentHashMap<>();
+    public static class Sessions implements SessionRepository {
+        public final Map<String, Session> byId = new ConcurrentHashMap<>();
 
         @Override
         public void save(Session session) {
             byId.put(session.sessionId(), session);
+        }
+
+        @Override
+        public boolean create(Session session) {
+            return byId.putIfAbsent(session.sessionId(), session) == null;
         }
 
         @Override
@@ -78,14 +83,14 @@ final class InMemoryRepositories {
         }
     }
 
-    static final class MutableClock extends Clock {
+    public static final class MutableClock extends Clock {
         Instant now;
 
-        MutableClock(Instant start) {
+        public MutableClock(Instant start) {
             now = start;
         }
 
-        void advance(java.time.Duration by) {
+        public void advance(java.time.Duration by) {
             now = now.plus(by);
         }
 

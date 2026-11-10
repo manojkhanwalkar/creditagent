@@ -1,0 +1,40 @@
+server:
+  port: ${PORT:8088}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: claude-connector
+
+credit:
+  connector:
+    # This connector's public URL, exactly as Claude reaches it. The MCP endpoint is <public-url>/mcp,
+    # which is what users add in Claude (Settings > Connectors > Add custom connector), and the only
+    # audience the web server issues tokens for (its CONNECTOR_RESOURCE_URL must equal it).
+    public-url: ${CONNECTOR_PUBLIC_URL:http://localhost:8088}
+    # The web server's public URL: the OAuth issuer (its OAUTH_ISSUER).
+    authorization-server: ${OAUTH_ISSUER:http://localhost:8080}
+    # Internal URLs.
+    web-server-url: ${WEB_SERVER_URL:http://localhost:8080}
+    mcp-url: ${CREDIT_MCP_URL:http://localhost:8082/mcp}
+    score-calculator-url: ${SCORE_CALCULATOR_URL:http://localhost:8081}
+    client-agent-url: ${CLIENT_AGENT_URL:http://localhost:8086}
+    # Required for anything to work: token introspection and the owner's report reads need it.
+    service-token: ${INTERNAL_API_TOKEN:}
+    timeout: ${DOWNSTREAM_TIMEOUT:12s}
+    mcp-timeout: ${MCP_TIMEOUT:20s}
+    advice-timeout: ${ADVICE_TIMEOUT:95s}
+    allowed-origins: ${MCP_ALLOWED_ORIGINS:}
+    requests-per-user-per-minute: ${CONNECTOR_REQUESTS_PER_USER_PER_MINUTE:60}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

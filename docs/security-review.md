@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-19 | High | The Claude connector exposes a user's credit data to an internet-facing LLM client | Mitigated: OAuth 2.1 with PKCE, own-data-only tools, encrypted tokens; data still reaches the user's Claude conversations by design |
 
 ## Findings
 
@@ -93,6 +94,15 @@ Check the model provider's data-retention terms before enabling it.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
 
+### S-19 Claude connector (Mitigated)
+The connector (`claude-connector`) and the web server's OAuth endpoints are meant to be reachable from the internet, unlike every other service here.
+- **Who:** every MCP request needs an access token the web server issued for this connector (`aud` = `CONNECTOR_RESOURCE_URL`, RFC 8707). Tokens come only from the authorization code flow with PKCE `S256`; there is no implicit flow, no password grant and no refresh token. Codes live 60 s and work once: a "code used" marker written on the first exchange outlives any revocation, and a reused code is refused and revokes the grant it opened. Tokens are revocable (`/oauth/revoke`) and checked against their grant on every request.
+- **What:** tools take no SSN. The SSN comes from the token, so a prompt-injected model cannot ask for anyone else's report. The only write is the user's own report lock; its description tells the model to act only on an explicit request.
+- **Consent:** the user signs in on the web server's own page with password **and** SSN (checked against the stored keyed hash). The page names the app and the host it will return to, cannot be framed (`frame-ancestors 'none'`), and only widens `form-action` to the registered redirect origin. It is a fixed file with no request data in it: `oauth-consent.js` fills it from the URL as text (`value`, `textContent`), and error pages show fixed text, so no request value can become markup. A failed sign-in redirects back to the form without the password or SSN. Sign-in attempts are rate limited per IP.
+- **Redirects:** only Claude's two callbacks (exact match) and loopback URLs (RFC 8252) can be registered. An unknown client or redirect URI is shown an error page and never redirected, so the server is not an open redirector.
+- **Secrets:** client ids are signed and codes and tokens encrypted with keys derived from `OAUTH_TOKEN_KEY` (separate labels for signing and encryption). Codes and tokens carry the SSN, so they must stay encrypted: never switch them to signed-only JWTs. Introspection, which returns the SSN, is internal only (service token).
+- **Residual risk:** once connected, the user's report, score and advice enter their Claude conversations and Anthropic's data handling. That is the feature, but users should be told. Rotating `OAUTH_TOKEN_KEY` ends every connection.
+
 ### S-12 MCP tool exposes full reports (Accepted)
 `get_credit_report` exists so generic MCP hosts can use the server. If one of those hosts is an LLM app, the report goes to that model. Remove the tool (`McpServerConfiguration`) if this server will be exposed beyond trusted callers.
 
@@ -135,5 +145,5 @@ Changing the key orphans every existing file.
 Re-run this review whenever any of these happen:
 - Authentication is added.
 - A new data source or LLM provider is added.
-- A service is exposed beyond the private network.
+- A service is exposed beyond the private network (the Claude connector and the OAuth endpoints already are: re-review when they change).
 - A major upgrade to the MCP or A2A SDKs.
