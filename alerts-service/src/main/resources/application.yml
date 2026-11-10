@@ -20,6 +20,11 @@ credit:
     dynamodb-timeout: ${ALERTS_DYNAMODB_TIMEOUT:2s}
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
 
+logging:
+  level:
+    # It logs a rejected request's field values, which here would be an email address.
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: error
+
 management:
   endpoints:
     web:

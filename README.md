@@ -33,6 +33,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
 | `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
+| `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each user whose address was found in the last 24 hours: one email per user, no locations, a suggestion to buy identity protection. SMTP via `MAIL_HOST` (compose: Mailpit at http://localhost:8025); without one it sends nothing |
 | `alerts-service` | 8092 | Internal only (service token): `POST /internal/v1/alerts/lookup` (`{email}`) answers whether the `Alerts` table holds a record for that email, and where it was found |
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
@@ -114,7 +115,9 @@ The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP
 | `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
 | Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s) for the answer (after a quick read of the account). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down or slow, login still works and the page asks `GET /api/v1/alerts` (retried) at once, then again after 5 and 30 seconds |
 
-To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle.
+| Email | `alert-notifier` runs once a day (`NOTIFIER_CRON`, 08:00 UTC). It reads, through the table's `by-day` index, the alerts first found in the 24 hours before the run that no email has covered yet, claims each one with a conditional write (so two runs or replicas never email the same alert), and sends each user one plain-text email. If a send fails, its claims are released for a later run. At most `NOTIFIER_SENDS_PER_SECOND` (10) emails a second |
+
+To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle. To see the email without waiting for 08:00, start the stack with `NOTIFIER_CRON='0 * * * * *'` (every minute) and open Mailpit at http://localhost:8025.
 
 ## Chat
 
@@ -216,7 +219,10 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `OAUTH_ACCESS_TOKEN_TTL`, `OAUTH_ALLOW_LOOPBACK_REDIRECTS` | web server | `1h`, `true` (loopback redirects serve Claude Code and Desktop; Claude's two web callbacks are always allowed) |
 | `OFFERS_URL`, `OFFERS_TIMEOUT`, `OFFERS_LOGIN_TIMEOUT` | web server | `http://localhost:8090`, `3s` a try for `GET /api/v1/offers` (retried), `1500ms` for the single try at login |
 | `ALERTS_URL`, `ALERTS_TIMEOUT`, `ALERTS_LOGIN_TIMEOUT` | web server | `http://localhost:8092`, `3s` a try for `GET /api/v1/alerts` (retried), `1500ms` for the single try at login |
-| `ALERTS_TABLE` | monitor, alerts service | `Alerts` |
+| `ALERTS_TABLE` | monitor, alerts service, notifier | `Alerts` |
+| `NOTIFIER_CRON`, `NOTIFIER_WINDOW`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `24h`, `10000`, `10` |
+| `NOTIFIER_FROM`, `NOTIFIER_APP_URL` | notifier | `alerts@creditagent.local`, empty (compose: `http://localhost:8080`) |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier | empty = no email sent, `587`, empty, empty, `true`, `true` (compose: Mailpit, no auth or TLS) |
 | `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1m`, `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
 | `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
 | `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |

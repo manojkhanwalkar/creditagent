@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-23 | Low | Alert emails: the service emails users about dark-web findings | Mitigated: one email per alert (conditional claims), fixed plain-text wording with no locations or links from outside, no addresses in logs, SMTP over STARTTLS by default, sending paced |
 | S-22 | Low | Dark-web alerts: a new table links users' emails to the places they were exposed | Mitigated: only registered users are checked; one account per email; internal look-up behind the service token, email in the body, never logged; placeholder source contacts nothing. Open: emails are not verified |
 | S-21 | Low | Card offers: the account now keeps the user's ZIP code and latest credit score | Mitigated: only score and ZIP go to the Offers service; offers are not firm offers of credit and say so |
 | S-20 | Medium | The chat sends a user's credit report and free-text questions to an (eventually LLM-backed) agent | Mitigated: own-SSN check, input and output guardrails outside the model, PII redaction, RAM-only bounded memory, internal-only agent |
@@ -96,6 +97,13 @@ Check the model provider's data-retention terms before enabling it.
 - `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
+
+### S-23 Alert emails (Mitigated)
+- Recipients are only registered users' addresses from the Alerts table; an address belongs to one account. Addresses are not verified (S-22), so an email can reach someone who never registered: it then only tells the owner of that address about their own address, and says to sign in, never to reply or click.
+- Phishing hygiene: fixed wording, plain text, no location names, no links but the configured sign-in URL, and a line saying we never ask for a password or SSN by email.
+- Header injection: the subject is a constant; the recipient passed registration's address rule (no spaces or line breaks) and JavaMail parses it strictly.
+- Logs carry counts and exception class names only. SMTP credentials come from the environment; STARTTLS is required unless explicitly turned off (compose turns it off only for the local Mailpit).
+- Open: SPF, DKIM and DMARC for the sending domain are deployment work, so mail is not spoofable in our name.
 
 ### S-22 Dark-web alerts (Mitigated)
 - The `Alerts` table holds an email, a location name and a time: personal data. Only the emails of registered users are checked.

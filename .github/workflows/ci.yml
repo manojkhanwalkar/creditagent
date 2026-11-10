@@ -83,6 +83,7 @@ jobs:
             offers-service/target/*.jar
             dark-web-monitor/target/*.jar
             alerts-service/target/*.jar
+            alert-notifier/target/*.jar
           retention-days: 7
 
   ui:
@@ -126,6 +127,7 @@ jobs:
           - offers-service
           - dark-web-monitor
           - alerts-service
+          - alert-notifier
     env:
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
