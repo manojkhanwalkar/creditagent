@@ -2,7 +2,6 @@ package com.creditagent.mcp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.creditagent.common.CreditFileNames;
 import com.creditagent.common.Ssn;
 import com.creditagent.common.bureau.Bureau;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -10,15 +9,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.community.mcp.server.McpServer;
 import dev.langchain4j.mcp.protocol.McpImplementation;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class CreditReportMcpHandlerTest {
 
@@ -27,9 +23,6 @@ class CreditReportMcpHandlerTest {
     static final String EQUIFAX = "{\"reportNumber\":\"EFX-1\"}";
     static final String TRANSUNION = "{\"fileNumber\":\"TU-1\"}";
 
-    @TempDir
-    Path dir;
-
     final ObjectMapper mapper = new ObjectMapper();
     CreditReportMcpHandler handler;
     final AtomicReference<Map<Bureau, String>> sentToNrg = new AtomicReference<>();
@@ -37,15 +30,10 @@ class CreditReportMcpHandlerTest {
     final AtomicReference<String> lock = new AtomicReference<>("unlocked");
 
     @BeforeEach
-    void setUp() throws IOException {
-        CreditFileNames names = new CreditFileNames(KEY);
-        String fileName = names.fileNameFor(Ssn.parse("123-45-6789"));
-        Files.createDirectories(dir.resolve("Equifax"));
-        Files.createDirectories(dir.resolve("TransUnion"));
-        Files.writeString(dir.resolve("Equifax").resolve(fileName), EQUIFAX);
-        Files.writeString(dir.resolve("TransUnion").resolve(fileName), TRANSUNION);
-        CreditFileRepository repository = new CreditFileRepository(new McpServerProperties(dir, KEY, List.of()), names);
-        CreditReportService reports = new CreditReportService(repository, bureauReports -> {
+    void setUp() {
+        InMemoryCreditReportStore store = new InMemoryCreditReportStore();
+        store.replaceAll(Ssn.parse("123-45-6789"), Map.of(Bureau.EQUIFAX, EQUIFAX, Bureau.TRANSUNION, TRANSUNION));
+        CreditReportService reports = new CreditReportService(store, bureauReports -> {
             sentToNrg.set(bureauReports);
             return REPORT;
         });
@@ -243,8 +231,9 @@ class CreditReportMcpHandlerTest {
 
     @Test
     void aFailingReadIsAnInternalErrorWithoutDetails() throws IOException {
-        CreditReportService failing = new CreditReportService(
-                new CreditFileRepository(new McpServerProperties(dir, KEY, null), new CreditFileNames(KEY)),
+        InMemoryCreditReportStore store = new InMemoryCreditReportStore();
+        store.replaceAll(Ssn.parse("123-45-6789"), Map.of(Bureau.EQUIFAX, EQUIFAX));
+        CreditReportService failing = new CreditReportService(store,
                 bureauReports -> {
                     throw new IllegalStateException("NRG down at http://internal");
                 });
@@ -257,25 +246,48 @@ class CreditReportMcpHandlerTest {
     }
 
     @Test
-    void theFileStoreRefusesOversizedFilesAndIgnoresSymlinks() throws IOException {
-        CreditFileNames names = new CreditFileNames(KEY);
-        CreditFileRepository repository = new CreditFileRepository(new McpServerProperties(dir, KEY, null), names);
-        Ssn big = Ssn.parse("234-56-7890");
-        Files.createDirectories(dir.resolve("Experian"));
-        Files.write(dir.resolve("Experian").resolve(names.fileNameFor(big)), new byte[(int) CreditFileRepository.MAX_FILE_BYTES + 1]);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository.findBureauReports(big))
-                .isInstanceOf(IllegalStateException.class).hasMessageNotContaining("7890");
-
-        Ssn linked = Ssn.parse("345-67-8901");
-        Path target = Files.writeString(dir.resolve("elsewhere.json"), EQUIFAX);
-        Files.createSymbolicLink(dir.resolve("Equifax").resolve(names.fileNameFor(linked)), target);
-        assertThat(repository.findBureauReports(linked)).isEmpty();
+    void aReportThatFailsDecryptionIsAnInternalErrorWithoutDetails() throws IOException {
+        com.creditagent.reports.CreditReportStore tampered = new InMemoryCreditReportStore() {
+            @Override
+            public Map<Bureau, String> findAll(Ssn ssn) {
+                throw new IllegalStateException("Credit report failed its integrity check for 123456789");
+            }
+        };
+        CreditReportService reports = new CreditReportService(tampered, bureauReports -> REPORT);
+        McpImplementation info = new McpImplementation("credit-report-mcp", "test");
+        CreditReportMcpHandler broken = new CreditReportMcpHandler(
+                new McpServer(List.of(new CreditReportTools(reports, ssn -> false)), info), info, reports, ssn -> false);
+        JsonNode response = mapper.readTree(broken.handle(READ, true).orElseThrow());
+        assertThat(response.at("/error/code").asInt()).isEqualTo(CreditReportMcpHandler.INTERNAL_ERROR);
+        assertThat(response.toString()).doesNotContain("integrity").doesNotContain("123456789");
     }
 
     @Test
-    void theHmacKeyIsNeverPrinted() {
-        McpServerProperties properties = new McpServerProperties(dir, KEY, null);
-        assertThat(properties.allowedOrigins()).isEmpty();
-        assertThat(properties.toString()).doesNotContain(KEY).contains("<redacted>");
+    void theToolGivesAThirdPartyNoDetailsWhenTheStoreFails() throws IOException {
+        for (RuntimeException failure : List.<RuntimeException>of(
+                software.amazon.awssdk.core.exception.SdkClientException.create(
+                        "Unable to execute HTTP request: Connect to dynamodb:8000 [dynamodb/10.89.0.5] failed"),
+                new IllegalStateException("Credit report failed its integrity check"))) {
+            com.creditagent.reports.CreditReportStore failing = new InMemoryCreditReportStore() {
+                @Override
+                public Map<Bureau, String> findAll(Ssn ssn) {
+                    throw failure;
+                }
+            };
+            CreditReportService reports = new CreditReportService(failing, bureauReports -> REPORT);
+            McpImplementation info = new McpImplementation("credit-report-mcp", "test");
+            CreditReportMcpHandler broken = new CreditReportMcpHandler(
+                    new McpServer(List.of(new CreditReportTools(reports, ssn -> false)), info), info, reports, ssn -> false);
+            String response = broken.handle("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"get_credit_report\",\"arguments\":{\"ssn\":\"123-45-6789\"}}}").orElseThrow();
+            assertThat(response).contains(CreditReportTools.READ_UNAVAILABLE)
+                    .doesNotContain("dynamodb").doesNotContain("10.89").doesNotContain("integrity").doesNotContain("6789");
+        }
+    }
+
+    @Test
+    void allowedOriginsDefaultToNone() {
+        assertThat(new McpServerProperties(null).allowedOrigins()).isEmpty();
+        assertThat(new McpServerProperties(List.of("http://a.example")).allowedOrigins()).containsExactly("http://a.example");
     }
 }

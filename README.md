@@ -27,7 +27,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
-| `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
+| `credit-report-generator` | 8083 | `POST /api/v1/reports`; stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
 | `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
@@ -38,7 +38,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
 | `kyc-service` | 8087 | Dummy KYC provider: `POST /api/v1/ssn-verifications` (multipart `document`) refuses blurred or non-card photos and returns the SSN on the card; `GET /api/v1/sample-cards/{ssn}?blur=N` makes demo cards when enabled |
-| `common`, `service-clients`, `web-support`, `alerts-store` | — | Shared libraries (`alerts-store`: the `Alerts` table, used by the monitor and the alerts service) |
+| `common`, `service-clients`, `web-support`, `alerts-store`, `credit-report-store` | — | Shared libraries (`alerts-store`: the `Alerts` table, used by the monitor and the alerts service; `credit-report-store`: the encrypted `CreditReports` table, written by the generator and read by the MCP server) |
 
 ## Build and test
 
@@ -54,7 +54,7 @@ mvn -B verify                 # compile, unit tests, MCP and A2A contract tests,
 
 ```bash
 mvn -B package -DskipTests
-cp .env.example .env          # set CREDIT_FILE_HMAC_KEY, JWT_SECRET, SSN_HMAC_KEY and INTERNAL_API_TOKEN (openssl rand -hex 32 each)
+cp .env.example .env          # set CREDIT_FILE_HMAC_KEY, CREDIT_REPORT_ENCRYPTION_KEY, JWT_SECRET, SSN_HMAC_KEY and INTERNAL_API_TOKEN (openssl rand -hex 32 each)
 docker compose up --build
 ```
 
@@ -81,10 +81,11 @@ JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) DYNAMODB
   AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local mvn -pl web-server spring-boot:run
 ```
 
- The generator and the MCP server need the same key and reports directory (default `~/Reports`), and the MCP server needs NRG running:
+The generator and the MCP server share the `CreditReports` table (the same DynamoDB) and both keys, and the MCP server needs NRG running:
 
 ```bash
-export CREDIT_FILE_HMAC_KEY=$(openssl rand -hex 32) CREDIT_REPORTS_DIR=$HOME/Reports
+export CREDIT_FILE_HMAC_KEY=$(openssl rand -hex 32) CREDIT_REPORT_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+  DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local
 CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
 mvn -pl normalized-report-generator spring-boot:run
 mvn -pl credit-report-mcp-server spring-boot:run
@@ -182,8 +183,10 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 
 | Variable | Used by | Default |
 |---|---|---|
-| `CREDIT_FILE_HMAC_KEY` | generator, MCP server | **required**, at least 32 characters |
-| `CREDIT_REPORTS_DIR` | generator, MCP server | `~/Reports` (bureau files in `Equifax/`, `Experian/`, `TransUnion/`). The old name `CREDIT_FILES_DIR` is still read as a fallback; files in the old flat layout are not migrated, so regenerate them |
+| `CREDIT_FILE_HMAC_KEY` | generator, MCP server | **required**, at least 32 characters, the same in both: keys the SSN hash the `CreditReports` table is keyed by |
+| `CREDIT_REPORT_ENCRYPTION_KEY` | generator, MCP server | **required**, at least 32 characters, the same in both: encrypts each stored report (AES-256-GCM) |
+| `CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS` | generator, MCP server | empty; after a rotation, the old keys (comma-separated), which still decrypt reports written with them |
+| `CREDIT_REPORTS_TABLE` | generator, MCP server | `CreditReports` (with `DYNAMODB_ENDPOINT`, `DYNAMODB_CREATE_TABLES`, `DYNAMODB_TIMEOUT`, `AWS_REGION` as for the web server) |
 | `NRG_URL` | MCP server | `http://localhost:8084` |
 | `NRG_MAX_REQUEST_BYTES` | NRG | `3200000` (larger bodies get 413) |
 | `CREDIT_SEED_SSNS` | generator | none |

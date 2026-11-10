@@ -13,7 +13,7 @@ flowchart LR
     subgraph MCP["credit-report-mcp-server :8082"]
         M[/mcp Streamable HTTP<br/>resource credit-report://ssn/&#123;ssn&#125;<br/>tool get_credit_report/]
     end
-    FS[(~/Reports/&lt;Bureau&gt;/<br/>Equifax · Experian · TransUnion<br/>HMAC-named JSON)]
+    FS[(CreditReports table · DynamoDB<br/>key: HMAC of SSN + bureau<br/>report: AES-256-GCM JSON)]
     NRG[normalized-report-generator :8084<br/>merges 3 bureau reports]
     GEN[credit-report-generator :8083]
     SC[score-calculator :8081<br/>five-factor scorecard 300–850]
@@ -35,14 +35,14 @@ flowchart LR
     UI -- "1 · SSN (POST)" --> WS
     WS -- "2 · resources/read" --> M
     M -- "3 · read 3 reports" --> FS
-    FS -. "4 · 3 bureau files" .-> M
+    FS -. "4 · 3 bureau reports (decrypted)" .-> M
     M -- "5 · 3 reports" --> NRG
     NRG -. "6 · merged" .-> M
     M -. "7 · credit report" .-> WS
     WS -- "8 · report" --> SC
     SC -. "9 · score" .-> WS
     WS -. "10 · score" .-> UI
-    GEN -- "writes 3 bureau reports" --> FS
+    GEN -- "writes 3 bureau reports (encrypted, one transaction)" --> FS
     UI -- "R1 · register + card photo (multipart)" --> WS
     WS -- "R2 · card photo" --> KYC
     KYC -. "R3 · SSN + verification id, or REJECTED (IMAGE_BLURRY…)" .-> WS
@@ -77,14 +77,15 @@ flowchart LR
 
 | Module | Role | Key technology |
 |---|---|---|
-| `common` | SSN value type, credit report model, bureau report formats and code tables, score bands, HMAC file names, safe logging | Plain Java |
+| `common` | SSN value type, SSN HMAC, credit report model, bureau report formats and code tables, score bands, safe logging | Plain Java |
+| `credit-report-store` | The `CreditReports` table: encrypted store of the bureau reports, written by the generator and read by the MCP server | AWS SDK DynamoDB, AES-256-GCM |
 | `web-support` | Request-size limit filter for services that accept untrusted JSON (score calculator, NRG) | Spring Web |
 | `service-clients` | MCP client for reports, HTTP client for scores (shared by the web server and the agent) | LangChain4j MCP client, Spring `RestClient` |
 | `score-calculator` | `POST /api/v1/scores`: report in, score out | Spring Boot |
 | `kyc-service` | Dummy external KYC provider: `POST /api/v1/ssn-verifications` takes a photo of an SSN card, refuses blurred or non-card images, and returns the SSN it read | Spring Boot, Java ImageIO |
 | `credit-report-generator` | Creates a synthetic credit history and writes one report per bureau, each in that bureau's format | Spring Boot |
 | `normalized-report-generator` | NRG: `POST /api/v1/normalized-reports`, three bureau reports in, one `CreditReport` out | Spring Boot |
-| `credit-report-mcp-server` | MCP server over the file store; reads all three bureau files and has NRG merge them | LangChain4j `McpServer` (tools) plus resources, Streamable HTTP |
+| `credit-report-mcp-server` | MCP server over the `CreditReports` table; reads all three bureau reports and has NRG merge them | LangChain4j `McpServer` (tools) plus resources, Streamable HTTP |
 | `web-server` | Serves the UI, registers users after a KYC check of their SSN card, logs them in (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
@@ -148,7 +149,7 @@ On the last try the caller sees the real failure, and maps it to 503 (or 502 in 
 
 ## Multi-bureau model
 
-The generator writes each consumer's history three times, to `~/Reports/Equifax/`, `~/Reports/Experian/` and `~/Reports/TransUnion/`, under the same HMAC file name. The bureaus do not publish JSON schemas, so each format is an assumption modelled on public descriptions of their reports and of the Metro 2 furnisher format. The records are in `common/…/bureau/`, and `BureauCodes` holds the code tables both sides use.
+The generator writes each consumer's history three times, one report per bureau, to the `CreditReports` table (see [Credit report storage](#credit-report-storage)). The bureaus do not publish JSON schemas, so each format is an assumption modelled on public descriptions of their reports and of the Metro 2 furnisher format. The records are in `common/…/bureau/`, and `BureauCodes` holds the code tables both sides use.
 
 | Bureau | Dates | Account type | Status and late payments | Other differences |
 |---|---|---|---|---|
@@ -389,4 +390,26 @@ sequenceDiagram
 **What the email says.** Fixed wording, plain text: how many places and the first date, what to do (identity protection, change passwords), a sign-in pointer, and that we never ask for a password or SSN by email. No location names (they stay behind sign-in) and nothing else from outside the service, so the email cannot carry markup or attacker-chosen links. The sender comes from config; the recipient is the registered address (validated at registration, unique per account).
 
 **Resilience.** SMTP calls have a 5 s connect and 10 s read/write timeout. Sends are paced (`NOTIFIER_SENDS_PER_SECOND`, 10) to stay within the relay's limits, and a run reads at most `NOTIFIER_MAX_ALERTS_PER_RUN` alerts. Sends are not retried within a run: a timed-out send may have been delivered, and a second try could duplicate it. The mail health indicator is off, so a relay outage does not mark the notifier unhealthy or get it restarted. Without `MAIL_HOST` the run is skipped with a warning. SMTP needs STARTTLS: the notifier refuses to start with it off unless the relay is local (`localhost`, `mailpit`), which compose's Mailpit is.
+
+## Credit report storage
+
+The bureau reports live in the DynamoDB table `CreditReports`, written by the generator and read by the MCP server (library `credit-report-store`).
+
+| Attribute | Type | What |
+|---|---|---|
+| `ssn` (partition key) | S | HMAC-SHA256 of the SSN (`CREDIT_FILE_HMAC_KEY`), hex |
+| `bureau` (sort key) | S | `Equifax`, `Experian` or `TransUnion` |
+| `report` | B | the bureau's report JSON, encrypted: 12-byte nonce, AES-256-GCM ciphertext and tag |
+| `keyId` | S | which encryption key wrote it |
+| `updatedAt` | S | when |
+
+**Key design.** The spec asks for bureau and SSN together as the composite primary key. The SSN is the partition key and the bureau the sort key, so one `Query` returns a consumer's three reports. The other order would put every consumer in three partitions, one per bureau, which become hot under load. The `ssn` column holds the SSN's keyed hash, never the SSN itself. DynamoDB cannot encrypt key attributes client-side. A plain hash of the roughly 10^9 possible SSNs can be reversed by brute force in minutes. A keyed hash is still a stable look-up key, as the HMAC file names were.
+
+**Encryption.** Each report is encrypted in the service before it is stored: AES-256-GCM with a fresh random nonce. The AES key is derived from `CREDIT_REPORT_ENCRYPTION_KEY` with HMAC-SHA256, so the secret is never used directly. The associated data is the row's own key (`CreditReports|<ssn hash>|<bureau>`), so a ciphertext copied into another consumer's row fails its integrity check instead of showing one person's report as another's. A tampered value fails the same way. Decryption failures surface without details: an internal error for the MCP resource, and a fixed "cannot be read right now" answer for the `get_credit_report` tool. The table also has DynamoDB's encryption at rest; in AWS, use a customer-managed KMS key for it as well. Trade-off: a key in the environment, not KMS envelope encryption. The `ReportCipher` seam is where a KMS data-key would go.
+
+**Rotation.** Every value records its `keyId`. New writes use the current key. Keys in `CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS` still decrypt, so a rotation needs no downtime. Regenerating a consumer's reports re-encrypts them with the new key.
+
+**Writes and reads.** The generator replaces a consumer's whole set in one `TransactWriteItems`: a put for each bureau with a report, and a delete for each without. The MCP server reads the three known keys in one `TransactGetItems`, which is serializable with that write. A plain `Query` is only read-committed against transactions, so it could return one new report and two old ones during a regeneration. Readers therefore see the old set or the new one, never a mix; the file version needed per-SSN locks and staged moves to approximate this. A transaction that conflicts with another on the same consumer is retried up to 3 times, with exponential backoff and full jitter (50 ms, then 100 ms ceilings), since both replacing a set and reading it are safe to repeat. Trade-off: a transactional read costs twice the read units of a consistent query. A report is limited to 300 KB, well under DynamoDB's 400 KB item limit. A store failure answers 503 with `Retry-After`.
+
+**Migration.** Nothing is migrated from the old `~/Reports` files: they hold synthetic demo data, and the generator re-seeds `CREDIT_SEED_SSNS` at start-up.
 

@@ -10,7 +10,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Keyed hash (HMAC-SHA256, hex) of an SSN's nine digits. Used wherever an SSN must be recognised
- * without being stored: the credit file names ({@link CreditFileNames}) and the users table.
+ * without being stored: the key of the CreditReports table and the users table.
  *
  * <p>A plain hash would not do: the SSN space (about 10^9) is small enough to brute-force. With a
  * secret key of at least {@value #MIN_KEY_BYTES} bytes, a copy of the hashes alone reveals nothing.

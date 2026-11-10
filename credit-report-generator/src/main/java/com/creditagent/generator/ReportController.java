@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping(path = "/api/v1/reports", produces = MediaType.APPLICATION_JSON_VALUE)
 class ReportController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ReportController.class);
+
     private final CreditReportService service;
 
     ReportController(CreditReportService service) {
@@ -44,9 +46,27 @@ class ReportController {
         Ssn ssn = Ssn.parse(request.ssn());
         CreditReportService.GeneratedReports generated = service.generate(ssn, request.fullName());
         String reportId = generated.reportId();
-        List<String> bureaus = generated.bureaus().stream().map(Bureau::directoryName).toList();
+        List<String> bureaus = generated.bureaus().stream().map(Bureau::displayName).toList();
         return ResponseEntity.created(URI.create("/api/v1/reports/" + reportId))
                 .body(new GenerateReportResponse(reportId, generated.report().ssnMasked(), bureaus));
+    }
+
+    /**
+     * The store failed (after the SDK's own retries). A transient failure is 503 with Retry-After, which
+     * callers back off on; a permanent one (missing table, access denied, bad request) is 500, which
+     * they do not retry. Logged by class only.
+     */
+    @ExceptionHandler(software.amazon.awssdk.core.exception.SdkException.class)
+    org.springframework.http.ResponseEntity<ProblemDetail> storeFailed(software.amazon.awssdk.core.exception.SdkException e) {
+        log.warn("Storing credit reports failed: {}", com.creditagent.common.SafeLogging.describe(e));
+        org.springframework.http.HttpStatus status = e.retryable() || e instanceof software.amazon.awssdk.core.exception.SdkClientException
+                || e instanceof software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException
+                ? org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE : org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+        var response = org.springframework.http.ResponseEntity.status(status);
+        if (status == org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE) {
+            response.header(org.springframework.http.HttpHeaders.RETRY_AFTER, "1");
+        }
+        return response.body(ProblemDetail.forStatusAndDetail(status, "Credit reports could not be stored."));
     }
 
     @ExceptionHandler(InvalidSsnException.class)

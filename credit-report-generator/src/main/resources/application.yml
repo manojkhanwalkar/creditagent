@@ -9,14 +9,22 @@ spring:
     name: credit-report-generator
 
 credit:
-  files:
-    # Reports root; each bureau's files are in <root>/Equifax, /Experian, /TransUnion.
-    # CREDIT_FILES_DIR is the pre-multi-bureau name, still honoured so existing setups keep their location.
-    directory: ${CREDIT_REPORTS_DIR:${CREDIT_FILES_DIR:${user.home}/Reports}}
-    # Required. Must be the same value the MCP server uses. No default on purpose.
-    hmac-key: ${CREDIT_FILE_HMAC_KEY}
+  generator:
     # Comma-separated demo SSNs to generate at start-up, e.g. 123-45-6789,234-56-7890
     seed-ssns: ${CREDIT_SEED_SSNS:}
+  # The CreditReports DynamoDB table, shared with the MCP server (which reads it).
+  reports:
+    # Required, and the same in the MCP server: keys the SSN hash in the table's ssn column.
+    ssn-hash-key: ${CREDIT_FILE_HMAC_KEY}
+    # Required, and the same in the MCP server: encrypts each report (AES-256-GCM). No default on purpose.
+    encryption-key: ${CREDIT_REPORT_ENCRYPTION_KEY}
+    # After a rotation: the old keys, comma-separated, so reports written with them can still be read.
+    previous-encryption-keys: ${CREDIT_REPORT_PREVIOUS_ENCRYPTION_KEYS:}
+    table: ${CREDIT_REPORTS_TABLE:CreditReports}
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    region: ${AWS_REGION:us-east-1}
+    dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
 
 management:
   endpoints:

@@ -3,7 +3,6 @@ package com.creditagent.mcp;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.creditagent.common.CreditFileNames;
 import com.creditagent.common.Ssn;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.mcp.client.DefaultMcpClient;
@@ -13,8 +12,6 @@ import dev.langchain4j.mcp.client.McpReadResourceResult;
 import dev.langchain4j.mcp.client.McpTextResourceContents;
 import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -37,14 +34,6 @@ class McpClientContractTest {
 
     static final String KEY = "contract-test-key-0123456789abcdef0123456789";
     static final String REPORT = "{\"reportId\":\"r-contract\",\"ssnMasked\":\"***-**-6789\"}";
-    static Path dir;
-
-    @BeforeAll
-    static void createCreditFile() throws IOException {
-        dir = Files.createTempDirectory("mcp-contract");
-        Path experian = Files.createDirectories(dir.resolve("Experian"));
-        Files.writeString(experian.resolve(new CreditFileNames(KEY).fileNameFor(Ssn.parse("123-45-6789"))), "{}");
-    }
 
     /** Stands in for the NRG service. */
     @TestConfiguration
@@ -53,6 +42,15 @@ class McpClientContractTest {
         @Primary
         ReportNormalizerClient fakeNrg() {
             return bureauReports -> REPORT;
+        }
+
+        /** One consumer with an Experian report; the real store needs DynamoDB. */
+        @Bean
+        @Primary
+        com.creditagent.reports.CreditReportStore inMemoryReports() {
+            InMemoryCreditReportStore store = new InMemoryCreditReportStore();
+            store.replaceAll(Ssn.parse("123-45-6789"), java.util.Map.of(com.creditagent.common.bureau.Bureau.EXPERIAN, "{}"));
+            return store;
         }
 
         @Bean
@@ -64,8 +62,9 @@ class McpClientContractTest {
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
-        registry.add("credit.files.directory", () -> dir.toString());
-        registry.add("credit.files.hmac-key", () -> KEY);
+        registry.add("credit.reports.ssn-hash-key", () -> KEY);
+        registry.add("credit.reports.encryption-key", () -> KEY + "-encryption");
+        registry.add("credit.reports.dynamodb-endpoint", () -> "http://localhost:1");
     }
 
     @LocalServerPort

@@ -12,7 +12,7 @@ spring:
       enabled: true
 
 nrg:
-  # Three bureau files of at most 1 MiB each (the MCP server's cap) plus envelope.
+  # Three bureau reports (stored at most 300 KB each) plus envelope, with room to spare.
   max-request-bytes: ${NRG_MAX_REQUEST_BYTES:3200000}
 
 management:
