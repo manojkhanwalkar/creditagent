@@ -44,6 +44,15 @@ class AuthServiceTest {
     }
 
     @Test
+    void anEmailCanOnlyBelongToOneAccount() {
+        register();
+        String email = users.find("avery").orElseThrow().email().toUpperCase(java.util.Locale.ROOT);
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", email, "+14155550101", FakeIdentityVerifier.card("234567890")))
+                .isInstanceOf(AuthExceptions.EmailAlreadyRegisteredException.class);
+        assertThat(users.find("blake")).isEmpty();
+    }
+
+    @Test
     void anSsnCanOnlyBelongToOneAccount() {
         register();
         assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", FakeIdentityVerifier.card("123456789")))

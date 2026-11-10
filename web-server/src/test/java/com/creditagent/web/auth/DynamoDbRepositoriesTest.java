@@ -76,6 +76,16 @@ class DynamoDbRepositoriesTest {
     }
 
     @Test
+    void anEmailBelongsToOneAccountWhateverItsCase() {
+        assertThat(users.create(user("emery", "hash-email-owner"))).isEqualTo(UserRepository.CreateResult.CREATED);
+        User sameEmail = new User("finley", "$2a$hash", "Emery@Example.com", "+14155550100", "hash-email-copier", "6789", "kyc_finley",
+                Instant.parse("2026-11-08T12:00:00Z"), ReportStatus.UNLOCKED);
+        assertThat(users.create(sameEmail)).isEqualTo(UserRepository.CreateResult.EMAIL_TAKEN);
+        assertThat(users.find("finley")).isEmpty();
+        assertThat(users.find("email#" + DynamoDbUserRepository.emailKey("emery@example.com"))).isEmpty();
+    }
+
+    @Test
     void sessionsRoundTripAndExpire() {
         Instant now = testNow();
         Session live = new Session("live", "avery", "hash-a", "6789", now, now, now.plusSeconds(300));

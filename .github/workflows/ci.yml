@@ -81,6 +81,8 @@ jobs:
             claude-connector/target/*.jar
             user-advisor-agent/target/*.jar
             offers-service/target/*.jar
+            dark-web-monitor/target/*.jar
+            alerts-service/target/*.jar
           retention-days: 7
 
   ui:
@@ -122,6 +124,8 @@ jobs:
           - claude-connector
           - user-advisor-agent
           - offers-service
+          - dark-web-monitor
+          - alerts-service
     env:
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:

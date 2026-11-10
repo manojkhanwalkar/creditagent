@@ -32,6 +32,15 @@ final class AuthExceptions {
         }
     }
 
+    /** 409: the email already belongs to an account. */
+    static final class EmailAlreadyRegisteredException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        EmailAlreadyRegisteredException() {
+            super("An account already exists for that email address.");
+        }
+    }
+
     /** 401: wrong credentials, or a missing, invalid or expired token or session. */
     static final class UnauthenticatedException extends RuntimeException {
         private static final long serialVersionUID = 1L;

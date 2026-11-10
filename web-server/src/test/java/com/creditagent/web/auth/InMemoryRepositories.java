@@ -24,6 +24,9 @@ public final class InMemoryRepositories {
             if (byId.values().stream().anyMatch(u -> user.ssnHash().equals(u.ssnHash()))) {
                 return CreateResult.SSN_TAKEN;
             }
+            if (byId.values().stream().anyMatch(u -> user.email().equalsIgnoreCase(u.email()))) {
+                return CreateResult.EMAIL_TAKEN;
+            }
             byId.put(user.userId(), user);
             return CreateResult.CREATED;
         }

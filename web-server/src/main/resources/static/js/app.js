@@ -2,6 +2,7 @@ import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
+import { RETRY_DELAYS_MS, alertsChecked, alertsView } from './alerts.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -19,7 +20,7 @@ const offersWidget = $('offers-widget');
 
 // ---------- signed-in / signed-out view ----------
 
-function showSignedIn(userId, ssnMasked, offers) {
+function showSignedIn(userId, ssnMasked, offers, alerts) {
   accountUser.textContent = userId;
   $('ssn-hint').textContent = ssnHint(ssnMasked || session.ssnMasked());
   account.hidden = false;
@@ -33,6 +34,8 @@ function showSignedIn(userId, ssnMasked, offers) {
   resetChat();
   loadReportStatus();
   if (offers) renderOffers(offers); else loadOffers();
+  // Login waits 1.5 s at most: if the alerts service did not answer in time, ask again.
+  if (alertsChecked(alerts)) renderAlerts(alerts); else loadAlerts();
 }
 
 function showSignedOut(message) {
@@ -43,6 +46,8 @@ function showSignedOut(message) {
   lockWidget.hidden = true;
   chatWidget.hidden = true;
   offersWidget.hidden = true;
+  renderAlerts(null);
+  alertsGeneration += 1;
   offersGeneration += 1;
   signInGeneration += 1;
   $('offers-list').replaceChildren();
@@ -178,7 +183,7 @@ async function logIn(userId, password, errorElement) {
   }
   session.save(data.token, data.userId, data.ssnMasked);
   // The login answer carries the offers matched to the user's last score and ZIP code.
-  showSignedIn(data.userId, data.ssnMasked, data.offers);
+  showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts);
   return true;
 }
 
@@ -369,6 +374,41 @@ function render({ score, ssnMasked }) {
   ringScore.style.fill = band.color;
   $('ring-caption').textContent = `${band.label} · ${ssnMasked}`;
   result.hidden = false;
+}
+
+// ---------- dark-web alerts ----------
+
+let alertsGeneration = 0;
+
+function renderAlerts(data) {
+  const view = alertsView(data);
+  const banner = $('alerts-banner');
+  $('alerts-message').textContent = view.message ?? '';
+  $('alerts-findings').replaceChildren(...view.findings.map((text) => {
+    const item = document.createElement('li');
+    item.textContent = text;
+    return item;
+  }));
+  banner.hidden = !view.show;
+}
+
+async function loadAlerts(attempt = 0) {
+  const generation = attempt === 0 ? ++alertsGeneration : alertsGeneration;
+  let data = null;
+  try {
+    const answer = await api('/api/v1/alerts', { method: 'GET' });
+    if (answer.response.ok) data = answer.data;
+  } catch {
+    // Treated like an unavailable service below.
+  }
+  if (generation !== alertsGeneration) return;
+  if (alertsChecked(data)) {
+    renderAlerts(data);
+  } else if (attempt < RETRY_DELAYS_MS.length) {
+    // Still unavailable: ask again a little later (a sign-out or new sign-in cancels it).
+    setTimeout(() => { if (generation === alertsGeneration) loadAlerts(attempt + 1); }, RETRY_DELAYS_MS[attempt]);
+  }
+  // After that, no banner is better than a wrong one; the next login checks again.
 }
 
 // ---------- card offers ----------

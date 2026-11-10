@@ -30,6 +30,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
 | S-18 | Medium | Registration accepts an uploaded image (parser attack surface, oversized files) | Mitigated |
+| S-22 | Low | Dark-web alerts: a new table links users' emails to the places they were exposed | Mitigated: only registered users are checked; one account per email; internal look-up behind the service token, email in the body, never logged; placeholder source contacts nothing. Open: emails are not verified |
 | S-21 | Low | Card offers: the account now keeps the user's ZIP code and latest credit score | Mitigated: only score and ZIP go to the Offers service; offers are not firm offers of credit and say so |
 | S-20 | Medium | The chat sends a user's credit report and free-text questions to an (eventually LLM-backed) agent | Mitigated: own-SSN check, input and output guardrails outside the model, PII redaction, RAM-only bounded memory, internal-only agent |
 | S-19 | High | The Claude connector exposes a user's credit data to an internet-facing LLM client | Mitigated: OAuth 2.1 with PKCE, own-data-only tools, encrypted tokens; data still reaches the user's Claude conversations by design |
@@ -95,6 +96,15 @@ Check the model provider's data-retention terms before enabling it.
 - `kyc-service` caps bodies at 10 MB plus multipart framing, sniffs the format from magic bytes, reads width and height from the header and refuses anything over 40 megapixels before decoding a pixel, decodes anything over 4 megapixels subsampled (a 300 KB, 40-megapixel 16-bit PNG would otherwise take about 320 MB of heap, enough to stop the JVM under `-XX:+ExitOnOutOfMemoryError`), and treats any decoder error as an unsupported image.
 - The SSN read from the card is never logged; `Verification` and `VerifiedSsn` redact it in `toString()`. Only the KYC verification id is stored with the user.
 - The image itself is not stored by the web server or the dummy provider.
+
+### S-22 Dark-web alerts (Mitigated)
+- The `Alerts` table holds an email, a location name and a time: personal data. Only the emails of registered users are checked.
+- Alerts are keyed by email, so an email belongs to one account: a conditional `email#<sha-256>` claim item, written in the registration transaction, refuses a second account with the same address (any letter case). No account can see another account's alerts.
+- Open (Low): addresses are not verified. Someone can register with an address that is not theirs, if no account has it yet, and learn whether it was exposed. It costs them an SSN card that passes KYC (one account per SSN). Fix: email verification, then watch and show alerts only for verified addresses.
+- `alerts-service` is internal: every request needs the service token, bodies are limited to 4 KB, and the email is validated (`@Email`, at most 254 characters). The email travels in the POST body, so it does not reach access logs; `toString` of requests and alerts redacts it, and the monitor logs counts only.
+- The web server only ever looks up the signed-in user's own email; there is no endpoint that takes an email from the browser.
+- The placeholder source contacts nothing. A real provider would send users' emails to a third party: re-review then (data-processing agreement, k-anonymity or hashed look-ups).
+- Open: there is no account deletion yet; when one is added, it must delete the user's alerts too.
 
 ### S-21 Card offers (Mitigated)
 - **New personal data at rest:** the users table now holds the ZIP code (asked at registration) and the latest credit score with its time. Both are personal data; they live in the same encrypted-at-rest table as the rest of the account and are never logged. The SSN is still never stored: the first score is computed from the SSN the KYC check read, then dropped.

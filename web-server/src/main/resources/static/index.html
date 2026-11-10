@@ -18,6 +18,13 @@
 
   <p id="notice" class="notice" role="status" hidden></p>
 
+  <!-- Dark-web alert: shown after login when the dark web monitor has found the user's email. -->
+  <section class="alert-banner" id="alerts-banner" role="alert" aria-labelledby="alerts-title" hidden>
+    <h2 id="alerts-title">Your information was found on the dark web</h2>
+    <p id="alerts-message"></p>
+    <ul id="alerts-findings"></ul>
+  </section>
+
   <main class="widgets">
     <!-- Widget: sign in / register. Shown while signed out. -->
     <section class="widget" id="auth-widget" aria-labelledby="auth-title">
