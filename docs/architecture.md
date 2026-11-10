@@ -22,6 +22,7 @@ flowchart LR
         CA[client-agent :8086]
         CIA[credit-intelligence-agent :8085]
     end
+    UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
     CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
 
@@ -45,6 +46,10 @@ flowchart LR
     CIA -- "D · report" --> SC
     SC -. "E · score" .-> CIA
     CIA -. "F · recommendations" .-> CA
+    UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
+    WS -- "Q2 · report (resources/read)" --> M
+    WS -- "Q3 · question + report" --> UAA
+    UAA -. "Q4 · answer + disclaimer" .-> WS
     CL -- "O1 · OAuth: register, sign in (password + SSN), token" --> WS
     CL -- "C1 · tools/call + Bearer token" --> CC
     CC -- "C2 · introspect token → user + SSN" --> WS
@@ -68,6 +73,7 @@ flowchart LR
 | `web-server` | Serves the UI, registers users after a KYC check of their SSN card, logs them in (DynamoDB, JWT), and orchestrates flow 1–10 | Spring Boot, AWS SDK DynamoDB, Nimbus JOSE |
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
+| `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
 | `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
 
 ## Design decisions
@@ -238,3 +244,37 @@ sequenceDiagram
 **Limits.** The connector has the shared inbound limits (token bucket and concurrency cap), plus a per-user window (`CONNECTOR_REQUESTS_PER_USER_PER_MINUTE`, through the same `KeyedRateLimiter` the web server uses per IP). A request with no token, or one that is not even shaped like a JWE (five base64url parts, at most 4 KB), is refused without calling the web server. A JWE-shaped forgery still costs one introspection call, but the web server rejects it after a local decryption failure, with no DynamoDB read, and the shared inbound limits bound how many arrive. On the web server, the sign-in form (`/oauth/authorize`) is limited per IP like the API. The token, registration and revocation endpoints are not, because Claude's servers share a few addresses among every user. A guessed code or token is useless anyway.
 
 **Timeouts.** Every outbound call is bounded: the web server takes 12 s (one try may wait on two DynamoDB calls), the report read 20 s, the score 12 s, and advice 95 s (longer than the client agent's own 90 s). Introspection, status reads and lock changes are retried with backoff (setting the lock to a value is idempotent). Advice is retried only when it never arrived.
+
+## Chat (User Advisor Agent)
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant W as web-server
+    participant M as MCP server
+    participant A as user-advisor-agent
+    B->>W: POST /api/v1/chat {ssn, message} + JWT
+    W->>W: own SSN? (403 if not)
+    W->>M: resources/read (the user's report)
+    W->>A: POST /internal/v1/conversations/{hash(session)}/messages {message, report}
+    A->>A: input guardrails (normalise → abuse → injection → protected → other person → fraud → topic → redact)
+    A->>A: model(question, history, report)
+    A->>A: output guardrails (offensive/protected → leak → promises → redact → cap) + disclaimer
+    A->>A: remember the checked turn
+    A-->>W: {reply, disclaimer, refused}
+    W-->>B: the same
+    B->>W: POST /api/v1/auth/logout
+    W->>A: DELETE /internal/v1/conversations/{hash(session)}
+```
+
+**Why a separate agent.** The guardrails, the memory and later the LLM are the parts most likely to change and to need their own scaling, so they sit apart from the web server. The agent is internal only: every route but health needs the service token.
+
+**Guardrails outside the model.** Every check is deterministic code before or after the model, so it holds for any model plugged in later (OWASP LLM01, LLM05, LLM07). Text is normalised first: NFKC, invisible characters removed, look-alike letters and digit spellings folded. Without that, `Іgnоrе previous instructions` in Cyrillic, or `sh1t`, gets past a word list. Refusals are fixed texts and never echo the input. An answer that fails the output checks is replaced whole rather than edited. Only checked text is stored, so a successful injection cannot poison later turns (ASI06). Everything placed inside the prompt's data blocks is escaped (`&`, `<`, `>`), so no spelling of a closing tag can end a block early. Greetings are not remembered, so they cannot open the door for an off-topic "follow-up".
+
+**Memory trade-offs.** The spec asks for memory that is not persistent, expires on logout or inactivity, and is evicted LRU under memory pressure. The agent therefore holds state. Run one instance, or route by conversation id (sticky sessions); a restart forgets every conversation, which costs users only their context. All limits are bounded: idle TTL (5 minutes, matching the login session; reads count as use), turns per conversation (20, each capped at 1,000 + 2,000 characters by the guardrails), conversations (10,000, LRU), and a heap-pressure check on every write (85% of the old generation still live after the last GC) that drops the least recently used half. LRU was chosen over LFU: chats are short-lived, so recency predicts reuse better than frequency.
+
+**The report travels with every question**, as the spec says, without the name, masked SSN and report id. That costs one MCP read per message. Caching the report in the agent would save it, but would put more personal data in a stateful service.
+
+**Resilience.** Each try waits at most `ADVISOR_TIMEOUT` (15 s). A chat message is retried only when it provably never arrived (connection refused, connect timeout) or was refused with 429 or 503 before any work, because each message adds to the conversation. With the default 3 tries, the worst case is therefore about 47 s (`RetrySettings.worstCase`); a read timeout is never retried. Forgetting a conversation is retried on any transient failure, and runs on a virtual thread after logout: a slow or unreachable agent never delays the logout, and the conversation expires on its own anyway.
+
+**Eval log.** Every turn is also written as one JSON line to its own rolling file for offline evals: the question, the input verdict, the model's raw answer, what was shown, the output verdict, the model and its latency. It goes through a dedicated logger (`advisor-eval`, outside every package, so no class log lines reach the file) and an asynchronous appender with a bounded queue that drops lines rather than block a chat. Everything written is redacted; the report and the user's identity never are. Retention is bounded (30 days, 500 MB). Trade-off: a raw answer the output guardrails replaced is kept in the log, because that is exactly what an eval of the guardrails needs. The agent has the shared inbound limits (token bucket and concurrency cap) and a 512 KB body limit, and the web server's per-IP limit covers `/api/v1/chat`.

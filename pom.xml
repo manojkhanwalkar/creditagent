@@ -31,6 +31,7 @@
         <module>credit-intelligence-agent</module>
         <module>client-agent</module>
         <module>claude-connector</module>
+        <module>user-advisor-agent</module>
     </modules>
 
     <properties>

@@ -1,5 +1,6 @@
 import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
 import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
+import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -12,6 +13,7 @@ const notice = $('notice');
 const authWidget = $('auth-widget');
 const scoreWidget = $('score-widget');
 const lockWidget = $('lock-widget');
+const chatWidget = $('chat-widget');
 
 // ---------- signed-in / signed-out view ----------
 
@@ -22,8 +24,10 @@ function showSignedIn(userId, ssnMasked) {
   authWidget.hidden = true;
   scoreWidget.hidden = false;
   lockWidget.hidden = false;
+  chatWidget.hidden = false;
   hideNotice();
   resetLockWidget();
+  resetChat();
   loadReportStatus();
 }
 
@@ -33,7 +37,9 @@ function showSignedOut(message) {
   authWidget.hidden = false;
   scoreWidget.hidden = true;
   lockWidget.hidden = true;
+  chatWidget.hidden = true;
   resetLockWidget();
+  resetChat();
   $('result').hidden = true;
   $('ssn').value = '';
   if (message) showNotice(message);
@@ -350,6 +356,110 @@ function render({ score, ssnMasked }) {
   $('ring-caption').textContent = `${band.label} · ${ssnMasked}`;
   result.hidden = false;
 }
+
+// ---------- chat ----------
+
+const chatForm = $('chat-form');
+const chatLog = $('chat-log');
+const chatMessage = $('chat-message');
+const chatSsn = $('chat-ssn');
+const chatSsnRow = $('chat-ssn-row');
+const chatSend = $('chat-send');
+const chatError = $('chat-error');
+let chatEntries = [];
+// The SSN the chat sends with each question. In this page's memory only: never stored, and dropped
+// at sign-out. Asked for once per sign-in.
+let chatSsnValue = null;
+let chatGeneration = 0;
+const chatGate = createSendGate();
+
+function resetChat() {
+  chatGeneration += 1;
+  chatEntries = [];
+  chatSsnValue = null;
+  chatLog.replaceChildren();
+  chatSsn.value = '';
+  chatMessage.value = '';
+  chatSsnRow.hidden = false;
+  chatGate.reset();
+  chatSend.disabled = false;
+  chatSend.textContent = 'Send';
+  showFormError(chatError, '');
+}
+
+function renderChatEntry(entry) {
+  const item = document.createElement('li');
+  item.className = `chat-entry ${entry.role}${entry.refused ? ' refused' : ''}`;
+  item.textContent = entry.text;
+  if (entry.disclaimer) {
+    const note = document.createElement('small');
+    note.className = 'chat-disclaimer';
+    note.textContent = entry.disclaimer;
+    item.append(note);
+  }
+  chatLog.append(item);
+  while (chatLog.children.length > chatEntries.length) chatLog.firstElementChild.remove();
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function addChatEntry(entry) {
+  chatEntries = appendEntry(chatEntries, entry);
+  renderChatEntry(entry);
+}
+
+chatForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const needSsn = chatSsnValue === null;
+  const ssn = needSsn ? chatSsn.value.trim() : chatSsnValue;
+  const message = chatMessage.value;
+  if (chatGate.busy) return; // Enter while "Thinking…": wait for the answer
+  const problem = checkChat(message, ssn, needSsn);
+  showFormError(chatError, problem || '');
+  if (problem) return;
+  chatGate.begin();
+
+  const generation = chatGeneration;
+  addChatEntry(userEntry(message));
+  chatMessage.value = '';
+  chatSend.disabled = true;
+  chatSend.textContent = 'Thinking…';
+  try {
+    const { response, data } = await api('/api/v1/chat', { body: { ssn, message: message.trim() } });
+    if (generation !== chatGeneration) return;
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      showFormError(chatError, messageFor(response.status, data));
+      return;
+    }
+    if (needSsn) {
+      chatSsnValue = ssn;
+      chatSsn.value = '';
+      chatSsnRow.hidden = true;
+    }
+    addChatEntry(assistantEntry(data));
+  } catch {
+    if (generation !== chatGeneration) return;
+    showFormError(chatError, 'Could not reach the server. Check your connection and try again.');
+  } finally {
+    // A request from before a sign-out or sign-in must not unlock the new session's form.
+    if (generation === chatGeneration) {
+      chatGate.end();
+      chatSend.disabled = false;
+      chatSend.textContent = 'Send';
+    }
+  }
+});
+
+chatMessage.addEventListener('keydown', (event) => {
+  // Enter sends; Shift+Enter makes a new line.
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
 
 // ---------- start-up: resume a session from this tab if it is still valid ----------
 

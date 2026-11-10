@@ -1,0 +1,42 @@
+server:
+  port: ${PORT:8089}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: user-advisor-agent
+
+credit:
+  advisor:
+    # Required: only the web server, presenting this token, may call the agent. Empty = API off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
+    # Conversation memory is in RAM only. Forgotten after this much idle time (the web server's
+    # session idle timeout), at logout, and least recently used first under memory pressure.
+    memory-ttl: ${ADVISOR_MEMORY_TTL:5m}
+    max-conversations: ${ADVISOR_MAX_CONVERSATIONS:10000}
+    max-turns: ${ADVISOR_MAX_TURNS:20}
+    memory-pressure: ${ADVISOR_MEMORY_PRESSURE:0.85}
+    max-prompt-chars: ${ADVISOR_MAX_PROMPT_CHARS:1000}
+    max-reply-chars: ${ADVISOR_MAX_REPLY_CHARS:2000}
+    sweep-interval: 30s
+    # One JSON line per chat turn for offline evals: the question, the model's raw answer, what was
+    # shown, both guardrail verdicts, the model and its latency. Identifiers are redacted and the credit
+    # report is never written. Rolled daily and at max-file-size, gzipped, capped at total-size-cap.
+    eval-log:
+      enabled: ${ADVISOR_EVAL_LOG_ENABLED:true}
+      directory: ${ADVISOR_EVAL_LOG_DIR:logs}
+      max-file-size: 10MB
+      max-history: 30
+      total-size-cap: 500MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

@@ -98,3 +98,17 @@ figcaption { color: var(--muted); margin-top: 8px; }
 }
 .lock-status { margin: 0 0 12px; font-weight: 600; }
 .lock-status.locked { color: #8A3B22; }
+
+/* ---------- chat ---------- */
+.chat-widget { grid-column: 1 / -1; }
+.chat-log { list-style: none; margin: 0 0 16px; padding: 0; max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.chat-log:empty { display: none; }
+.chat-entry { max-width: 85%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-entry.user { align-self: flex-end; background: #e6ecf7; color: #1a3f91; }
+.chat-entry.assistant { align-self: flex-start; background: #f0f0eb; }
+.chat-entry.refused { border-left: 4px solid var(--error); }
+.chat-disclaimer { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
+#chat-form input, #chat-form textarea { display: block; width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+#chat-form textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+#chat-form textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.chat-note { margin-bottom: 0; }
