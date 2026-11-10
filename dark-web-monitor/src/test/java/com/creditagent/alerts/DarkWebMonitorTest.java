@@ -38,6 +38,21 @@ class DarkWebMonitorTest {
         public List<Alert> find(String email) {
             return byKey.values().stream().filter(a -> a.email().equals(Alert.normalise(email))).toList();
         }
+
+        @Override
+        public List<Alert> unnotifiedBetween(java.time.Instant from, java.time.Instant to, int max) {
+            throw new UnsupportedOperationException("the monitor never reads for notifications");
+        }
+
+        @Override
+        public boolean claimNotification(Alert alert, java.time.Instant runAt) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void releaseNotification(Alert alert, java.time.Instant runAt) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     static MonitorProperties properties(List<String> exposed, double rate, int max) {

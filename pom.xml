@@ -37,6 +37,7 @@
         <module>alerts-store</module>
         <module>dark-web-monitor</module>
         <module>alerts-service</module>
+        <module>alert-notifier</module>
     </modules>
 
     <properties>

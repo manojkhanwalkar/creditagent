@@ -2,7 +2,8 @@
 # Then: cp .env.example .env  (and set CREDIT_FILE_HMAC_KEY), docker compose up --build
 #
 # Only the web UI and OAuth server (8080), the client agent (8086), the dummy KYC provider's sample
-# cards (8087) and the Claude connector (8088) are published, and only on localhost.
+# cards (8087), the Claude connector (8088) and Mailpit's inbox (8025: every alert email, unauthenticated,
+# so local only) are published, and only on localhost.
 # Everything else talks over the private compose network.
 
 x-service: &service
@@ -136,6 +137,37 @@ services:
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
     depends_on: [dynamodb, web-server]
+
+  # Once a day emails each user whose address was found in the last 24 hours. Locally the emails go to
+  # Mailpit (http://localhost:8025); in production point MAIL_HOST at a real relay.
+  alert-notifier:
+    <<: *service
+    build: { context: ., args: { MODULE: alert-notifier } }
+    environment:
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      DYNAMODB_CREATE_TABLES: "true"
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      # Off only for the bundled Mailpit: for any other MAIL_HOST set both to true in .env (the
+      # notifier refuses to start with STARTTLS off for a relay that is not local).
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-false}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
+      NOTIFIER_CRON: ${NOTIFIER_CRON:-0 0 8 * * *}
+      NOTIFIER_APP_URL: ${NOTIFIER_APP_URL:-http://localhost:8080}
+    depends_on: [dynamodb, mailpit]
+
+  # Catches the notifier's emails locally; nothing leaves the machine. Web UI on 127.0.0.1:8025.
+  mailpit:
+    image: axllent/mailpit:v1.20.0
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    ports:
+      - "127.0.0.1:8025:8025"
 
   alerts-service:
     <<: *service
