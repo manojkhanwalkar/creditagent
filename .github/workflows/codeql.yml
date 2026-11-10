@@ -1,3 +1,6 @@
+# The repository is private on a plan without GitHub Code Security, so results cannot be uploaded to
+# code scanning. CodeQL still runs every query (security-extended) and fails the job on any finding;
+# the SARIF file is kept as an artifact to read the details.
 name: CodeQL
 
 on:
@@ -17,7 +20,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
+      # Private repositories: CodeQL reads its own workflow run.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -40,3 +44,18 @@ jobs:
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           category: /language:${{ matrix.language }}
+          upload: never
+          output: sarif-results
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: codeql-${{ matrix.language }}
+          path: sarif-results
+          retention-days: 14
+      - name: Fail on any finding
+        run: |
+          count=$(jq '[.runs[].results[]?] | length' sarif-results/*.sarif | awk '{s+=$1} END {print s+0}')
+          jq -r '.runs[].results[]? | "\(.ruleId): \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine) \(.message.text | split("\n")[0])"' sarif-results/*.sarif
+          echo "CodeQL findings: $count"
+          test "$count" -eq 0
