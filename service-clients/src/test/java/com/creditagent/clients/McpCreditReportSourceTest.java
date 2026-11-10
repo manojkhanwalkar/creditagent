@@ -233,8 +233,11 @@ class McpCreditReportSourceTest {
         slowReadMillis = 1_500;
         int readsBefore = reads.get();
 
-        java.util.concurrent.CompletableFuture<Optional<CreditReport>> slow =
-                java.util.concurrent.CompletableFuture.supplyAsync(() -> source.findReport(Ssn.parse("123-45-6789")));
+        // Its own thread, not the common pool: with 2 CPUs (GitHub's runners for private repositories)
+        // the common pool has one thread, and blocking it here starves the MCP client's own async work.
+        java.util.concurrent.FutureTask<Optional<CreditReport>> slow =
+                new java.util.concurrent.FutureTask<>(() -> source.findReport(Ssn.parse("123-45-6789")));
+        Thread.ofPlatform().name("slow-read").start(slow);
         // Wait until the server has the slow read, so it is surely in flight on the shared connection.
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
         while (reads.get() == readsBefore) {
