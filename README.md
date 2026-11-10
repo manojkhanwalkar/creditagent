@@ -243,8 +243,8 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `ci.yml` | PRs, pushes to `main` | Maven verify on Java 26, UI tests, image build with Trivy scan; pushes `ghcr.io/<owner>/creditagent-<service>` from `main` |
 | `codeql.yml` | PRs, `main`, weekly | CodeQL (`security-extended`) for Java, JavaScript and the workflows; any finding fails the job (results kept as a SARIF artifact, since the private repo has no code scanning) |
 | `security.yml` | PRs, `main` | Trivy scan of the declared dependencies (high and critical advisories with a fix fail it) and Gitleaks secret scan |
+| `release.yml` | tags `v*.*.*` | Versioned images with SBOM and provenance, plus a GitHub release |
 
 The repository is private on a GitHub plan without Code Security or branch protection for private repositories: CodeQL runs but does not upload, a Trivy scan stands in for GitHub's dependency review, and `main` is not protected by GitHub. Every change still goes through a PR, its reviews and green CI before it is merged.
-| `release.yml` | tags `v*.*.*` | Versioned images with SBOM and provenance, plus a GitHub release |
 
 Dependabot keeps Maven, npm, Docker and action pins up to date.

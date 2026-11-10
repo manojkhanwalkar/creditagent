@@ -11,8 +11,9 @@ permissions:
 
 jobs:
   # GitHub's dependency review needs Code Security on a private repository, so Trivy checks the
-  # declared dependencies (Maven poms, npm lock file) instead: a high or critical advisory with a fix
-  # fails the PR. The built images are scanned again in CI.
+  # declared dependencies instead (the Maven poms; npm only if a lock file is committed, and the UI has
+  # no npm dependencies today): a high or critical advisory with a fix fails the PR. The built images
+  # are scanned again in CI.
   dependency-scan:
     name: Dependency scan
     runs-on: ubuntu-latest
