@@ -24,7 +24,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 
 | Module | Port | What it does |
 |---|---|---|
-| `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
+| `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; writes one report per bureau to `~/Reports/<Bureau>/`, each in that bureau's format |
@@ -32,10 +32,12 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
 | `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
+| `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
+| `alerts-service` | 8092 | Internal only (service token): `POST /internal/v1/alerts/lookup` (`{email}`) answers whether the `Alerts` table holds a record for that email, and where it was found |
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
 | `kyc-service` | 8087 | Dummy KYC provider: `POST /api/v1/ssn-verifications` (multipart `document`) refuses blurred or non-card photos and returns the SSN on the card; `GET /api/v1/sample-cards/{ssn}?blur=N` makes demo cards when enabled |
-| `common`, `service-clients`, `web-support` | — | Shared libraries |
+| `common`, `service-clients`, `web-support`, `alerts-store` | — | Shared libraries (`alerts-store`: the `Alerts` table, used by the monitor and the alerts service) |
 
 ## Build and test
 
@@ -101,6 +103,18 @@ At registration the user also gives their **ZIP code**. The web server keeps eac
 | Format | Each offer carries the terms of a Schumer box (Regulation Z, 12 CFR 1026.60) exactly as the product lists them, never computed: purchase, balance transfer, cash advance and penalty APRs, annual fee, transaction fees, grace period (null = see issuer terms). Plus rewards in the issuer's words, estimated approval odds, availability, expiry and a "not a firm offer of credit" disclosure on the list and on every offer |
 
 The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP `tools/call` and runs it through the same MCP server, so both always answer the same. The catalogue is a placeholder (`OfferMarketplace.placeholder()`, fictional issuers) until an offers marketplace exists; replace the `OfferMarketplace` bean to plug one in. Both interfaces need the internal service token. Login asks once and waits at most `OFFERS_LOGIN_TIMEOUT` (1.5 s, no retry), so a slow or down Offers service never holds up a login: the widget says offers are unavailable, and `GET /api/v1/offers` (retried) fetches them later. Right after registration, while the first score is still being computed, the page asks again after 2, 5 and 10 seconds. A user with no recorded score is asked to look up their score first.
+
+## Dark-web alerts
+
+| Part | What it does |
+|---|---|
+| `Alerts` table | DynamoDB, key `email` (lower-cased) + `location`, attribute `timestamp` (when it was first found). One row per email and location: finding the same exposure again changes nothing |
+| `dark-web-monitor` | Runs continuously. Each cycle (`DARKWEB_SCAN_INTERVAL`, 1 minute after the previous one ends) it reads registered users' emails from the users table a page at a time (at most `DARKWEB_MAX_EMAILS_PER_CYCLE` rows a cycle; the next cycle carries on where this one stopped), checks each against every location in `DARKWEB_LOCATIONS`, and writes what it finds to `Alerts`. Only registered users are watched, so nothing is stored about anyone else |
+| Placeholder source | Nothing on the dark web is contacted. Emails in `DARKWEB_PLACEHOLDER_EXPOSED` are always "found"; otherwise a fixed hash of the email and location marks about `DARKWEB_PLACEHOLDER_RATE` (2%) of pairs as exposed, the same every time. Replace the `DarkWebSource` bean to plug in a real breach-data provider |
+| `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
+| Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down, login still works and the page asks again later via `GET /api/v1/alerts` (retried) |
+
+To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle.
 
 ## Chat
 
@@ -201,6 +215,10 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `CONNECTOR_RESOURCE_URL` | web server | `http://localhost:8088/mcp`: the only audience tokens are issued for; must equal the connector's `<CONNECTOR_PUBLIC_URL>/mcp` |
 | `OAUTH_ACCESS_TOKEN_TTL`, `OAUTH_ALLOW_LOOPBACK_REDIRECTS` | web server | `1h`, `true` (loopback redirects serve Claude Code and Desktop; Claude's two web callbacks are always allowed) |
 | `OFFERS_URL`, `OFFERS_TIMEOUT`, `OFFERS_LOGIN_TIMEOUT` | web server | `http://localhost:8090`, `3s` a try for `GET /api/v1/offers` (retried), `1500ms` for the single try at login |
+| `ALERTS_URL`, `ALERTS_TIMEOUT`, `ALERTS_LOGIN_TIMEOUT` | web server | `http://localhost:8092`, `3s` a try for `GET /api/v1/alerts` (retried), `1500ms` for the single try at login |
+| `ALERTS_TABLE` | monitor, alerts service | `Alerts` |
+| `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1m`, `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
+| `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0.02` |
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
 | `ADVISOR_MEMORY_TTL`, `ADVISOR_MAX_CONVERSATIONS`, `ADVISOR_MAX_TURNS`, `ADVISOR_MEMORY_PRESSURE` | advisor agent | `5m`, `10000`, `20`, `0.85` |
 | `ADVISOR_MAX_PROMPT_CHARS`, `ADVISOR_MAX_REPLY_CHARS` | advisor agent | `1000`, `2000` |

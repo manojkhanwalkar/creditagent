@@ -49,11 +49,14 @@ class AuthController {
     private final java.util.List<SessionEndListener> sessionEndListeners;
 
     private final org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers;
+    private final org.springframework.beans.factory.ObjectProvider<LoginAlerts> loginAlerts;
 
     AuthController(AuthService auth, org.springframework.beans.factory.ObjectProvider<SessionEndListener> sessionEndListeners,
-            org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers) {
+            org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers,
+            org.springframework.beans.factory.ObjectProvider<LoginAlerts> loginAlerts) {
         this.auth = auth;
         this.loginOffers = loginOffers;
+        this.loginAlerts = loginAlerts;
         this.sessionEndListeners = sessionEndListeners.orderedStream().toList();
     }
 
@@ -80,9 +83,12 @@ class AuthController {
         }
     }
 
-    /** {@code offers}: card offers matched at login (see {@link LoginOffers}); null when there is no source. */
+    /**
+     * {@code offers}: card offers matched at login (see {@link LoginOffers}); {@code alerts}: whether the
+     * user's email was found on the dark web (see {@link LoginAlerts}). Each is null when there is no source.
+     */
     record LoginResponse(String token, String tokenType, String userId, String ssnMasked, long idleTimeoutSeconds,
-            Object offers) {}
+            Object offers, Object alerts) {}
 
     record SessionResponse(String userId, String ssnMasked) {}
 
@@ -105,8 +111,27 @@ class AuthController {
     LoginResponse login(@Valid @RequestBody LoginRequest request) {
         AuthService.LoginResult result = auth.login(request.userId(), request.password());
         LoginOffers offers = loginOffers.getIfAvailable();
-        return new LoginResponse(result.token(), "Bearer", result.userId(), result.ssnMasked(),
-                result.idleTimeout().toSeconds(), offers == null ? null : offers.offersFor(result.userId()));
+        LoginAlerts alerts = loginAlerts.getIfAvailable();
+        // Both are optional extras that never throw; asked side by side, so a login waits for the
+        // slower of the two, not their sum.
+        try (var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var offersFuture = tasks.submit(() -> offers == null ? null : offers.offersFor(result.userId()));
+            var alertsFuture = tasks.submit(() -> alerts == null ? null : alerts.alertsFor(result.userId()));
+            return new LoginResponse(result.token(), "Bearer", result.userId(), result.ssnMasked(),
+                    result.idleTimeout().toSeconds(), extra(offersFuture), extra(alertsFuture));
+        }
+    }
+
+    private static Object extra(java.util.concurrent.Future<Object> future) {
+        try {
+            return future.get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            log.warn("Login extra failed: {}", SafeLogging.describe(e.getCause()));
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     @PostMapping("/logout")

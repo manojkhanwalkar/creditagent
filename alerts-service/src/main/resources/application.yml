@@ -1,0 +1,29 @@
+server:
+  port: ${PORT:8092}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: alerts-service
+
+credit:
+  alerts:
+    # Required: only the web server, presenting this token, may ask. Empty = the API is off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
+    table: ${ALERTS_TABLE:Alerts}
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    region: ${AWS_REGION:us-east-1}
+    dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

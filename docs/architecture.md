@@ -23,6 +23,9 @@ flowchart LR
         CIA[credit-intelligence-agent :8085]
     end
     OFS[offers-service :8090<br/>MCP tool + REST<br/>ranks card offers]
+    DWM[dark-web-monitor :8091<br/>runs continuously<br/>placeholder source]
+    AT[(Alerts table<br/>email + location → timestamp)]
+    ALS[alerts-service :8092<br/>internal look-up]
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
     CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
@@ -50,6 +53,10 @@ flowchart LR
     UI -- "L1 · login" --> WS
     WS -- "L2 · last score + ZIP (POST /api/v1/offers)" --> OFS
     OFS -. "L3 · up to 10 ranked offers" .-> WS
+    DWM -- "D1 · registered emails × known locations → exposures" --> AT
+    WS -- "L4 · email (POST /internal/v1/alerts/lookup)" --> ALS
+    ALS -- "L5 · query by email" --> AT
+    ALS -. "L6 · exposed + where, when" .-> WS
     UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
     WS -- "Q2 · report (resources/read)" --> M
     WS -- "Q3 · question + report" --> UAA
@@ -78,6 +85,9 @@ flowchart LR
 | `credit-intelligence-agent` | A2A server: report, then score, then recommendations | a2a-java server, LangChain4j AI service (optional) |
 | `client-agent` | A2A client that sends the SSN | LangChain4j `AgenticServices.a2aBuilder` |
 | `offers-service` | Credit card offers for a score and ZIP code, ranked; an MCP tool, and a REST API that calls it | Spring Boot, LangChain4j `McpServer` |
+| `dark-web-monitor` | Scheduled job: checks registered users' emails against known dark-web locations and records exposures in the `Alerts` table (placeholder source) | Spring Boot `@Scheduled`, AWS SDK DynamoDB |
+| `alerts-service` | Internal look-up: does the `Alerts` table hold a record for this email? | Spring Boot, AWS SDK DynamoDB |
+| `alerts-store` | The `Alerts` table: record type, repository, table creation | AWS SDK DynamoDB |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
 | `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
 
@@ -313,3 +323,39 @@ sequenceDiagram
 **Resilience.** Login asks once and waits at most `OFFERS_LOGIN_TIMEOUT` (1.5 s, no retry), so a hung Offers service costs a login 1.5 s, not the ~11 s three retried tries would. `GET /api/v1/offers` uses `OFFERS_TIMEOUT` (3 s) a try with retries. Any failure, the account read included, becomes `UNAVAILABLE`, never an error; a failed score write never fails a score look-up. Up to 10 offers are shown even if the service returned more, and the web server adds its own disclaimer if the service sent none. After registration the page re-asks at 2, 5 and 10 s, since the first score is computed in the background.
 
 **Placeholder marketplace.** Fictional issuers modelled on typical market score floors per card type. Real offers will come from a marketplace with many issuers; `OfferMarketplace` is the seam.
+
+## Dark-web alerts
+
+```mermaid
+sequenceDiagram
+    participant M as dark-web-monitor
+    participant U as users table
+    participant S as DarkWebSource (placeholder)
+    participant A as Alerts table
+    participant AS as alerts-service
+    participant W as web-server
+    participant B as Browser
+    loop every DARKWEB_SCAN_INTERVAL
+        M->>U: scan a page of emails (resume from last cursor)
+        M->>S: exposed(location, email)? for each known location
+        M->>A: put (email, location, timestamp) if absent
+    end
+    B->>W: POST /api/v1/auth/login
+    par offers and alerts, 1.5 s each
+        W->>AS: POST /internal/v1/alerts/lookup {email}
+        AS->>A: query email (consistent, ≤100)
+        AS-->>W: exposed + findings
+    end
+    W-->>B: token + offers + alerts → banner "found on the dark web… consider identity protection"
+```
+
+**Who is watched.** The monitor reads emails from the users table, so only registered users are checked and the Alerts table holds nothing about anyone else. It scans a page at a time (projection: the email only) up to `DARKWEB_MAX_EMAILS_PER_CYCLE`, and keeps the scan cursor in memory, so the next cycle carries on where the last one stopped. Trade-off: a restart starts the sweep over, which only repeats checks (writes are idempotent).
+
+**Table design.** Key `email` (lower-cased) + `location`, attribute `timestamp`. A conditional put (`attribute_not_exists`) stores each exposure once and keeps the first time it was found; the monitor can find the same exposure every cycle without growing the table. The look-up is one `Query` on the partition key, capped at 100 rows, consistent so a fresh exposure shows at the next login.
+
+**Placeholder source.** `DarkWebSource.placeholder` contacts nothing. Emails in `DARKWEB_PLACEHOLDER_EXPOSED` are always exposed, for demos and tests; otherwise a SHA-256 of email and location marks a stable ~2% of pairs. Replacing the bean is the seam for a real breach-data provider, which would run its own timeouts and limits.
+
+**Login.** The web server sends the email in a POST body (not a URL, which ends up in logs) to the internal alerts service, behind the service token. Offers and alerts are fetched in parallel on virtual threads, each a single try of at most 1.5 s, so the two together add at most 1.5 s to a login; any failure becomes `UNAVAILABLE` and the page asks `GET /api/v1/alerts` (retried) later. The banner lists at most 20 findings.
+
+**Resilience.** The monitor's cycles are `fixedDelay` (never overlap), a failed cycle is logged (counts only, no emails) and the next one runs as usual. DynamoDB calls have an API-call timeout and the SDK's standard retries with jitter; the users scan is bounded per cycle and per page.
+

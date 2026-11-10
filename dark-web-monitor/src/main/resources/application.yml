@@ -1,0 +1,38 @@
+server:
+  port: ${PORT:8091}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: dark-web-monitor
+
+credit:
+  monitor:
+    # One scan cycle over every registered user's email at every known location, then this pause.
+    interval: ${DARKWEB_SCAN_INTERVAL:60s}
+    initial-delay: ${DARKWEB_SCAN_INITIAL_DELAY:10s}
+    # Placeholder "known locations": nothing is contacted. A real source replaces DarkWebSource.
+    locations: ${DARKWEB_LOCATIONS:paste-site-alpha,breach-forum-beta,marketplace-gamma}
+    # Demo data: addresses always reported as found, and the share of others found at each location.
+    placeholder-exposed: ${DARKWEB_PLACEHOLDER_EXPOSED:}
+    placeholder-rate: ${DARKWEB_PLACEHOLDER_RATE:0.02}
+    max-emails-per-cycle: ${DARKWEB_MAX_EMAILS_PER_CYCLE:10000}
+    page-size: 100
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    region: ${AWS_REGION:us-east-1}
+    dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
+    users-table: ${USERS_TABLE:credit-agent-users}
+    alerts-table: ${ALERTS_TABLE:Alerts}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

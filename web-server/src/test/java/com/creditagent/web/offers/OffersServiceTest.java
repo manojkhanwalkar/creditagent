@@ -47,6 +47,17 @@ class OffersServiceTest {
     }
 
     @Test
+    void aLoginHookThatThrowsLeavesItsFieldEmptyAndTheLoginWorks() throws Exception {
+        // AuthController.extra: a failing extra is logged and null, never a failed login.
+        var method = Class.forName("com.creditagent.web.auth.AuthController")
+                .getDeclaredMethod("extra", java.util.concurrent.Future.class);
+        method.setAccessible(true);
+        var failed = java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("boom"));
+        assertThat(method.invoke(null, failed)).isNull();
+        assertThat(method.invoke(null, java.util.concurrent.CompletableFuture.completedFuture("ok"))).isEqualTo("ok");
+    }
+
+    @Test
     void theProductionScoreRecorderIsRegisteredWithTheAuthService() {
         ScoreRecorder recorder = new OffersConfiguration().scoreRecorder(auth, mock(CreditScoreService.class));
         verify(auth).addRegistrationListener(recorder);
