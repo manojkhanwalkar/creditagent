@@ -12,7 +12,7 @@ public interface CreditReportStore {
 
     /**
      * Replaces this consumer's whole set of bureau reports at once: a bureau absent from
-     * {@code reports} ends up with no report. Readers never see a mix of two sets.
+     * {@code reports} ends up with no report. Readers ({@link #findAll}) never see a mix of two sets.
      *
      * @param reports each bureau's report JSON
      */

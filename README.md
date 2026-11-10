@@ -38,7 +38,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
 | `kyc-service` | 8087 | Dummy KYC provider: `POST /api/v1/ssn-verifications` (multipart `document`) refuses blurred or non-card photos and returns the SSN on the card; `GET /api/v1/sample-cards/{ssn}?blur=N` makes demo cards when enabled |
-| `common`, `service-clients`, `web-support`, `alerts-store` | — | Shared libraries (`alerts-store`: the `Alerts` table, used by the monitor and the alerts service) |
+| `common`, `service-clients`, `web-support`, `alerts-store`, `credit-report-store` | — | Shared libraries (`alerts-store`: the `Alerts` table, used by the monitor and the alerts service; `credit-report-store`: the encrypted `CreditReports` table, written by the generator and read by the MCP server) |
 
 ## Build and test
 

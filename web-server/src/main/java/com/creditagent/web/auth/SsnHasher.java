@@ -6,7 +6,7 @@ import com.creditagent.common.SsnHmac;
 /**
  * Keyed hash of an SSN, so the users table can tie an account to its SSN without storing the SSN.
  * See {@link SsnHmac} for why it must be keyed. Uses its own key ({@code SSN_HMAC_KEY}), separate
- * from the credit file names' key.
+ * from the key of the CreditReports table's SSN hash (CREDIT_FILE_HMAC_KEY).
  */
 public final class SsnHasher {
 

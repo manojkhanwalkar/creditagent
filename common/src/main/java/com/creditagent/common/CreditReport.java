@@ -4,11 +4,11 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * A credit report as stored in a credit file and returned by the Credit Report MCP server.
+ * A credit report as returned by the Credit Report MCP server.
  *
- * <p>The report carries only the masked SSN. The file it lives in is named by a keyed hash of the
- * SSN (see {@link CreditFileNames}), so neither the content nor the file system exposes the full
- * number.
+ * <p>The report carries only the masked SSN. The bureau reports it is merged from are stored under a
+ * keyed hash of the SSN ({@link SsnHmac}), encrypted, so neither the content nor the table exposes
+ * the full number.
  */
 public record CreditReport(
         String reportId,

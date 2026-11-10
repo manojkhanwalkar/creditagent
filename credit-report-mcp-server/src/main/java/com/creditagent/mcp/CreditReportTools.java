@@ -2,9 +2,12 @@ package com.creditagent.mcp;
 
 import com.creditagent.clients.ReportLockCheck;
 import com.creditagent.common.InvalidSsnException;
+import com.creditagent.common.SafeLogging;
 import com.creditagent.common.Ssn;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,9 +22,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class CreditReportTools {
 
+    private static final Logger log = LoggerFactory.getLogger(CreditReportTools.class);
+
     static final String NOT_FOUND = "No credit report found for that SSN.";
     static final String LOCKED = ReportLockCheck.LOCKED_MESSAGE;
     static final String LOCK_UNAVAILABLE = "The credit report cannot be released right now. Please try again later.";
+    static final String READ_UNAVAILABLE = "The credit report cannot be read right now. Please try again later.";
 
     private final CreditReportService reports;
     private final ReportLockCheck locks;
@@ -42,7 +48,20 @@ public class CreditReportTools {
         return switch (locks.decide(parsed)) {
             case LOCKED -> LOCKED;
             case UNAVAILABLE -> LOCK_UNAVAILABLE;
-            case RELEASE -> reports.findNormalizedReport(parsed).orElse(NOT_FOUND);
+            case RELEASE -> read(parsed);
         };
+    }
+
+    /**
+     * A fixed answer when the store or NRG fails: LangChain4j would otherwise hand the exception's
+     * message (hosts, table names, account ids, "integrity check") to a third-party MCP host.
+     */
+    private String read(Ssn ssn) {
+        try {
+            return reports.findNormalizedReport(ssn).orElse(NOT_FOUND);
+        } catch (RuntimeException e) {
+            log.warn("get_credit_report failed: {}", SafeLogging.describe(e));
+            return READ_UNAVAILABLE;
+        }
     }
 }

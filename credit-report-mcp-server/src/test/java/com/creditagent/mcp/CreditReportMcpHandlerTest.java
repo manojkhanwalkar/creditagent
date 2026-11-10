@@ -263,6 +263,29 @@ class CreditReportMcpHandlerTest {
     }
 
     @Test
+    void theToolGivesAThirdPartyNoDetailsWhenTheStoreFails() throws IOException {
+        for (RuntimeException failure : List.<RuntimeException>of(
+                software.amazon.awssdk.core.exception.SdkClientException.create(
+                        "Unable to execute HTTP request: Connect to dynamodb:8000 [dynamodb/10.89.0.5] failed"),
+                new IllegalStateException("Credit report failed its integrity check"))) {
+            com.creditagent.reports.CreditReportStore failing = new InMemoryCreditReportStore() {
+                @Override
+                public Map<Bureau, String> findAll(Ssn ssn) {
+                    throw failure;
+                }
+            };
+            CreditReportService reports = new CreditReportService(failing, bureauReports -> REPORT);
+            McpImplementation info = new McpImplementation("credit-report-mcp", "test");
+            CreditReportMcpHandler broken = new CreditReportMcpHandler(
+                    new McpServer(List.of(new CreditReportTools(reports, ssn -> false)), info), info, reports, ssn -> false);
+            String response = broken.handle("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"get_credit_report\",\"arguments\":{\"ssn\":\"123-45-6789\"}}}").orElseThrow();
+            assertThat(response).contains(CreditReportTools.READ_UNAVAILABLE)
+                    .doesNotContain("dynamodb").doesNotContain("10.89").doesNotContain("integrity").doesNotContain("6789");
+        }
+    }
+
+    @Test
     void allowedOriginsDefaultToNone() {
         assertThat(new McpServerProperties(null).allowedOrigins()).isEmpty();
         assertThat(new McpServerProperties(List.of("http://a.example")).allowedOrigins()).containsExactly("http://a.example");

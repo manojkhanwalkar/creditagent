@@ -66,6 +66,16 @@ class ReportControllerTest {
     }
 
     @Test
+    void aPermanentStoreFailureIsA500WithoutRetryAfter() throws Exception {
+        given(service.generate(any(), any())).willThrow(
+                software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException.builder().message("no table").build());
+        mvc.perform(post("/api/v1/reports").contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"123-45-6789\"}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().doesNotExist("Retry-After"))
+                .andExpect(content().string(Matchers.not(Matchers.containsString("no table"))));
+    }
+
+    @Test
     void missingSsnIsA400() throws Exception {
         mvc.perform(post("/api/v1/reports").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());

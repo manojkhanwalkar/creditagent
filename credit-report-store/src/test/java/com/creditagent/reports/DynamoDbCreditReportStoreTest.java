@@ -19,7 +19,6 @@ import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
-import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
@@ -28,8 +27,9 @@ class DynamoDbCreditReportStoreTest {
 
     static final String KEY = "hash-key-hash-key-hash-key-hash-key!";
     final DynamoDbClient dynamo = mock(DynamoDbClient.class);
+    final java.util.List<java.time.Duration> pauses = new java.util.ArrayList<>();
     final DynamoDbCreditReportStore store = new DynamoDbCreditReportStore(dynamo, "CreditReports", new SsnHmac(KEY, "k"),
-            new ReportCipher(ReportCipherTest.NEW, null), Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+            new ReportCipher(ReportCipherTest.NEW, null), Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), pauses::add);
     final Ssn ssn = Ssn.parse("123-45-6789");
 
     static TransactionCanceledException cancelled(String... codes) {
@@ -52,6 +52,38 @@ class DynamoDbCreditReportStoreTest {
         transactionsFail(cancelled("TransactionConflict", "None", "None"));
         store.replaceAll(ssn, Map.of(Bureau.EQUIFAX, "{}"));
         verify(dynamo, times(2)).transactWriteItems(any(Consumer.class));
+        // One pause, with full jitter: anywhere from 0 to the first ceiling.
+        assertThat(pauses).hasSize(1);
+        assertThat(pauses.get(0)).isBetween(java.time.Duration.ZERO, DynamoDbCreditReportStore.BASE_BACKOFF);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aReadThatConflictsWithAWriteTriesAgainAndReadsTheWholeSetInOneTransaction() {
+        when(dynamo.transactGetItems(any(Consumer.class)))
+                .thenThrow(cancelled("None", "TransactionConflict", "None"))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.TransactGetItemsResponse.builder()
+                        .responses(software.amazon.awssdk.services.dynamodb.model.ItemResponse.builder().build()).build());
+        assertThat(store.findAll(ssn)).isEmpty();
+        verify(dynamo, times(2)).transactGetItems(any(Consumer.class));
+        assertThat(pauses).hasSize(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void anInterruptedBackoffGivesUp() {
+        DynamoDbCreditReportStore interrupted = new DynamoDbCreditReportStore(dynamo, "CreditReports", new SsnHmac(KEY, "k"),
+                new ReportCipher(ReportCipherTest.NEW, null), Clock.systemUTC(), duration -> {
+                    throw new InterruptedException();
+                });
+        transactionsFail(cancelled("TransactionConflict"));
+        try {
+            assertThatThrownBy(() -> interrupted.replaceAll(ssn, Map.of())).isInstanceOf(TransactionCanceledException.class);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        verify(dynamo, times(1)).transactWriteItems(any(Consumer.class));
     }
 
     @Test
@@ -77,7 +109,7 @@ class DynamoDbCreditReportStoreTest {
         String huge = "x".repeat(CreditReportStore.MAX_REPORT_BYTES + 1);
         assertThatThrownBy(() -> store.replaceAll(ssn, Map.of(Bureau.EXPERIAN, huge)))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Experian");
-        verify(dynamo, times(0)).transactWriteItems(any(TransactWriteItemsRequest.class));
+        org.mockito.Mockito.verifyNoInteractions(dynamo);
     }
 
     @Test

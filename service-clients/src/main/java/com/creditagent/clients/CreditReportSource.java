@@ -8,7 +8,7 @@ import java.util.Optional;
 public interface CreditReportSource {
 
     /**
-     * @return the report, or empty if no credit file exists for this SSN
+     * @return the report, or empty if no bureau holds a report for this SSN
      * @throws ServiceUnavailableException if the source cannot be reached
      */
     Optional<CreditReport> findReport(Ssn ssn);

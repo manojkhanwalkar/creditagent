@@ -15,7 +15,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups limited to the user's own SSN; the SSN is read by a KYC check of the user's card photo, but the bundled KYC provider is a dummy |
 | S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open; first step: the report-lock check uses a shared internal token (`INTERNAL_API_TOKEN`) |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
-| S-4 | Medium | Credit files are not encrypted at rest | Open |
+| S-4 | Medium | Credit files are not encrypted at rest | Fixed by S-24: reports are AES-256-GCM encrypted in the `CreditReports` table |
 | S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed; now the `CreditReports` table's key is the SSN's HMAC, and each report is encrypted (S-24) |
 | S-6 | Medium | Path traversal through the MCP resource URI | Fixed |
 | S-7 | Medium | SSNs could leak into logs, error messages and exception chains | Fixed |
@@ -52,9 +52,8 @@ The MCP server, score calculator, generator and A2A agent accept any caller on t
 Every hop is `http://`.
 **Fix:** terminate TLS at the edge, and use mTLS between services (S-2).
 
-### S-4 Credit files unencrypted at rest (Medium, open)
-Files are owner-only (`rw-------` in an `rwx------` directory) and hold only a masked SSN, but the rest of the report is plaintext.
-**Fix:** use an encrypted volume, or envelope encryption with a KMS key inside `CreditFileWriter` and `CreditFileRepository`.
+### S-4 Credit files unencrypted at rest (Fixed)
+Reports were plaintext files. They are now encrypted per report (AES-256-GCM) in the `CreditReports` table; see S-24.
 
 ### S-5 SSN as file name (Fixed)
 Reports were files named `HMAC-SHA256(key, ssn).json`; they are now rows of the `CreditReports` table keyed by the same HMAC (S-24). The generator and the MCP server share the key, it must be at least 32 bytes, and it has no default value. `resources/list` returns an empty list, so the server never enumerates people.
@@ -104,7 +103,7 @@ Check the model provider's data-retention terms before enabling it.
 - Each report is encrypted in the service with AES-256-GCM, using a fresh random nonce and a key derived from `CREDIT_REPORT_ENCRYPTION_KEY` (at least 32 bytes, required, no default). Someone with read access to DynamoDB, a backup or an export sees only ciphertext.
 - The associated data is the row's key. A ciphertext moved to another consumer's row, or altered, fails to decrypt. Tested on DynamoDB Local (`CreditReportsTableIntegrationTest`).
 - Values carry a key id, so keys can be rotated; old keys only decrypt.
-- Decryption failures and store outages return no details: an internal error from the MCP server, and 503 from the generator.
+- Decryption failures and store outages return no details: an internal error for the MCP resource, a fixed "cannot be read right now" for the tool (LangChain4j would otherwise pass the exception's text to the MCP host), and 503 (transient) or 500 (permanent) from the generator. All are logged by exception class only.
 - Open: the keys come from the environment. In AWS, use KMS (a customer-managed key for the table, and envelope encryption in `ReportCipher`) and IAM so that only the generator can write and only the MCP server can read.
 
 ### S-23 Alert emails (Mitigated)
@@ -187,8 +186,8 @@ Every service also refuses excess load before doing any work: a token bucket (42
 Containers run as non-root UID 10001 with a read-only root filesystem, `cap_drop: ALL` and `no-new-privileges`. No container holds credit reports on disk any more: they are in the `CreditReports` table, encrypted.
 
 ### S-17 HMAC key rotation (Info, open)
-Changing the key orphans every existing file.
-**Fix:** support a list of keys (current plus previous) in `CreditFileRepository`, and add a re-keying job.
+Changing `CREDIT_FILE_HMAC_KEY` orphans every stored report, since it keys the table's `ssn` column. (The encryption key can be rotated: S-24.)
+**Fix:** look up under the current and previous HMAC keys in `DynamoDbCreditReportStore`, and add a re-keying job; or re-generate the reports.
 
 ## Re-review triggers
 Re-run this review whenever any of these happen:

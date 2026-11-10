@@ -11,7 +11,7 @@
 
     <artifactId>credit-report-generator</artifactId>
     <name>CreditAgent :: Credit Report Generator</name>
-    <description>Separate service that creates credit reports and writes them to the file system</description>
+    <description>Separate service that creates credit reports and stores them, encrypted, in the CreditReports DynamoDB table</description>
 
     <dependencies>
         <dependency>
