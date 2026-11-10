@@ -1,8 +1,6 @@
 package com.creditagent.notifier;
 
 import java.util.Objects;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -13,6 +11,11 @@ public interface EmailSender {
 
     /** @throws MailException or another runtime exception if the email was not accepted for delivery */
     void send(String to, String subject, String body);
+
+    /** False for the placeholder: nothing is sent, so nothing may be marked as notified. */
+    default boolean configured() {
+        return true;
+    }
 
     /** Through an SMTP relay ({@code spring.mail.*}), with the connection and read timeouts set there. */
     static EmailSender smtp(JavaMailSender mail, String from) {
@@ -29,11 +32,20 @@ public interface EmailSender {
     }
 
     /**
-     * The placeholder when no mail relay is configured: sends nothing and logs that it would have,
-     * without the address.
+     * The placeholder when no mail relay is configured: refuses to send, and says it is not configured,
+     * so the notifier leaves every alert unclaimed until a relay is set up.
      */
     static EmailSender placeholder() {
-        Logger log = LoggerFactory.getLogger(EmailSender.class);
-        return (to, subject, body) -> log.info("No mail relay configured (MAIL_HOST): an alert email was not sent");
+        return new EmailSender() {
+            @Override
+            public void send(String to, String subject, String body) {
+                throw new IllegalStateException("No mail relay configured (MAIL_HOST)");
+            }
+
+            @Override
+            public boolean configured() {
+                return false;
+            }
+        };
     }
 }

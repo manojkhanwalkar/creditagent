@@ -64,7 +64,7 @@ class AlertNotifierTest {
     final List<Duration> pauses = new ArrayList<>();
 
     static NotifierProperties properties(int max) {
-        return new NotifierProperties(Duration.ofHours(24), max, 4.0, null, "https://credit.example", null, null, null, null, null);
+        return new NotifierProperties(Duration.ofDays(7), max, 4.0, null, "https://credit.example", null, null, null, null, null);
     }
 
     AlertNotifier notifier(EmailSender email, int max) {
@@ -80,7 +80,7 @@ class AlertNotifierTest {
         alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(23))));
         alerts.record(new Alert("ada@example.com", "loc-b", RUN.minus(Duration.ofHours(2))));
         alerts.record(new Alert("bob@example.com", "loc-a", RUN.minus(Duration.ofMinutes(5))));
-        alerts.record(new Alert("old@example.com", "loc-a", RUN.minus(Duration.ofHours(25)))); // outside the 24 hours
+        alerts.record(new Alert("old@example.com", "loc-a", RUN.minus(Duration.ofDays(8)))); // older than the lookback
 
         assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(3, 2, 0));
         assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com", "bob@example.com");
@@ -108,6 +108,65 @@ class AlertNotifierTest {
         assertThat(notifier(adaFails, 100).run()).isEqualTo(new AlertNotifier.Run(2, 1, 1));
         assertThat(alerts.unnotifiedBetween(RUN.minus(Duration.ofDays(1)), RUN, 10)).extracting(Alert::email)
                 .containsExactly("ada@example.com");
+    }
+
+    @Test
+    void anEmailThatFailedIsSentByTheNextDaysRun() {
+        alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+        EmailSender down = (to, subject, body) -> {
+            throw new org.springframework.mail.MailSendException("relay down");
+        };
+        assertThat(notifier(down, 100).run()).isEqualTo(new AlertNotifier.Run(1, 0, 1));
+
+        AlertNotifier tomorrow = new AlertNotifier(alerts, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
+                Clock.fixed(RUN.plus(Duration.ofDays(1)), ZoneOffset.UTC), pauses::add);
+        assertThat(tomorrow.run()).isEqualTo(new AlertNotifier.Run(1, 1, 0));
+        assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com");
+    }
+
+    @Test
+    void withoutAMailRelayNothingIsReadOrClaimed() {
+        alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+        AlertNotifier unconfigured = notifier(EmailSender.placeholder(), 100);
+        assertThat(unconfigured.run()).isEqualTo(new AlertNotifier.Run(0, 0, 0, true));
+        unconfigured.scheduled();
+        assertThat(alerts.claims).isEmpty();
+        // Once a relay is configured, the waiting alert is emailed.
+        assertThat(notifier().run().emailsSent()).isEqualTo(1);
+    }
+
+    @Test
+    void aDynamoDbErrorWhileClaimingReleasesThatUsersClaimsAndTheRunGoesOn() {
+        Alert first = new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(3)));
+        Alert second = new Alert("ada@example.com", "loc-b", RUN.minus(Duration.ofHours(2)));
+        alerts.record(first);
+        alerts.record(second);
+        alerts.record(new Alert("bob@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+        InMemoryAlerts flaky = new InMemoryAlerts() {
+            @Override
+            public boolean claimNotification(Alert alert, Instant runAt) {
+                if (alert.equals(second)) {
+                    throw new IllegalStateException("DynamoDB timeout");
+                }
+                return AlertNotifierTest.this.alerts.claimNotification(alert, runAt);
+            }
+
+            @Override
+            public List<Alert> unnotifiedBetween(Instant from, Instant to, int max) {
+                return AlertNotifierTest.this.alerts.unnotifiedBetween(from, to, max);
+            }
+
+            @Override
+            public void releaseNotification(Alert alert, Instant runAt) {
+                AlertNotifierTest.this.alerts.releaseNotification(alert, runAt);
+                throw new IllegalStateException("and the release times out too"); // logged, not thrown
+            }
+        };
+        AlertNotifier notifier = new AlertNotifier(flaky, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
+                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add);
+        assertThat(notifier.run()).isEqualTo(new AlertNotifier.Run(3, 1, 1));
+        assertThat(sent).extracting(Sent::to).containsExactly("bob@example.com");
+        assertThat(alerts.claims).doesNotContainKey(InMemoryAlerts.key(first)); // released for the next run
     }
 
     @Test
@@ -169,7 +228,7 @@ class AlertNotifierTest {
     @Test
     void propertiesHaveSafeDefaultsAndRefuseNonsense() {
         NotifierProperties defaults = new NotifierProperties(null, null, null, " ", null, null, null, null, " ", null);
-        assertThat(defaults.window()).isEqualTo(Duration.ofHours(24));
+        assertThat(defaults.lookback()).isEqualTo(Duration.ofDays(7));
         assertThat(defaults.from()).isEqualTo("alerts@creditagent.local");
         assertThat(defaults.appUrl()).isEmpty();
         assertThat(defaults.alertsTable()).isEqualTo("Alerts");

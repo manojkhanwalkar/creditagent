@@ -23,6 +23,16 @@ class AlertEmailTest {
     }
 
     @Test
+    void plainSmtpIsAllowedOnlyForALocalMailCatcher() {
+        NotifierConfiguration.requireTlsUnlessLocal("", false);
+        NotifierConfiguration.requireTlsUnlessLocal("mailpit", false);
+        NotifierConfiguration.requireTlsUnlessLocal("LocalHost ", false);
+        NotifierConfiguration.requireTlsUnlessLocal("smtp.example.com", true);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> NotifierConfiguration.requireTlsUnlessLocal("smtp.example.com", false))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("MAIL_STARTTLS");
+    }
+
+    @Test
     void smtpSendsAPlainTextMessageFromTheConfiguredSender() {
         JavaMailSender mail = mock(JavaMailSender.class);
         EmailSender.smtp(mail, "alerts@credit.example").send("ada@example.com", "subject", "body");
@@ -31,6 +41,9 @@ class AlertEmailTest {
         assertThat(message.getValue().getFrom()).isEqualTo("alerts@credit.example");
         assertThat(message.getValue().getTo()).containsExactly("ada@example.com");
         assertThat(message.getValue().getText()).isEqualTo("body");
-        EmailSender.placeholder().send("ada@example.com", "subject", "body"); // sends nothing, throws nothing
+        assertThat(EmailSender.smtp(mail, "a@b.co").configured()).isTrue();
+        assertThat(EmailSender.placeholder().configured()).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> EmailSender.placeholder().send("ada@example.com", "s", "b"))
+                .isInstanceOf(IllegalStateException.class);
     }
 }

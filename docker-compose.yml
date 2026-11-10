@@ -2,7 +2,8 @@
 # Then: cp .env.example .env  (and set CREDIT_FILE_HMAC_KEY), docker compose up --build
 #
 # Only the web UI and OAuth server (8080), the client agent (8086), the dummy KYC provider's sample
-# cards (8087) and the Claude connector (8088) are published, and only on localhost.
+# cards (8087), the Claude connector (8088) and Mailpit's inbox (8025: every alert email, unauthenticated,
+# so local only) are published, and only on localhost.
 # Everything else talks over the private compose network.
 
 x-service: &service
@@ -151,6 +152,8 @@ services:
       MAIL_PORT: ${MAIL_PORT:-1025}
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      # Off only for the bundled Mailpit: for any other MAIL_HOST set both to true in .env (the
+      # notifier refuses to start with STARTTLS off for a relay that is not local).
       MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-false}
       MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
       NOTIFIER_CRON: ${NOTIFIER_CRON:-0 0 8 * * *}

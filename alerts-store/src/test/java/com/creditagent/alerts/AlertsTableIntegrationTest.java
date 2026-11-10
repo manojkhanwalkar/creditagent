@@ -85,6 +85,19 @@ class AlertsTableIntegrationTest {
     }
 
     @Test
+    void timestampsInTheSameSecondAsABoundAreNotLost() {
+        DynamoDbAlertRepository alerts = new DynamoDbAlertRepository(dynamo, "Alerts");
+        // Instant.toString prints 0, 3, 6 or 9 fractional digits, which do not sort as time within a second.
+        alerts.record(new Alert("whole@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00Z")));
+        alerts.record(new Alert("micros@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00.003500Z")));
+        alerts.record(new Alert("after@example.com", "loc-a", Instant.parse("2026-11-20T08:00:00.004Z")));
+        assertThat(alerts.unnotifiedBetween(Instant.parse("2026-11-20T07:00:00Z"), Instant.parse("2026-11-20T08:00:00.003Z"), 10))
+                .extracting(Alert::email).containsExactly("whole@example.com");
+        assertThat(alerts.unnotifiedBetween(Instant.parse("2026-11-20T08:00:00.003Z"), Instant.parse("2026-11-20T09:00:00Z"), 10))
+                .extracting(Alert::email).containsExactly("micros@example.com", "after@example.com");
+    }
+
+    @Test
     void aTableFromBeforeTheIndexGetsIt() {
         dynamo.createTable(r -> r.tableName("OldAlerts")
                 .billingMode(software.amazon.awssdk.services.dynamodb.model.BillingMode.PAY_PER_REQUEST)

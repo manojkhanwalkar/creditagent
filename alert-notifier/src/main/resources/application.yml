@@ -25,7 +25,9 @@ credit:
   notifier:
     # Once a day, 08:00 UTC (Spring cron: second minute hour day month weekday).
     cron: ${NOTIFIER_CRON:0 0 8 * * *}
-    window: ${NOTIFIER_WINDOW:24h}
+    # Each run emails alerts no email has covered yet, found within this long before the run: normally
+    # the last 24 hours (the previous run took the rest); the longer lookback lets a missed run catch up.
+    lookback: ${NOTIFIER_LOOKBACK:7d}
     max-alerts-per-run: ${NOTIFIER_MAX_ALERTS_PER_RUN:10000}
     sends-per-second: ${NOTIFIER_SENDS_PER_SECOND:10}
     from: ${NOTIFIER_FROM:alerts@creditagent.local}

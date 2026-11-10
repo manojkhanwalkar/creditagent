@@ -115,7 +115,7 @@ The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP
 | `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
 | Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s) for the answer (after a quick read of the account). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down or slow, login still works and the page asks `GET /api/v1/alerts` (retried) at once, then again after 5 and 30 seconds |
 
-| Email | `alert-notifier` runs once a day (`NOTIFIER_CRON`, 08:00 UTC). It reads, through the table's `by-day` index, the alerts first found in the 24 hours before the run that no email has covered yet, claims each one with a conditional write (so two runs or replicas never email the same alert), and sends each user one plain-text email. If a send fails, its claims are released for a later run. At most `NOTIFIER_SENDS_PER_SECOND` (10) emails a second |
+| Email | `alert-notifier` runs once a day (`NOTIFIER_CRON`, 08:00 UTC). It reads, through the table's `by-day` index, the alerts no email has covered yet: normally those first found in the 24 hours before the run, since the previous run took the rest; it looks back up to `NOTIFIER_LOOKBACK` (7 days) so a failed send or a missed run catches up the next day. It claims each one with a conditional write (so two runs or replicas never email the same alert) and sends each user one plain-text email; a failed send releases its claims for the next run. Without a mail relay it claims nothing. At most `NOTIFIER_SENDS_PER_SECOND` (10) emails a second |
 
 To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle. To see the email without waiting for 08:00, start the stack with `NOTIFIER_CRON='0 * * * * *'` (every minute) and open Mailpit at http://localhost:8025.
 
@@ -220,9 +220,9 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `OFFERS_URL`, `OFFERS_TIMEOUT`, `OFFERS_LOGIN_TIMEOUT` | web server | `http://localhost:8090`, `3s` a try for `GET /api/v1/offers` (retried), `1500ms` for the single try at login |
 | `ALERTS_URL`, `ALERTS_TIMEOUT`, `ALERTS_LOGIN_TIMEOUT` | web server | `http://localhost:8092`, `3s` a try for `GET /api/v1/alerts` (retried), `1500ms` for the single try at login |
 | `ALERTS_TABLE` | monitor, alerts service, notifier | `Alerts` |
-| `NOTIFIER_CRON`, `NOTIFIER_WINDOW`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `24h`, `10000`, `10` |
+| `NOTIFIER_CRON`, `NOTIFIER_LOOKBACK`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `7d`, `10000`, `10` |
 | `NOTIFIER_FROM`, `NOTIFIER_APP_URL` | notifier | `alerts@creditagent.local`, empty (compose: `http://localhost:8080`) |
-| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier | empty = no email sent, `587`, empty, empty, `true`, `true` (compose: Mailpit, no auth or TLS) |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier | empty = no email sent (and no alert marked), `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the notifier refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
 | `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1m`, `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
 | `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
 | `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |

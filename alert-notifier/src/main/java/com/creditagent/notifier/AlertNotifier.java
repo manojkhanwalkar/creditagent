@@ -14,20 +14,27 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 
 /**
- * Once a day: every alert first found in the {@code window} (24 hours) before the run and not yet
- * notified is claimed, and each user gets one email about all of theirs.
+ * Once a day: every alert no email has covered yet, first found within the {@code lookback} (7 days)
+ * before the run, is claimed, and each user gets one email about all of theirs. Normally that is the
+ * last 24 hours' alerts: the previous run claimed everything older. The longer lookback is what lets a
+ * failed send, a capped or interrupted run, or a day the service was down catch up the next day.
  *
  * <p>Claim, then send: a conditional claim per alert means no alert is emailed twice, even if two
- * replicas or two runs overlap. If the email cannot be sent, the claims are released so a later run
- * within the window can retry. If the process dies between sending and the end of the run, the claim
- * stays and the user is not emailed again: at most once.
+ * replicas or two runs overlap. If the email cannot be sent, or the claims cannot all be made, the
+ * claims are released so the next run retries. If the process dies between sending and the end of the
+ * run, the claim stays and the user is not emailed again: at most once.
  */
 public class AlertNotifier {
 
     private static final Logger log = LoggerFactory.getLogger(AlertNotifier.class);
 
-    /** What one run did. */
-    public record Run(int alerts, int emailsSent, int emailsFailed) {}
+    /** What one run did. {@code skipped}: no mail relay is configured, so nothing was read or claimed. */
+    public record Run(int alerts, int emailsSent, int emailsFailed, boolean skipped) {
+
+        public Run(int alerts, int emailsSent, int emailsFailed) {
+            this(alerts, emailsSent, emailsFailed, false);
+        }
+    }
 
     /** Pauses between emails; replaced in tests. */
     @FunctionalInterface
@@ -53,6 +60,10 @@ public class AlertNotifier {
     void scheduled() {
         try {
             Run run = run();
+            if (run.skipped()) {
+                log.warn("Alert emails: no mail relay configured (MAIL_HOST); alerts stay unclaimed until one is");
+                return;
+            }
             // Counts only: no addresses in logs.
             log.info("Alert emails: {} new alerts, {} emails sent, {} failed", run.alerts(), run.emailsSent(), run.emailsFailed());
         } catch (RuntimeException e) {
@@ -61,8 +72,11 @@ public class AlertNotifier {
     }
 
     public Run run() {
+        if (!email.configured()) {
+            return new Run(0, 0, 0, true);
+        }
         Instant now = clock.instant();
-        List<Alert> found = alerts.unnotifiedBetween(now.minus(properties.window()), now, properties.maxAlertsPerRun());
+        List<Alert> found = alerts.unnotifiedBetween(now.minus(properties.lookback()), now, properties.maxAlertsPerRun());
         Map<String, List<Alert>> byEmail = new LinkedHashMap<>();
         for (Alert alert : found) {
             byEmail.computeIfAbsent(alert.email(), e -> new ArrayList<>()).add(alert);
@@ -71,24 +85,41 @@ public class AlertNotifier {
         int sent = 0;
         int failed = 0;
         for (Map.Entry<String, List<Alert>> user : byEmail.entrySet()) {
-            List<Alert> claimed = user.getValue().stream().filter(alert -> alerts.claimNotification(alert, now)).toList();
-            if (claimed.isEmpty()) {
-                continue; // another run or replica has them
-            }
-            if (sent + failed > 0 && !pauseFor(gap)) {
-                claimed.forEach(alert -> alerts.releaseNotification(alert, now));
-                break;
-            }
+            List<Alert> claimed = new ArrayList<>();
             try {
+                for (Alert alert : user.getValue()) {
+                    if (alerts.claimNotification(alert, now)) {
+                        claimed.add(alert);
+                    }
+                }
+                if (claimed.isEmpty()) {
+                    continue; // another run or replica has them
+                }
+                if (sent + failed > 0 && !pauseFor(gap)) {
+                    release(claimed, now);
+                    break;
+                }
                 email.send(user.getKey(), AlertEmail.SUBJECT, AlertEmail.body(claimed, properties.appUrl()));
                 sent++;
             } catch (RuntimeException e) {
+                // A failed claim (DynamoDB) or send: give this user's claims back and go on with the next.
                 failed++;
-                claimed.forEach(alert -> alerts.releaseNotification(alert, now));
+                release(claimed, now);
                 log.warn("An alert email could not be sent: {}", e.getClass().getSimpleName());
             }
         }
         return new Run(found.size(), sent, failed);
+    }
+
+    /** Best effort: a claim that cannot be released stays, and that alert is not emailed (at most once). */
+    private void release(List<Alert> claimed, Instant runAt) {
+        for (Alert alert : claimed) {
+            try {
+                alerts.releaseNotification(alert, runAt);
+            } catch (RuntimeException e) {
+                log.warn("An alert claim could not be released: {}", e.getClass().getSimpleName());
+            }
+        }
     }
 
     private boolean pauseFor(Duration gap) {

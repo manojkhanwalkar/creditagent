@@ -102,7 +102,7 @@ Check the model provider's data-retention terms before enabling it.
 - Recipients are only registered users' addresses from the Alerts table; an address belongs to one account. Addresses are not verified (S-22), so an email can reach someone who never registered: it then only tells the owner of that address about their own address, and says to sign in, never to reply or click.
 - Phishing hygiene: fixed wording, plain text, no location names, no links but the configured sign-in URL, and a line saying we never ask for a password or SSN by email.
 - Header injection: the subject is a constant; the recipient passed registration's address rule (no spaces or line breaks) and JavaMail parses it strictly.
-- Logs carry counts and exception class names only. SMTP credentials come from the environment; STARTTLS is required unless explicitly turned off (compose turns it off only for the local Mailpit).
+- Logs carry counts and exception class names only. SMTP credentials come from the environment; STARTTLS is required: the notifier refuses to start with it off for any relay but a local mail catcher (`localhost`, `mailpit`). Compose defaults to the bundled Mailpit with TLS off; pointing `MAIL_HOST` elsewhere without `MAIL_STARTTLS=true` stops the notifier at start-up rather than sending in clear. Mailpit's inbox (127.0.0.1:8025) shows every email and is for local use only.
 - Open: SPF, DKIM and DMARC for the sending domain are deployment work, so mail is not spoofable in our name.
 
 ### S-22 Dark-web alerts (Mitigated)

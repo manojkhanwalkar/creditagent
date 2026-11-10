@@ -32,8 +32,10 @@ class NotifierWiringTest {
 
         @Test
         void nothingIsSent() {
-            assertThat(notifier).isNotNull();
-            email.send("ada@example.com", "s", "b");
+            assertThat(email.configured()).isFalse();
+            assertThat(notifier.run().skipped()).isTrue(); // reads and claims nothing
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> email.send("ada@example.com", "s", "b"))
+                    .isInstanceOf(IllegalStateException.class);
             verify(mail, org.mockito.Mockito.never()).send(any(SimpleMailMessage.class));
         }
     }
@@ -41,7 +43,7 @@ class NotifierWiringTest {
     @Nested
     @SpringBootTest
     @TestPropertySource(properties = {"credit.notifier.cron=-", "credit.notifier.dynamodb-endpoint=http://localhost:1",
-        "spring.mail.host=smtp.example"})
+        "spring.mail.host=smtp.example", "spring.mail.properties.mail.smtp.starttls.required=true"})
     class WithARelay {
         @Autowired
         EmailSender email;

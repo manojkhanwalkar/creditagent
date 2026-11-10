@@ -3,6 +3,7 @@ package com.creditagent.alerts;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -92,9 +93,12 @@ public class DynamoDbAlertRepository implements AlertRepository {
                         .expressionAttributeNames(Map.of("#day", DAY, "#ts", TIMESTAMP, "#notified", NOTIFIED_AT))
                         .expressionAttributeValues(Map.of(
                                 ":day", AttributeValue.fromS(date.toString()),
-                                ":from", AttributeValue.fromS(from.toString()),
-                                // BETWEEN is inclusive; the window is [from, to).
-                                ":to", AttributeValue.fromS(to.minusNanos(1).toString())))
+                                // ISO strings with 0–9 fractional digits do not sort as time within one
+                                // second ("…:00.5Z" < "…:00Z", since '.' < 'Z'), so the bounds are widened
+                                // to the whole seconds either side here and the exact window [from, to) is
+                                // applied below.
+                                ":from", AttributeValue.fromS(from.truncatedTo(ChronoUnit.SECONDS).minusSeconds(1).toString()),
+                                ":to", AttributeValue.fromS(to.truncatedTo(ChronoUnit.SECONDS).plusSeconds(1).toString())))
                         .limit(room);
                 if (startKey != null) {
                     query.exclusiveStartKey(startKey);
