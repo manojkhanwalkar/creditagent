@@ -178,3 +178,15 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+
+      # Keep only the build tagged `latest` (its index + the manifests it references) and delete
+      # older versions, so the registry doesn't pile up. Main pushes only, and only after the
+      # push and scan succeeded; see .github/scripts/prune-images.sh for the safety rules.
+      - name: Prune older image versions
+        if: env.PUSH == 'true' && success()
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: creditagent-${{ matrix.service }}
+        run: .github/scripts/prune-images.sh

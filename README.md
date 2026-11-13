@@ -243,7 +243,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `ci.yml` | PRs, pushes to `main` | Maven verify on Java 26, UI tests, image build with Trivy scan; pushes `ghcr.io/<owner>/creditagent-<service>` from `main` |
+| `ci.yml` | PRs, pushes to `main` | Maven verify on Java 26, UI tests, image build with Trivy scan; pushes `ghcr.io/<owner>/creditagent-<service>` from `main`, then deletes every older version except the build tagged `latest` |
 | `codeql.yml` | PRs, `main`, weekly | CodeQL (`security-extended`) for Java, JavaScript and the workflows; any finding fails the job (results kept as a SARIF artifact, since the private repo has no code scanning) |
 | `security.yml` | PRs, `main` | Trivy scan of the declared dependencies (high and critical advisories with a fix fail it) and Gitleaks secret scan |
 | `release.yml` | tags `v*.*.*` | Versioned images with SBOM and provenance, plus a GitHub release |
