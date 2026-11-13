@@ -179,14 +179,18 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
-      # Keep only the build tagged `latest` (its index + the manifests it references) and delete
-      # older versions, so the registry doesn't pile up. Main pushes only, and only after the
-      # push and scan succeeded; see .github/scripts/prune-images.sh for the safety rules.
-      - name: Prune older image versions
+      # Delete superseded CI builds (versions tagged only sha-*), keeping `latest`, every release
+      # tag and the manifests they reference, so the registry doesn't pile up. Main pushes only,
+      # after the push and scan succeeded; see .github/scripts/prune-images.sh for the safety
+      # rules. Housekeeping: a failure here is a warning, never a red build.
+      - name: Prune superseded CI images
         if: env.PUSH == 'true' && success()
+        continue-on-error: true
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           PACKAGE: creditagent-${{ matrix.service }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
         run: .github/scripts/prune-images.sh
