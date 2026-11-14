@@ -102,9 +102,22 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - run: npm test
 
+  prune-script:
+    name: Prune script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Shellcheck
+        run: shellcheck .github/scripts/prune-images.sh .github/scripts/tests/test-prune-images.sh
+      - name: Test the pruning rules
+        run: .github/scripts/tests/test-prune-images.sh
+
   images:
     name: Image ${{ matrix.service }}
-    needs: [build, ui]
+    needs: [build, ui, prune-script]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
