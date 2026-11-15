@@ -125,8 +125,10 @@ class AlertsApiTest {
     }
 
     @Test
-    void theAuditReferenceIsAStableHashPrefixNotTheAddress() {
-        assertThat(AlertsController.emailReference(" Ada@Example.com ")).isEqualTo(AlertsController.emailReference("ada@example.com"))
+    void theAuditReferenceIsAStableKeyedHashNotTheAddress() {
+        assertThat(AlertsController.emailReference(" Ada@Example.com ", "k1")).isEqualTo(AlertsController.emailReference("ada@example.com", "k1"))
                 .hasSize(16).doesNotContain("ada");
+        // Keyed: without the key, a guessed address cannot be matched.
+        assertThat(AlertsController.emailReference("ada@example.com", "k1")).isNotEqualTo(AlertsController.emailReference("ada@example.com", "k2"));
     }
 }

@@ -68,8 +68,11 @@ function showSignedOut(message) {
 }
 
 function showNotice(message) {
-  notice.textContent = message;
+  // The live region must be in the accessibility tree before its text changes, or the message may not
+  // be announced (WCAG 4.1.3): show it empty, then fill it on the next frame.
+  notice.textContent = '';
   notice.hidden = false;
+  requestAnimationFrame(() => { notice.textContent = message; });
 }
 
 function hideNotice() {
@@ -158,7 +161,11 @@ async function api(path, { method = 'POST', body } = {}) {
 // ---------- idle warning (WCAG 2.2.1: warn before the session times out, and let the user extend it) ----------
 
 const idleWarning = $('idle-warning');
-let idleTimeoutSeconds = 300;
+const IDLE_KEY = 'creditAgent.idleTimeoutSeconds';
+// The server's idle timeout, from the login answer; kept for this tab, so a reload warns on time too.
+let idleTimeoutSeconds = (() => {
+  try { return Number(window.sessionStorage.getItem(IDLE_KEY)) || 300; } catch { return 300; }
+})();
 let idleTimer = null;
 let focusBeforeWarning = null;
 
@@ -245,7 +252,10 @@ async function logIn(userId, password, errorElement) {
     return false;
   }
   session.save(data.token, data.userId, data.ssnMasked);
-  if (data.idleTimeoutSeconds) idleTimeoutSeconds = data.idleTimeoutSeconds;
+  if (data.idleTimeoutSeconds) {
+    idleTimeoutSeconds = data.idleTimeoutSeconds;
+    try { window.sessionStorage.setItem(IDLE_KEY, String(idleTimeoutSeconds)); } catch { /* storage blocked */ }
+  }
   // The login answer carries the offers matched to the user's last score and ZIP code.
   showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts);
   return true;
@@ -723,6 +733,8 @@ $('delete-form').addEventListener('submit', async (event) => {
     const { response, data } = await api('/api/v1/account/delete', { body: { password: form.password, ssn: form.ssn } });
     if (response.status === 204) {
       showSignedOut('Your account and all of its data have been deleted.');
+      // The focused button is gone with its panel: move focus to the sign-in heading (WCAG 2.4.3).
+      $('auth-title').focus();
       return;
     }
     if (response.status === 401) {

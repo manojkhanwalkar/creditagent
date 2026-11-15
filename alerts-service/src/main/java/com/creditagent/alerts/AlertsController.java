@@ -31,10 +31,13 @@ class AlertsController {
 
     private final AlertRepository alerts;
     private final com.creditagent.common.AuditLog audit;
+    private final String referenceKey;
 
-    AlertsController(AlertRepository alerts, com.creditagent.common.AuditLog audit) {
+    AlertsController(AlertRepository alerts, com.creditagent.common.AuditLog audit,
+            @org.springframework.beans.factory.annotation.Value("${credit.alerts.service-token:}") String referenceKey) {
         this.alerts = alerts;
         this.audit = audit;
+        this.referenceKey = referenceKey;
     }
 
     /** The same email rule as registration, so every registered address can be looked up. */
@@ -60,23 +63,26 @@ class AlertsController {
     /**
      * {@code POST /internal/v1/alerts/erase} with {@code {email}}: deletes every alert for the address
      * (account deletion). Idempotent; 204 either way, so the answer reveals nothing. The audit record
-     * names the address by its SHA-256 prefix (the users table's email-claim key), not the address.
+     * names the address by a keyed hash (HMAC-SHA256 with this service's secret token), so the audit log
+     * cannot be searched for a guessed address.
      */
     @PostMapping(path = ERASE_PATH, consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Void> erase(@Valid @RequestBody LookupRequest request) {
         int deleted = alerts.eraseAll(request.email());
         audit.record(com.creditagent.common.AuditLog.Event.ALERTS_ERASED, "service:internal",
-                "emailref:" + emailReference(request.email()), "OK", java.util.Map.of("alerts", deleted));
+                "emailref:" + emailReference(request.email(), referenceKey), "OK", java.util.Map.of("alerts", deleted));
         return ResponseEntity.noContent().build();
     }
 
-    static String emailReference(String email) {
+    static String emailReference(String email, String key) {
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(Alert.normalise(email).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(("alerts audit ref|" + key).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    "HmacSHA256"));
+            byte[] digest = mac.doFinal(Alert.normalise(email).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(digest, 0, 8);
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is always available", e);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException("HMAC-SHA256 is always available", e);
         }
     }
 

@@ -207,10 +207,10 @@ public class DynamoDbUserRepository implements UserRepository {
     }
 
     /**
-     * One transaction deletes the user item and its {@code ssn#} claim (only while the claim still
-     * names this user, so a claim never goes missing from under another account). The email claim is
-     * deleted after it, under the same condition; accounts from before email claims have none, and a
-     * claim taken by another account stays. A retry after a partial failure finishes the job.
+     * One transaction deletes the user item and its {@code ssn#} and {@code email#} claims, each claim
+     * only while it is absent or still names this user, so a claim never goes missing from under another
+     * account. If a claim names another account, the transaction is repeated without it. Either all of
+     * this account's items go or none do, so a retry after a failure finishes the job.
      */
     @Override
     public boolean delete(User user) {
@@ -220,31 +220,38 @@ public class DynamoDbUserRepository implements UserRepository {
         boolean existed = find(user.userId()).isPresent();
         Map<String, String> ownerNames = Map.of("#owner", "owner");
         Map<String, AttributeValue> owner = Map.of(":owner", s(user.userId()));
-        if (existed) {
-            try {
-                dynamo.transactWriteItems(r -> r.transactItems(
-                        t -> t.delete(d -> d.tableName(table).key(Map.of(KEY, s(user.userId())))),
-                        t -> t.delete(d -> d.tableName(table).key(Map.of(KEY, s(SSN_CLAIM_PREFIX + user.ssnHash())))
+        List<String> claims = new java.util.ArrayList<>(List.of(SSN_CLAIM_PREFIX + user.ssnHash()));
+        if (user.email() != null) {
+            claims.add(EMAIL_CLAIM_PREFIX + emailKey(user.email()));
+        }
+        while (true) {
+            List<software.amazon.awssdk.services.dynamodb.model.TransactWriteItem> items = new java.util.ArrayList<>();
+            items.add(software.amazon.awssdk.services.dynamodb.model.TransactWriteItem.builder()
+                    .delete(d -> d.tableName(table).key(Map.of(KEY, s(user.userId())))).build());
+            for (String claim : claims) {
+                items.add(software.amazon.awssdk.services.dynamodb.model.TransactWriteItem.builder()
+                        .delete(d -> d.tableName(table).key(Map.of(KEY, s(claim)))
                                 .conditionExpression("attribute_not_exists(#owner) OR #owner = :owner")
-                                .expressionAttributeNames(ownerNames).expressionAttributeValues(owner))));
+                                .expressionAttributeNames(ownerNames).expressionAttributeValues(owner))
+                        .build());
+            }
+            try {
+                dynamo.transactWriteItems(r -> r.transactItems(items));
+                return existed;
             } catch (TransactionCanceledException e) {
                 List<CancellationReason> reasons = e.cancellationReasons();
-                if (reasons.size() == 2 && CONDITIONAL_CHECK_FAILED.equals(reasons.get(1).code())) {
-                    // The SSN claim names another account (should not happen): delete the user alone.
-                    dynamo.deleteItem(d -> d.tableName(table).key(Map.of(KEY, s(user.userId()))));
-                } else {
+                List<String> othersClaims = new java.util.ArrayList<>();
+                for (int i = 1; i < reasons.size() && i <= claims.size(); i++) {
+                    if (CONDITIONAL_CHECK_FAILED.equals(reasons.get(i).code())) {
+                        othersClaims.add(claims.get(i - 1));
+                    }
+                }
+                if (othersClaims.isEmpty()) {
                     throw e;
                 }
+                claims.removeAll(othersClaims); // another account's claim: leave it, delete the rest
             }
         }
-        try {
-            dynamo.deleteItem(d -> d.tableName(table).key(Map.of(KEY, s(EMAIL_CLAIM_PREFIX + emailKey(user.email()))))
-                    .conditionExpression("#owner = :owner")
-                    .expressionAttributeNames(ownerNames).expressionAttributeValues(owner));
-        } catch (ConditionalCheckFailedException notOurs) {
-            // No claim (an older account), or another account's: leave it.
-        }
-        return existed;
     }
 
     /**

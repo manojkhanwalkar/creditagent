@@ -355,4 +355,13 @@ class AuthServiceTest {
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock), Duration.ofMinutes(5), clock);
         assertThat(racing.login("avery", PASSWORD).userId()).isEqualTo("avery");
     }
+
+    @Test
+    void aConnectorSignInCountsAsActivity() {
+        register();
+        clock.advance(Duration.ofDays(3));
+        assertThat(auth.verifyOwner("avery", PASSWORD, com.creditagent.common.Ssn.parse(AVERY_SSN))).isPresent();
+        assertThat(users.find("avery").orElseThrow().lastActiveAt()).isEqualTo(clock.instant());
+        assertThat(auth.verifyOwner("avery", "wrong password here", com.creditagent.common.Ssn.parse(AVERY_SSN))).isEmpty();
+    }
 }

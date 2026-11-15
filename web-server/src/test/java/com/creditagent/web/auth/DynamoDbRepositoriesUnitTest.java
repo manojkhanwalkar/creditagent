@@ -419,14 +419,17 @@ class DynamoDbRepositoriesUnitTest {
         DynamoDbClient dynamo = mock(DynamoDbClient.class, CALLS_REAL_METHODS);
         DynamoDbUserRepository repo = new DynamoDbUserRepository(dynamo, "users");
         doReturn(GetItemResponse.builder().item(userItem("vic")).build()).when(dynamo).getItem(any(GetItemRequest.class));
-        doThrow(cancelled("None", "ConditionalCheckFailed")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
-        doReturn(software.amazon.awssdk.services.dynamodb.model.DeleteItemResponse.builder().build())
-                .when(dynamo).deleteItem(any(DeleteItemRequest.class));
+        ArgumentCaptor<TransactWriteItemsRequest> sent = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        doThrow(cancelled("None", "ConditionalCheckFailed", "None"))
+                .doReturn(software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse.builder().build())
+                .when(dynamo).transactWriteItems(sent.capture());
 
         assertThat(repo.delete(user("vic"))).isTrue();
-        verify(dynamo, times(2)).deleteItem(any(DeleteItemRequest.class)); // the user alone, then the email claim
+        // First: user + ssn claim + email claim; the ssn claim is another account's, so then user + email claim.
+        assertThat(sent.getAllValues()).extracting(r -> r.transactItems().size()).containsExactly(3, 2);
+        verify(dynamo, never()).deleteItem(any(DeleteItemRequest.class));
 
-        doThrow(cancelled("ThrottlingError", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        doThrow(cancelled("ThrottlingError", "None", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
         assertThatThrownBy(() -> repo.delete(user("vic"))).isInstanceOf(TransactionCanceledException.class);
 
         doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));

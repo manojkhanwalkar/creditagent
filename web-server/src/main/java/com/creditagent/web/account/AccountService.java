@@ -51,11 +51,15 @@ public class AccountService {
 
     /** The account's stored fields, minus secrets (password hash) and keyed hashes. */
     public record Account(String userId, String email, String zip, String ssnMasked, Instant createdAt, Instant lastLoginAt,
-            ReportStatus reportStatus, Integer lastScore, Instant lastScoreAt, String consentVersion, Instant consentedAt) {}
+            ReportStatus reportStatus, Integer lastScore, Instant lastScoreAt, String consentVersion, Instant consentedAt,
+            String kycVerificationId) {}
 
-    static final String EXPORT_NOTES = "This is all the personal data CreditAgent holds about you. Your Social Security"
+    static final String EXPORT_NOTES = "This is the personal data CreditAgent holds in your account. Your Social Security"
             + " number is stored only as a keyed hash and its last four digits; sessions and connector grants hold the"
-            + " same. Chat conversations are kept in memory for at most 5 minutes and are not included.";
+            + " same. Not included: chat conversations (kept in memory for at most 5 minutes); a redacted copy of chat"
+            + " questions and answers kept for up to 30 days to test the assistant's safety checks; and security audit"
+            + " records of when your report was read or your account changed, kept for at least a year, also after"
+            + " deletion. Ask us for a copy of those.";
 
     private final AuthService auth;
     private final UserRepository users;
@@ -100,7 +104,7 @@ public class AccountService {
         return new Export(clock.instant(), new Account(account.userId(), account.email(), account.zip(),
                 AuthenticatedUser.mask(account.ssnLastFour()), account.createdAt(), account.lastLoginAt(),
                 account.reportStatus(), account.lastScore(), account.lastScoreAt(), account.consentVersion(),
-                account.consentedAt()), report, findings, EXPORT_NOTES);
+                account.consentedAt(), account.kycVerificationId()), report, findings, EXPORT_NOTES);
     }
 
     /**
@@ -109,7 +113,8 @@ public class AccountService {
      *
      * @throws NotTheOwnerException if the password or SSN is wrong
      * @throws com.creditagent.clients.ServiceUnavailableException if the alerts or reports could not be
-     *     erased; nothing of the account is deleted then, and the user can try again
+     *     erased; the account itself is then kept (what was already erased stays erased), and the user can
+     *     try again
      */
     public void delete(AuthenticatedUser user, String password, Ssn ssn) {
         auth.verifyOwner(user.userId(), password, ssn).orElseThrow(NotTheOwnerException::new);
@@ -136,12 +141,14 @@ public class AccountService {
      * are erased here; its stored reports are purged by the generator's own retention job, since only
      * the SSN's hash is kept here and the reports are keyed differently.
      *
-     * @return false if the account no longer existed
+     * @param cutoff the account is purged only if it is still unused since then: re-checked here, so a
+     *     user who signed in after the retention job read its page is kept
+     * @return false if the account no longer existed or was used meanwhile
      * @throws com.creditagent.clients.ServiceUnavailableException if the alerts could not be erased
      */
-    public boolean purge(String userId) {
+    public boolean purge(String userId, Instant cutoff) {
         User account = users.find(userId).orElse(null);
-        if (account == null) {
+        if (account == null || !account.lastActiveAt().isBefore(cutoff)) {
             return false;
         }
         if (account.email() != null) {
@@ -153,9 +160,14 @@ public class AccountService {
         return true;
     }
 
-    /** Sessions and grants first, so no token outlives the account; then the account and its claims. */
+    /**
+     * Sessions and grants first, so no token outlives the account; then the account and its claims; then
+     * the sessions again, for a login or code exchange that slipped in between the first sweep and the
+     * account's removal.
+     */
     private void removeAccount(User account) {
         sessions.deleteAllForUser(account.userId());
         users.delete(account);
+        sessions.deleteAllForUser(account.userId());
     }
 }

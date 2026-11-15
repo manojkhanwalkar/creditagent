@@ -183,4 +183,15 @@ class AccountFlowTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"345-67-8901\"}"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void aUsersTableFailureIs503WithTheTryAgainMessage() throws Exception {
+        auth.register("dee", PASSWORD, "dee@example.com", "98101", FakeIdentityVerifier.card("456-78-9013"));
+        String bearer = bearer("dee");
+        given(source.findReport(any())).willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("dynamo down"));
+        mvc.perform(post("/api/v1/account/export").header("Authorization", bearer)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ssn\":\"456-78-9013\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.detail").value(AccountController.TRY_AGAIN));
+    }
 }

@@ -231,6 +231,8 @@ public class AuthService {
             return Optional.empty();
         }
         User found = user.get();
+        // A sign-in through the connector's consent form is activity too (account retention counts from it).
+        users.recordLogin(found.userId(), clock.instant());
         return Optional.of(new VerifiedOwner(found.userId(), found.ssnHash(), found.ssnLastFour()));
     }
 

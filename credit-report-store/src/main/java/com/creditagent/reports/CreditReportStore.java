@@ -18,7 +18,10 @@ public interface CreditReportStore {
      */
     void replaceAll(Ssn ssn, Map<Bureau, String> reports);
 
-    /** Each bureau's report JSON for this consumer; bureaus without one are absent. */
+    /**
+     * Each bureau's report JSON for this consumer; bureaus without one are absent. Also records that the
+     * reports were read (at most once a day), which keeps them from retention while they are in use.
+     */
     Map<Bureau, String> findAll(Ssn ssn);
 
     /** Removes every bureau's report for this consumer (account deletion). Idempotent. */
@@ -27,7 +30,8 @@ public interface CreditReportStore {
     }
 
     /**
-     * Deletes stored reports not updated since {@code cutoff} (retention), at most {@code max} rows a call.
+     * Deletes stored reports neither written nor read since {@code cutoff} (retention), at most
+     * {@code max} rows a call. Reads count: {@link #findAll} records them (at most daily).
      *
      * @return how many rows were deleted
      */

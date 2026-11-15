@@ -29,6 +29,9 @@ final class InMemoryCreditReportStore implements CreditReportStore {
 
     @Override
     public Map<Bureau, String> findAll(Ssn ssn) {
+        if (sets.containsKey(ssn)) {
+            updatedAt.computeIfPresent(ssn, (k, v) -> v.isBefore(clock.instant()) ? clock.instant() : v); // a read counts
+        }
         return sets.getOrDefault(ssn, Map.of());
     }
 

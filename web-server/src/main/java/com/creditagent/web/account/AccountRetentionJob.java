@@ -60,7 +60,7 @@ public class AccountRetentionJob {
                 checked++;
                 try {
                     if (account.lastActiveAt().isBefore(cutoff)) {
-                        if (accounts.purge(account.userId())) {
+                        if (accounts.purge(account.userId(), cutoff)) {
                             purged++;
                         }
                     } else if (account.hasLegacyPhone()) {

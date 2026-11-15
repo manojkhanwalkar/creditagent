@@ -108,6 +108,9 @@ public class DynamoDbAlertRepository implements AlertRepository {
                         // Not all deleted: fail so the caller retries the whole (idempotent) erase.
                         throw new IllegalStateException("Alerts could not all be deleted");
                     }
+                    if (attempt > 0) {
+                        backOff(attempt); // unprocessed items mean throttling: wait (full jitter) before resending
+                    }
                     Map<String, List<software.amazon.awssdk.services.dynamodb.model.WriteRequest>> request = pending;
                     var response = dynamo.batchWriteItem(b -> b.requestItems(request));
                     pending = response.hasUnprocessedItems() ? response.unprocessedItems() : Map.of();
@@ -117,6 +120,16 @@ public class DynamoDbAlertRepository implements AlertRepository {
             startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
         } while (startKey != null);
         return deleted;
+    }
+
+    /** Full jitter: up to 50 ms, then 100 ms. */
+    private static void backOff(int attempt) {
+        try {
+            Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextLong((50L << (attempt - 1)) + 1));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while erasing alerts", e);
+        }
     }
 
     @Override

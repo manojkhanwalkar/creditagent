@@ -85,6 +85,8 @@ class AccountServiceTest {
         assertThat(export.account().ssnMasked()).isEqualTo("***-**-6789");
         assertThat(export.account().lastLoginAt()).isEqualTo(NOW);
         assertThat(export.account().consentVersion()).isNotBlank();
+        assertThat(export.account().kycVerificationId()).isNotBlank();
+        assertThat(export.notes()).contains("audit").contains("30 days");
         assertThat(export.creditReport()).isEqualTo(report);
         assertThat(export.darkWebFindings()).hasSize(1);
         assertThat(export.toString()).doesNotContain("$2").doesNotContain(ada.ssnHash());
@@ -145,8 +147,11 @@ class AccountServiceTest {
 
     @Test
     void purgeErasesAlertsSessionsAndTheAccount() {
-        assertThat(accounts.purge("nobody")).isFalse();
-        assertThat(accounts.purge("ada")).isTrue();
+        Instant cutoff = NOW.plusSeconds(1); // ada's last login is NOW: unused since before the cutoff
+        assertThat(accounts.purge("nobody", cutoff)).isFalse();
+        assertThat(accounts.purge("ada", NOW.minusSeconds(1))).isFalse(); // used since: kept
+        verify(alerts, never()).erase(anyString());
+        assertThat(accounts.purge("ada", cutoff)).isTrue();
         verify(alerts).erase("ada@example.com");
         verify(reports, never()).erase(any()); // reports age out in the generator's own retention job
         assertThat(users.find("ada")).isEmpty();
@@ -158,7 +163,26 @@ class AccountServiceTest {
     void accountsWithoutAnEmailNeedNoAlertErase() {
         users.byId.put("old", new com.creditagent.web.auth.User("old", "$2a$h", null, "h-old", "0000", null, NOW,
                 com.creditagent.web.auth.ReportStatus.UNLOCKED));
-        assertThat(accounts.purge("old")).isTrue();
+        assertThat(accounts.purge("old", NOW.plusSeconds(1))).isTrue();
         verify(alerts, never()).erase(anyString());
+    }
+
+    @Test
+    void aSessionOpenedDuringTheDeletionIsSweptToo() {
+        com.creditagent.web.auth.UserRepository racing = new InMemoryRepositories.Users() {
+            {
+                byId.putAll(users.byId);
+            }
+
+            @Override
+            public boolean delete(com.creditagent.web.auth.User user) {
+                // A login lands between the first sweep and the account's removal.
+                sessions.save(new Session("late", user.userId(), user.ssnHash(), user.ssnLastFour(), NOW, NOW, NOW.plusSeconds(300)));
+                return super.delete(user);
+            }
+        };
+        new AccountService(auth, racing, sessions, alerts, reports, reportSource, List.of(), audit, clock)
+                .delete(ada, PASSWORD, ADA_SSN);
+        assertThat(sessions.byId).doesNotContainKey("late");
     }
 }

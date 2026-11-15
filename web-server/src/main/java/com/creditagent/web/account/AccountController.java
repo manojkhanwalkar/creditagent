@@ -104,12 +104,16 @@ class AccountController {
                 .body(ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage()));
     }
 
-    /** An erase or read elsewhere failed: nothing was deleted (or exported), so the user can try again. */
-    @ExceptionHandler(ServiceUnavailableException.class)
-    ResponseEntity<ProblemDetail> unavailable(ServiceUnavailableException e) {
+    static final String TRY_AGAIN = "We could not finish this just now. Your account is still open; please try again in a few minutes.";
+
+    /**
+     * An erase or read elsewhere, or the users table, failed: the account is kept (some of its data may
+     * already be erased), and every step is idempotent, so the user can try again.
+     */
+    @ExceptionHandler({ServiceUnavailableException.class, software.amazon.awssdk.core.exception.SdkException.class})
+    ResponseEntity<ProblemDetail> unavailable(RuntimeException e) {
         log.warn("Account request failed downstream: {}", SafeLogging.describe(e));
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "5")
-                .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
-                        "We could not finish this just now, and nothing was changed. Please try again in a few minutes."));
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, TRY_AGAIN));
     }
 }

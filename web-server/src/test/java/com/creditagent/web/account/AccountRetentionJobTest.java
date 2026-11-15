@@ -38,15 +38,15 @@ class AccountRetentionJobTest {
         users.byId.put("never", user("never", NOW.minus(Duration.ofDays(800)), null));
         users.byId.put("fresh", user("fresh", NOW.minus(Duration.ofDays(3)), null));
         users.legacyPhones.add("new");
-        given(accounts.purge("idle")).willReturn(true);
-        given(accounts.purge("never")).willReturn(false); // deleted meanwhile
+        given(accounts.purge(org.mockito.ArgumentMatchers.eq("idle"), org.mockito.ArgumentMatchers.any())).willReturn(true);
+        given(accounts.purge(org.mockito.ArgumentMatchers.eq("never"), org.mockito.ArgumentMatchers.any())).willReturn(false); // deleted meanwhile
 
         AccountRetentionJob.Run run = job(1000).run();
 
         assertThat(run).isEqualTo(new AccountRetentionJob.Run(4, 1, 1, 0));
-        org.mockito.Mockito.verify(accounts).purge("idle");
-        org.mockito.Mockito.verify(accounts).purge("never");
-        org.mockito.Mockito.verify(accounts, org.mockito.Mockito.never()).purge("new");
+        org.mockito.Mockito.verify(accounts).purge("idle", NOW.minus(Duration.ofDays(730)));
+        org.mockito.Mockito.verify(accounts).purge("never", NOW.minus(Duration.ofDays(730)));
+        org.mockito.Mockito.verify(accounts, org.mockito.Mockito.never()).purge("new", NOW.minus(Duration.ofDays(730)));
         assertThat(users.legacyPhones).isEmpty();
     }
 
@@ -69,8 +69,8 @@ class AccountRetentionJobTest {
     void oneFailingAccountDoesNotStopTheRunAndTheSchedulerNeverThrows() {
         users.byId.put("a", user("a", NOW.minus(Duration.ofDays(1000)), null));
         users.byId.put("b", user("b", NOW.minus(Duration.ofDays(1000)), null));
-        given(accounts.purge("a")).willThrow(new IllegalStateException("alerts down"));
-        given(accounts.purge("b")).willReturn(true);
+        given(accounts.purge(org.mockito.ArgumentMatchers.eq("a"), org.mockito.ArgumentMatchers.any())).willThrow(new IllegalStateException("alerts down"));
+        given(accounts.purge(org.mockito.ArgumentMatchers.eq("b"), org.mockito.ArgumentMatchers.any())).willReturn(true);
         assertThat(job(10).run()).isEqualTo(new AccountRetentionJob.Run(2, 1, 0, 1));
 
         UserRepository broken = mock(UserRepository.class);
