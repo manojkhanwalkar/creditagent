@@ -206,7 +206,11 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service, alerts service, generator (erase API) | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `REPORTS_URL`, `ACCOUNT_ERASE_TIMEOUT` | web server | `http://localhost:8083` (the report generator, which erases a deleted account's stored reports), `5s` a try |
+| `ACCOUNT_RETENTION`, `ACCOUNT_RETENTION_MAX_PER_RUN`, `ACCOUNT_RETENTION_CRON` | web server | `730d`, `1000`, `0 15 4 * * *` (UTC): accounts with no login for that long are deleted with their data |
+| `CREDIT_REPORT_RETENTION`, `CREDIT_REPORT_PURGE_MAX`, `CREDIT_REPORT_RETENTION_CRON` | generator | `730d`, `10000`, `0 30 3 * * *` (UTC): stored reports not refreshed for that long are deleted |
+| `ALERT_RETENTION` | dark-web monitor | `730d`: each alert's DynamoDB TTL after it was found |
 | `REPORT_LOCK_URL` | agent, MCP server | `http://localhost:8080` (the web server, which owns the users table) |
 | `JWT_SECRET` | web server | **required**, at least 32 characters |
 | `SSN_HMAC_KEY` | web server | **required**, at least 32 characters; keyed hash of each user's SSN |

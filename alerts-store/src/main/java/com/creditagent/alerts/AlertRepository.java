@@ -34,4 +34,14 @@ public interface AlertRepository {
 
     /** Gives back a claim made by run {@code runAt} (the email could not be sent), so a later run may retry. */
     void releaseNotification(Alert alert, Instant runAt);
+
+    /**
+     * Deletes every alert for this email (account deletion). Idempotent. Stores that hold alerts must
+     * implement it; the default is for read-only test doubles.
+     *
+     * @return how many alerts were deleted
+     */
+    default int eraseAll(String email) {
+        throw new UnsupportedOperationException("eraseAll");
+    }
 }

@@ -21,8 +21,10 @@ class MonitorConfiguration {
     }
 
     @Bean
-    AlertRepository alertRepository(DynamoDbClient dynamo, MonitorProperties properties) {
-        return new DynamoDbAlertRepository(dynamo, properties.alertsTable());
+    AlertRepository alertRepository(DynamoDbClient dynamo, MonitorProperties properties,
+            @org.springframework.beans.factory.annotation.Value("${credit.monitor.alert-retention:730d}") java.time.Duration retention) {
+        // The monitor writes alerts, so it sets their expiry (DynamoDB TTL): two years by default.
+        return new DynamoDbAlertRepository(dynamo, properties.alertsTable(), retention);
     }
 
     /** The placeholder: contacts nothing. Replace this bean with a real source. */

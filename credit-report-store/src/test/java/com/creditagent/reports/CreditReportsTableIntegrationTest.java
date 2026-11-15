@@ -106,4 +106,37 @@ class CreditReportsTableIntegrationTest {
                 "report", AttributeValue.fromB(SdkBytes.fromUtf8String("x")), "keyId", AttributeValue.fromS("x"))));
         assertThat(rotated.findAll(victim)).containsOnlyKeys(Bureau.EXPERIAN);
     }
+
+    @Test
+    void eraseRemovesEveryBureauAndPurgeRemovesOnlyRowsPastRetention() {
+        java.time.Instant old = java.time.Instant.parse("2020-01-01T00:00:00Z");
+        DynamoDbCreditReportStore oldWriter = new DynamoDbCreditReportStore(dynamo, "CreditReports", new SsnHmac(HASH_KEY, "k"),
+                new ReportCipher(ReportCipherTest.NEW, List.of()), Clock.fixed(old, java.time.ZoneOffset.UTC));
+        DynamoDbCreditReportStore store = store(new ReportCipher(ReportCipherTest.NEW, List.of()));
+        Ssn stale = Ssn.parse("567-89-0123");
+        Ssn fresh = Ssn.parse("678-90-1234");
+        Ssn erased = Ssn.parse("789-01-2345");
+        oldWriter.replaceAll(stale, Map.of(Bureau.EQUIFAX, "{}", Bureau.EXPERIAN, "{}"));
+        store.replaceAll(fresh, Map.of(Bureau.EQUIFAX, "{}"));
+        store.replaceAll(erased, Map.of(Bureau.EQUIFAX, "{}", Bureau.EXPERIAN, "{}", Bureau.TRANSUNION, "{}"));
+
+        // A consumer whose old reports are still read keeps them: the read is recorded.
+        Ssn read = Ssn.parse("890-12-3456");
+        oldWriter.replaceAll(read, Map.of(Bureau.EQUIFAX, "{}"));
+        assertThat(store.findAll(read)).hasSize(1);
+        var marked = dynamo.getItem(r -> r.tableName("CreditReports").key(Map.of(
+                "ssn", AttributeValue.fromS(new SsnHmac(HASH_KEY, "k").hex(read)), "bureau", AttributeValue.fromS("Equifax")))).item();
+        assertThat(marked).containsKey(DynamoDbCreditReportStore.LAST_READ_AT);
+
+        store.eraseAll(erased);
+        store.eraseAll(erased); // idempotent
+        assertThat(store.findAll(erased)).isEmpty();
+
+        assertThat(store.purgeOlderThan(java.time.Instant.parse("2021-01-01T00:00:00Z"), 1)).isEqualTo(1);
+        assertThat(store.purgeOlderThan(java.time.Instant.parse("2021-01-01T00:00:00Z"), 100)).isEqualTo(1);
+        assertThat(store.findAll(stale)).isEmpty();
+        assertThat(store.findAll(fresh)).containsOnlyKeys(Bureau.EQUIFAX);
+        assertThat(store.findAll(read)).containsOnlyKeys(Bureau.EQUIFAX);
+        assertThat(store.reference(fresh)).hasSize(16).isEqualTo(new SsnHmac(HASH_KEY, "k").hex(fresh).substring(0, 16));
+    }
 }

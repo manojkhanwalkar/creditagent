@@ -68,17 +68,24 @@ class AuthConfiguration {
         return new BCryptPasswordEncoder(BCRYPT_STRENGTH);
     }
 
+    /** Accountability records (report reads, lock changes, exports, deletions) on the {@code audit} logger. */
+    @Bean
+    com.creditagent.common.AuditLog auditLog() {
+        return new com.creditagent.common.AuditLog();
+    }
+
     @Bean
     AuthService authService(
             UserRepository users,
             SessionRepository sessions,
             PasswordEncoder passwords,
             IdentityVerifier identity,
-            AuthProperties properties) {
+            AuthProperties properties,
+            com.creditagent.common.AuditLog audit) {
         Clock clock = Clock.systemUTC();
         JwtService jwt = new JwtService(properties.jwtSecret(), properties.jwtIssuer(), properties.tokenTtl(), clock);
         return new AuthService(
                 users, sessions, passwords, new SsnHasher(properties.ssnHmacKey()), identity, jwt,
-                properties.sessionIdleTimeout(), clock);
+                properties.sessionIdleTimeout(), clock, audit);
     }
 }

@@ -56,6 +56,25 @@ public class AlertsService implements LoginAlerts {
         return alerts(userId, client);
     }
 
+    /**
+     * Every finding for the address, for a data export; unlike {@link #current} a failure is thrown,
+     * so an export never silently leaves the alerts out.
+     *
+     * @throws com.creditagent.clients.ServiceUnavailableException if the service cannot answer
+     */
+    public List<AlertsClient.Finding> findingsFor(String email) {
+        return client.lookup(email).findings();
+    }
+
+    /**
+     * Deletes every alert for the address (account deletion).
+     *
+     * @throws com.creditagent.clients.ServiceUnavailableException if the service could not confirm it
+     */
+    public void erase(String email) {
+        client.erase(email);
+    }
+
     private View alerts(String userId, AlertsClient via) {
         try {
             Optional<User> account = auth.account(userId);

@@ -340,6 +340,10 @@ public class OAuthService {
                 && !OAuthProperties.withoutTrailingSlash(resource).equals(code.resource())) {
             throw new OAuthException(400, "invalid_target", "The code was issued for another resource");
         }
+        if (auth.account(code.userId()).isEmpty()) {
+            // The account was deleted after the code was issued (within its 60 s): no grant for it.
+            throw new OAuthException(400, "invalid_grant", "The account no longer exists");
+        }
         Ssn ssn = Ssn.parse(code.ssnDigits());
         Instant expires = clock.instant().plus(properties.accessTokenTtl());
         if (!auth.openGrant(code.grantId(), code.userId(), ssn, code.expiresAt(), expires)) {

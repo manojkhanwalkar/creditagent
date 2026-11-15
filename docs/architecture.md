@@ -77,7 +77,7 @@ flowchart LR
 
 | Module | Role | Key technology |
 |---|---|---|
-| `common` | SSN value type, SSN HMAC, credit report model, bureau report formats and code tables, score bands, safe logging | Plain Java |
+| `common` | SSN value type, SSN HMAC, credit report model, bureau report formats and code tables, score bands, safe logging, audit log | Plain Java (SLF4J API) |
 | `credit-report-store` | The `CreditReports` table: encrypted store of the bureau reports, written by the generator and read by the MCP server | AWS SDK DynamoDB, AES-256-GCM |
 | `web-support` | Request-size limit filter for services that accept untrusted JSON (score calculator, NRG) | Spring Web |
 | `service-clients` | MCP client for reports, HTTP client for scores (shared by the web server and the agent) | LangChain4j MCP client, Spring `RestClient` |
@@ -170,7 +170,7 @@ sequenceDiagram
     participant K as kyc-service :8087
     participant U as DynamoDB users
     participant S as DynamoDB sessions
-    UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, phone, ssnCard image)
+    UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, zip, authorize=true, ssnCard image)
     WS->>WS: check fields, password rules, user id free (400 / 409, no KYC call)
     WS->>K: POST /api/v1/ssn-verifications (multipart: document)
     alt photo blurred, not a card, or unreadable
@@ -204,7 +204,7 @@ sequenceDiagram
 | `REJECTED` `UNSUPPORTED_IMAGE`, `IMAGE_SIZE`, `NOT_AN_SSN_CARD`, `SSN_UNREADABLE` | 422 with that reason | the reason's message, asks for a new photo |
 | error, timeout, or a malformed answer | 503 | "try again in a few minutes" |
 
-**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, phone, the SSN's HMAC (`ssnHash`) and last four digits, the KYC verification id (`kycVerificationId`), the credit report lock (`reportStatus`: `LOCKED` or `UNLOCKED`), and creation time. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, ZIP, the SSN's HMAC (`ssnHash`) and last four digits, the KYC verification id (`kycVerificationId`), the credit report lock (`reportStatus`: `LOCKED` or `UNLOCKED`), the accepted terms version and time (`consentVersion`, `consentedAt`), the last login (`lastLoginAt`), and creation time. No phone number: it is no longer collected, and the account retention job removes it from older rows. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
 
 **Credit report lock.** A signed-in user can lock or unlock their own credit report from the UI. `GET /api/v1/credit-report/status` returns `{"reportStatus":"LOCKED"|"UNLOCKED"}` and `PUT` with the same body sets it; both need the bearer token, and the user id comes from the session, so a user can only change their own status. The value is the `reportStatus` attribute on the user's item. New accounts start `UNLOCKED`, and rows written before the attribute existed read as `UNLOCKED`. The update is conditional (`attribute_exists` on the user id and password hash), so it can never create a user or touch an `ssn#` claim item. 
 
@@ -412,4 +412,63 @@ The bureau reports live in the DynamoDB table `CreditReports`, written by the ge
 **Writes and reads.** The generator replaces a consumer's whole set in one `TransactWriteItems`: a put for each bureau with a report, and a delete for each without. The MCP server reads the three known keys in one `TransactGetItems`, which is serializable with that write. A plain `Query` is only read-committed against transactions, so it could return one new report and two old ones during a regeneration. Readers therefore see the old set or the new one, never a mix; the file version needed per-SSN locks and staged moves to approximate this. A transaction that conflicts with another on the same consumer is retried up to 3 times, with exponential backoff and full jitter (50 ms, then 100 ms ceilings), since both replacing a set and reading it are safe to repeat. Trade-off: a transactional read costs twice the read units of a consistent query. A report is limited to 300 KB, well under DynamoDB's 400 KB item limit. A store failure answers 503 with `Retry-After`.
 
 **Migration.** Nothing is migrated from the old `~/Reports` files: they hold synthetic demo data, and the generator re-seeds `CREDIT_SEED_SSNS` at start-up.
+
+## Data rights, retention and audit
+
+The compliance checks of 2026-11-14 (`compliance-check`, `digital-regulation-check`, `ada-compatibility`) found the product handled data carefully but lacked its lifecycle and accountability. This section is what closed that gap.
+
+**Consent at registration.** Registration requires `authorize=true`: the user agrees to the [terms](../web-server/src/main/resources/static/terms.html) and [privacy notice](../web-server/src/main/resources/static/privacy.html), and authorises CreditAgent to obtain their credit reports (their written instruction under the FCRA). The server refuses the form without it, before the KYC call, and stores `consentVersion` (`RegistrationPolicy.CONSENT_VERSION`) and `consentedAt`. Change the version when those texts change materially. The phone number is no longer collected (minimisation).
+
+**Download my data.** `POST /api/v1/account/export` with `{ssn}` (own SSN, bearer token) returns everything held about the user: the account fields (no password hash or keyed hashes), the merged credit report, the dark-web findings, and a note on what isn't kept. It is a JSON attachment with `no-store`. A failure reading the report or alerts is a 503, never a silently incomplete export.
+
+**Delete my account.** `POST /api/v1/account/delete` with `{password, ssn}` (re-authentication, so a stolen session alone can't delete an account; WCAG 3.3.4 confirmation in the UI as well):
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant W as web-server
+    participant A as alerts-service
+    participant G as report generator
+    participant S as sessions table
+    participant U as users table
+    B->>W: POST /api/v1/account/delete {password, ssn} + JWT
+    W->>W: verifyOwner (password + SSN) else 403
+    W->>A: POST /internal/v1/alerts/erase {email} (token; idempotent, retried)
+    W->>G: POST /internal/v1/reports/erase {ssn} (token; idempotent, retried)
+    W->>S: delete every session and connector grant of the user (code# markers stay)
+    W->>U: delete user + ssn# claim (transaction), then email# claim if still ours
+    W-->>B: 204; the chat memory is forgotten
+```
+
+Outside data is erased first. If either erase fails, or DynamoDB does, the answer is 503 "your account is still open; try again" and the account stays. Data already erased stays erased. Every step is idempotent, so a retry finishes the job, and an account never disappears while its data stays behind. The user and both claims go in one transaction; a claim that names another account is left alone. Sessions are swept before and after the account is removed, so a login that slips in between is ended too. An authorization code issued just before the deletion can't open a grant afterwards (`invalid_grant`). Known gap: a dark-web monitor cycle that read the user's email before the deletion can still record an alert for it; that alert expires with its TTL.
+
+**Retention.** GLBA requires disposal no later than two years after last use. Three jobs enforce it, each configurable:
+- **Accounts:** `AccountRetentionJob` (web server, daily, `ACCOUNT_RETENTION` = 730 days) deletes accounts with no login (or since creation) for that long, the same way as above minus the reports. It also removes phone numbers stored before they stopped being collected. It looks at up to `ACCOUNT_RETENTION_MAX_PER_RUN` accounts a run and keeps its place in memory.
+- **Stored reports:** `ReportRetentionJob` (generator, daily, `CREDIT_REPORT_RETENTION` = 730 days) deletes stored bureau reports neither written nor read for that long. Every read through the MCP server marks the rows' `lastReadAt` (at most once a day, conditional on the row existing), so an active user's report is kept. It covers inactive accounts too, because the web server keys SSNs with a different HMAC key and can't name their reports.
+- **Alerts:** each alert carries `expiresAt` (`ALERT_RETENTION` = 730 days after it was found). **Deployment requirement:** DynamoDB TTL must be enabled on `expiresAt` for the Alerts table. `AlertsTable.ensure` does it when `DYNAMODB_CREATE_TABLES=true` (local, compose); in AWS the table's infrastructure code must set it. Alerts written before this have no expiry until their account is deleted.
+- **Activity:** a login, and a sign-in through the Claude connector's consent form, both count as use (`lastLoginAt`). The job re-checks each account right before purging it, so someone who signs in while a run is going is kept.
+
+**Audit log.** Erase records name an email by an HMAC keyed with the alerts service's secret. `AuditLog` (in `common`) writes one `key=value` line per event to the logger `audit`, which the deployment routes to an append-only sink with at least a year's retention (PCI 10.5.1-style; GLBA 314.4(c)(8)). Values are restricted to a safe alphabet and length, so they can't forge records or carry personal data. Events:
+- `REPORT_READ`:
+  - from the MCP server, for every read, with the caller kind and `ssnref` (the first 64 bits of the row key's HMAC);
+  - from the web server (score, chat, export) and the Claude connector, with the user id.
+- `REPORT_LOCK_CHANGED`
+- `CONNECTOR_GRANT_OPENED` / `REVOKED`
+- `ACCOUNT_EXPORTED` / `DELETED` / `PURGED`
+- `ALERTS_ERASED`, `REPORTS_ERASED`, `REPORTS_PURGED`
+
+**Accessibility.** The UI targets WCAG 2.2 AA (`ada-compatibility`). The baseline review fixed the following:
+- the score ring's accessible name now carries the number;
+- form-field borders now meet 3:1;
+- the sign-in tabs follow the APG keyboard model;
+- a warning with "Stay signed in" appears a minute before the idle timeout (2.2.1);
+- the grid now reflows at 320 px.
+
+`accessibility.html` is the accessibility statement, and `src/test/js/pages.test.js` guards the structure.
+
+**Trade-offs.**
+- Deletion makes two outbound calls (retried, each idempotent), so the worst case is about 30 s. It is rare and user-initiated.
+- Inactive accounts are purged without an advance email; add one before launch if the business wants it.
+- The privacy and accessibility contacts are placeholders (`*.example`) to set before launch.
+- S-3, plaintext HTTP between services, is still open. It needs mTLS or a mesh, and is tracked separately.
 

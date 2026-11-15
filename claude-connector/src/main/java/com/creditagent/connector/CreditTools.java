@@ -54,8 +54,16 @@ public class CreditTools {
     private final ScoreService scores;
     private final AdviceClient advice;
     private final AccountClient accounts;
+    private final com.creditagent.common.AuditLog audit;
 
     public CreditTools(CreditReportSource reports, ScoreService scores, AdviceClient advice, AccountClient accounts) {
+        this(reports, scores, advice, accounts, new com.creditagent.common.AuditLog());
+    }
+
+    /** @param audit records each report read with the user it was for (lock changes are audited by the web server) */
+    public CreditTools(CreditReportSource reports, ScoreService scores, AdviceClient advice, AccountClient accounts,
+            com.creditagent.common.AuditLog audit) {
+        this.audit = Objects.requireNonNull(audit);
         this.reports = Objects.requireNonNull(reports);
         this.scores = Objects.requireNonNull(scores);
         this.advice = Objects.requireNonNull(advice);
@@ -63,7 +71,10 @@ public class CreditTools {
     }
 
     public CreditReport report(ConnectorUser user) {
-        return guarded(() -> reports.findReport(user.ssn()).orElseThrow(() -> new ToolException(NO_REPORT)));
+        CreditReport report = guarded(() -> reports.findReport(user.ssn()).orElseThrow(() -> new ToolException(NO_REPORT)));
+        audit.record(com.creditagent.common.AuditLog.Event.REPORT_READ, "user:" + user.userId(), "user:" + user.userId(), "OK",
+                java.util.Map.of("via", "claude-connector"));
+        return report;
     }
 
     public Score score(ConnectorUser user) {

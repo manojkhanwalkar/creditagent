@@ -85,8 +85,8 @@ class AlertsFlowTest {
     @BeforeEach
     void registerUsers() {
         if (Wiring.USERS.find("ada").isEmpty()) {
-            auth.register("ada", PASSWORD, "Ada@Example.com", "+1 415 555 0100", "98101", FakeIdentityVerifier.card("123-45-6789"));
-            auth.register("bob", PASSWORD, "bob@example.com", "+1 415 555 0100", "98101", FakeIdentityVerifier.card("234-56-7890"));
+            auth.register("ada", PASSWORD, "Ada@Example.com", "98101", FakeIdentityVerifier.card("123-45-6789"));
+            auth.register("bob", PASSWORD, "bob@example.com", "98101", FakeIdentityVerifier.card("234-56-7890"));
         }
     }
 

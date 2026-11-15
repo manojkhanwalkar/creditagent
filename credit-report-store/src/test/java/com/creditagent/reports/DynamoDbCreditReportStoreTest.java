@@ -122,4 +122,83 @@ class DynamoDbCreditReportStoreTest {
         assertThat(defaults.toString()).doesNotContain("secret-1").doesNotContain("secret-2");
         assertThat(new CreditReportsProperties(null, null, null, null, null, null, null, null).previousEncryptionKeys()).isEmpty();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void purgeFollowsPagesStopsAtMaxAndHandsUnprocessedDeletesBack() {
+        java.util.function.Function<String, Map<String, software.amazon.awssdk.services.dynamodb.model.AttributeValue>> row =
+                id -> Map.of("ssn", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS(id),
+                        "bureau", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("Equifax"));
+        when(dynamo.scan(any(software.amazon.awssdk.services.dynamodb.model.ScanRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.ScanResponse.builder()
+                        .items(row.apply("a"), row.apply("b")).lastEvaluatedKey(row.apply("b")).build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.ScanResponse.builder()
+                        .items(row.apply("c"), row.apply("d")).build());
+        var unprocessed = Map.of("CreditReports", java.util.List.of(
+                software.amazon.awssdk.services.dynamodb.model.WriteRequest.builder().deleteRequest(d -> d.key(row.apply("a"))).build()));
+        when(dynamo.batchWriteItem(any(Consumer.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().unprocessedItems(unprocessed).build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().build());
+
+        assertThat(store.purgeOlderThan(Instant.parse("2025-01-01T00:00:00Z"), 3)).isEqualTo(3);
+        verify(dynamo, times(2)).scan(any(software.amazon.awssdk.services.dynamodb.model.ScanRequest.class));
+        verify(dynamo, times(3)).batchWriteItem(any(Consumer.class)); // page 1, its retry, page 2 (one row)
+        assertThat(pauses).hasSize(1); // the retry waited (full jitter)
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void rowsStillUnprocessedAfterRetriesAreNotCountedAsDeleted() {
+        var row = Map.of("ssn", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("a"),
+                "bureau", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("Equifax"));
+        when(dynamo.scan(any(software.amazon.awssdk.services.dynamodb.model.ScanRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.ScanResponse.builder().items(row).build());
+        var stuck = Map.of("CreditReports", java.util.List.of(
+                software.amazon.awssdk.services.dynamodb.model.WriteRequest.builder().deleteRequest(d -> d.key(row)).build()));
+        when(dynamo.batchWriteItem(any(Consumer.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().unprocessedItems(stuck).build());
+        assertThat(store.purgeOlderThan(Instant.parse("2025-01-01T00:00:00Z"), 10)).isZero();
+        verify(dynamo, times(3)).batchWriteItem(any(Consumer.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void eraseDeletesEveryBureauInOneTransaction() {
+        when(dynamo.transactWriteItems(any(Consumer.class))).thenReturn(TransactWriteItemsResponse.builder().build());
+        store.eraseAll(ssn);
+        verify(dynamo).transactWriteItems(any(Consumer.class));
+        assertThat(store.reference(ssn)).hasSize(16).isEqualTo(new SsnHmac(KEY, "k").hex(ssn).substring(0, 16));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aReadIsMarkedAtMostDailyAndAFailedMarkIsHarmless() {
+        String hex = new SsnHmac(KEY, "k").hex(ssn);
+        ReportCipher.Sealed sealed = new ReportCipher(ReportCipherTest.NEW, null)
+                .encrypt("{}".getBytes(java.nio.charset.StandardCharsets.UTF_8), DynamoDbCreditReportStore.associatedData(hex, Bureau.EQUIFAX));
+        java.util.function.Function<String, software.amazon.awssdk.services.dynamodb.model.TransactGetItemsResponse> answer = lastRead -> {
+            Map<String, software.amazon.awssdk.services.dynamodb.model.AttributeValue> item = new java.util.HashMap<>(Map.of(
+                    "ssn", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS(hex),
+                    "bureau", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("Equifax"),
+                    "keyId", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS(sealed.keyId()),
+                    "report", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromB(software.amazon.awssdk.core.SdkBytes.fromByteArray(sealed.bytes()))));
+            if (lastRead != null) {
+                item.put("lastReadAt", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS(lastRead));
+            }
+            return software.amazon.awssdk.services.dynamodb.model.TransactGetItemsResponse.builder()
+                    .responses(software.amazon.awssdk.services.dynamodb.model.ItemResponse.builder().item(item).build()).build();
+        };
+        when(dynamo.transactGetItems(any(Consumer.class)))
+                .thenReturn(answer.apply(null))                         // never marked: mark it
+                .thenReturn(answer.apply(Instant.EPOCH.toString()))     // marked today (the clock is the epoch): leave it
+                .thenReturn(answer.apply("1969-12-30T00:00:00Z"));      // marked two days ago: mark again
+        when(dynamo.updateItem(any(Consumer.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.UpdateItemResponse.builder().build())
+                .thenThrow(software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException.builder().build());
+
+        assertThat(store.findAll(ssn)).containsEntry(Bureau.EQUIFAX, "{}");
+        assertThat(store.findAll(ssn)).containsEntry(Bureau.EQUIFAX, "{}");
+        assertThat(store.findAll(ssn)).containsEntry(Bureau.EQUIFAX, "{}"); // the mark fails (erased meanwhile): still read
+        verify(dynamo, times(2)).updateItem(any(Consumer.class));
+    }
 }

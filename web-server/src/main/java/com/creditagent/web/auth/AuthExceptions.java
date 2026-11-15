@@ -1,7 +1,7 @@
 package com.creditagent.web.auth;
 
 /** Failures the auth API turns into HTTP problems. Messages are safe to show and never echo input. */
-final class AuthExceptions {
+public final class AuthExceptions {
 
     private AuthExceptions() {}
 
@@ -42,10 +42,10 @@ final class AuthExceptions {
     }
 
     /** 401: wrong credentials, or a missing, invalid or expired token or session. */
-    static final class UnauthenticatedException extends RuntimeException {
+    public static final class UnauthenticatedException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
-        UnauthenticatedException(String message) {
+        public UnauthenticatedException(String message) {
             super(message);
         }
     }

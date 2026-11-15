@@ -72,4 +72,35 @@ class AlertStoreTest {
             assertThat(client).isNotNull();
         }
     }
+
+    @Test
+    void anEraseThatCannotDeleteEverythingFailsSoTheCallerRetries() {
+        var row = java.util.Map.of("email", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("a@example.com"),
+                "location", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("loc-a"));
+        doReturn(software.amazon.awssdk.services.dynamodb.model.QueryResponse.builder().items(row).build())
+                .when(dynamo).query(any(QueryRequest.class));
+        var stuck = java.util.Map.of("Alerts", java.util.List.of(software.amazon.awssdk.services.dynamodb.model.WriteRequest.builder()
+                .deleteRequest(d -> d.key(row)).build()));
+        doReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().unprocessedItems(stuck).build())
+                .when(dynamo).batchWriteItem(any(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest.class));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> alerts.eraseAll("a@example.com"))
+                .isInstanceOf(IllegalStateException.class);
+        org.mockito.Mockito.verify(dynamo, org.mockito.Mockito.times(3))
+                .batchWriteItem(any(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest.class));
+    }
+
+    @Test
+    void retentionMustBePositiveAndReadOnlyDoublesCannotErase() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new DynamoDbAlertRepository(dynamo, "Alerts", java.time.Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+        AlertRepository readOnly = new AlertRepository() {
+            public boolean record(Alert alert) { return false; }
+            public java.util.List<Alert> find(String email) { return java.util.List.of(); }
+            public java.util.List<Alert> unnotifiedBetween(java.time.Instant from, java.time.Instant to, int max) { return java.util.List.of(); }
+            public boolean claimNotification(Alert alert, java.time.Instant runAt) { return false; }
+            public void releaseNotification(Alert alert, java.time.Instant runAt) {}
+        };
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> readOnly.eraseAll("a@example.com"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
 }

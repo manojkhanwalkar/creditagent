@@ -13,6 +13,10 @@ import java.util.Objects;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
+import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.ItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactGetItem;
@@ -37,6 +41,12 @@ public class DynamoDbCreditReportStore implements CreditReportStore {
     public static final String REPORT = "report";
     public static final String KEY_ID = "keyId";
     public static final String UPDATED_AT = "updatedAt";
+    /**
+     * When the consumer's reports were last read, recorded at most once a day. Retention counts from the
+     * later of this and {@code updatedAt}, so the stored copy of anyone who still uses the service is kept.
+     */
+    public static final String LAST_READ_AT = "lastReadAt";
+    static final java.time.Duration READ_MARK_INTERVAL = java.time.Duration.ofDays(1);
     /** A transaction that conflicts with another on the same consumer is tried again, up to this many times. */
     static final int MAX_ATTEMPTS = 3;
     /** The first retry waits up to this long, the second up to twice as long (full jitter). */
@@ -109,6 +119,8 @@ public class DynamoDbCreditReportStore implements CreditReportStore {
         }
         TransactGetItemsResponse response = withConflictRetries(() -> dynamo.transactGetItems(r -> r.transactItems(gets)));
         Map<Bureau, String> reports = new EnumMap<>(Bureau.class);
+        List<Bureau> staleMarks = new ArrayList<>();
+        java.time.Instant now = clock.instant();
         for (ItemResponse found : response.responses()) {
             Map<String, AttributeValue> item = found.item();
             if (item == null || item.isEmpty()) {
@@ -121,8 +133,110 @@ public class DynamoDbCreditReportStore implements CreditReportStore {
             byte[] plaintext = cipher.decrypt(new ReportCipher.Sealed(item.get(KEY_ID).s(), item.get(REPORT).b().asByteArray()),
                     associatedData(key, bureau));
             reports.put(bureau, new String(plaintext, StandardCharsets.UTF_8));
+            AttributeValue lastRead = item.get(LAST_READ_AT);
+            if (lastRead == null || lastRead.s() == null
+                    || java.time.Instant.parse(lastRead.s()).isBefore(now.minus(READ_MARK_INTERVAL))) {
+                staleMarks.add(bureau);
+            }
         }
+        markRead(key, staleMarks, now);
         return reports;
+    }
+
+    /**
+     * Records the read on each row whose mark is older than a day: at most one small write per bureau
+     * per consumer per day, never on the hot path otherwise. Conditional on the row still existing, so a
+     * concurrent replace or erase is never resurrected. Best effort: a failure only means the mark is
+     * written on a later read.
+     */
+    private void markRead(String key, List<Bureau> bureaus, java.time.Instant now) {
+        for (Bureau bureau : bureaus) {
+            try {
+                dynamo.updateItem(r -> r.tableName(table).key(key(key, bureau))
+                        .updateExpression("SET #read = :now")
+                        .conditionExpression("attribute_exists(#ssn)")
+                        .expressionAttributeNames(Map.of("#read", LAST_READ_AT, "#ssn", SSN))
+                        .expressionAttributeValues(Map.of(":now", AttributeValue.fromS(now.toString()))));
+            } catch (software.amazon.awssdk.core.exception.SdkException e) {
+                // Replaced or erased meanwhile, or a transient failure: the next read marks it.
+            }
+        }
+    }
+
+    /**
+     * A scan for rows neither written nor read since {@code cutoff} ({@code updatedAt} and
+     * {@code lastReadAt}; ISO-8601 instants in UTC sort as time), keys only, then deletes in batches of 25. Reads the whole table once per run: the job runs
+     * daily, and a retention sweep tolerates that; at scale, add an index on an update-month bucket.
+     */
+    @Override
+    public int purgeOlderThan(java.time.Instant cutoff, int max) {
+        int deleted = 0;
+        Map<String, AttributeValue> startKey = null;
+        do {
+            ScanRequest.Builder scan = ScanRequest.builder()
+                    .tableName(table)
+                    .projectionExpression("#ssn, #bureau")
+                    .filterExpression("#updated < :cutoff AND (attribute_not_exists(#read) OR #read < :cutoff)")
+                    .expressionAttributeNames(Map.of("#ssn", SSN, "#bureau", BUREAU, "#updated", UPDATED_AT, "#read", LAST_READ_AT))
+                    .expressionAttributeValues(Map.of(":cutoff", AttributeValue.fromS(cutoff.toString())));
+            if (startKey != null) {
+                scan.exclusiveStartKey(startKey);
+            }
+            ScanResponse page = dynamo.scan(scan.build());
+            List<Map<String, AttributeValue>> keys = page.items().stream()
+                    .limit(Math.max(0, max - deleted))
+                    .map(item -> Map.of(SSN, item.get(SSN), BUREAU, item.get(BUREAU)))
+                    .toList();
+            deleted += deleteKeys(keys);
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() && deleted < max
+                    ? new java.util.HashMap<>(page.lastEvaluatedKey())
+                    : null;
+        } while (startKey != null);
+        return deleted;
+    }
+
+    /**
+     * BatchWriteItem in chunks of 25, sending unprocessed items back up to twice more after a backoff with
+     * full jitter (throttling is why they come back); what is still left waits for the next run.
+     *
+     * @return how many were actually deleted
+     */
+    private int deleteKeys(List<Map<String, AttributeValue>> keys) {
+        int deleted = 0;
+        for (int from = 0; from < keys.size(); from += 25) {
+            List<WriteRequest> batch = keys.subList(from, Math.min(from + 25, keys.size())).stream()
+                    .map(k -> WriteRequest.builder().deleteRequest(d -> d.key(k)).build())
+                    .toList();
+            Map<String, List<WriteRequest>> pending = Map.of(table, batch);
+            for (int attempt = 1; !pending.isEmpty() && attempt <= 3; attempt++) {
+                if (attempt > 1 && !sleepQuietly(attempt)) {
+                    break;
+                }
+                Map<String, List<WriteRequest>> request = pending;
+                BatchWriteItemResponse response = dynamo.batchWriteItem(r -> r.requestItems(request));
+                pending = response.hasUnprocessedItems() ? response.unprocessedItems() : Map.of();
+            }
+            deleted += batch.size() - pending.values().stream().mapToInt(List::size).sum();
+        }
+        return deleted;
+    }
+
+    /** Full-jitter backoff before retry {@code attempt}; false if interrupted (the caller stops). */
+    private boolean sleepQuietly(int attempt) {
+        long ceiling = BASE_BACKOFF.toMillis() << (attempt - 1);
+        try {
+            backoff.sleep(java.time.Duration.ofMillis(java.util.concurrent.ThreadLocalRandom.current().nextLong(ceiling + 1)));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /** The first 16 hex digits (64 bits) of the row key's HMAC: enough to correlate records, not to reverse. */
+    @Override
+    public String reference(Ssn ssn) {
+        return ssnHash.hex(ssn).substring(0, 16);
     }
 
     /**

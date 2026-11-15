@@ -27,11 +27,17 @@ import software.amazon.awssdk.core.exception.SdkException;
 class AlertsController {
 
     static final String PATH = "/internal/v1/alerts/lookup";
+    static final String ERASE_PATH = "/internal/v1/alerts/erase";
 
     private final AlertRepository alerts;
+    private final com.creditagent.common.AuditLog audit;
+    private final String referenceKey;
 
-    AlertsController(AlertRepository alerts) {
+    AlertsController(AlertRepository alerts, com.creditagent.common.AuditLog audit,
+            @org.springframework.beans.factory.annotation.Value("${credit.alerts.service-token:}") String referenceKey) {
         this.alerts = alerts;
+        this.audit = audit;
+        this.referenceKey = referenceKey;
     }
 
     /** The same email rule as registration, so every registered address can be looked up. */
@@ -52,6 +58,39 @@ class AlertsController {
                 .map(alert -> new Finding(alert.location(), alert.timestamp()))
                 .toList();
         return new LookupResponse(!findings.isEmpty(), findings);
+    }
+
+    /**
+     * {@code POST /internal/v1/alerts/erase} with {@code {email}}: deletes every alert for the address
+     * (account deletion). Idempotent; 204 either way, so the answer reveals nothing. The audit record
+     * names the address by a keyed hash (HMAC-SHA256 with this service's secret token), so the audit log
+     * cannot be searched for a guessed address.
+     */
+    @PostMapping(path = ERASE_PATH, consumes = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<Void> erase(@Valid @RequestBody LookupRequest request) {
+        int deleted = alerts.eraseAll(request.email());
+        audit.record(com.creditagent.common.AuditLog.Event.ALERTS_ERASED, "service:internal",
+                "emailref:" + emailReference(request.email(), referenceKey), "OK", java.util.Map.of("alerts", deleted));
+        return ResponseEntity.noContent().build();
+    }
+
+    static String emailReference(String email, String key) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(("alerts audit ref|" + key).getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    "HmacSHA256"));
+            byte[] digest = mac.doFinal(Alert.normalise(email).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest, 0, 8);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException("HMAC-SHA256 is always available", e);
+        }
+    }
+
+    /** An erase that could not delete everything: 503 with Retry-After, so the caller retries the whole erase. */
+    @ExceptionHandler(IllegalStateException.class)
+    ResponseEntity<ProblemDetail> incomplete(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "1")
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, "Alerts could not be erased."));
     }
 
     /** DynamoDB failed (after the SDK's own retries): 503 with Retry-After, which callers back off on. */

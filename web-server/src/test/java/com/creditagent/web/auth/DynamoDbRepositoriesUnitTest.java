@@ -57,7 +57,7 @@ class DynamoDbRepositoriesUnitTest {
     static final Instant NOW = Instant.parse("2026-11-09T12:00:00Z");
 
     static User user(String id) {
-        return new User(id, "$2a$hash", id + "@example.com", "+14155550100", "hash-" + id, "6789", "kyc_" + id, NOW,
+        return new User(id, "$2a$hash", id + "@example.com", "hash-" + id, "6789", "kyc_" + id, NOW,
                 ReportStatus.LOCKED);
     }
 
@@ -108,7 +108,7 @@ class DynamoDbRepositoriesUnitTest {
     @Test
     void aUserWithoutAKycIdIsStoredWithoutTheAttribute() {
         doReturn(null).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
-        User legacy = new User("old", "$2a$hash", "o@example.com", "+14155550100", "hash-old", "6789", null, NOW, null);
+        User legacy = new User("old", "$2a$hash", "o@example.com", "hash-old", "6789", null, NOW, null);
         users.create(legacy);
         ArgumentCaptor<TransactWriteItemsRequest> sent = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(dynamo).transactWriteItems(sent.capture());
@@ -215,7 +215,7 @@ class DynamoDbRepositoriesUnitTest {
     @Test
     void zipAndLastScoreRoundTripAndTheScoreUpdateIsConditional() {
         doReturn(null).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
-        users.create(new User("zed", "$2a$hash", "z@example.com", "+14155550100", "hash-zed", "6789", "kyc", NOW,
+        users.create(new User("zed", "$2a$hash", "z@example.com", "hash-zed", "6789", "kyc", NOW,
                 ReportStatus.UNLOCKED, "98101", null, null));
         ArgumentCaptor<TransactWriteItemsRequest> created = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
         verify(dynamo).transactWriteItems(created.capture());
@@ -412,5 +412,28 @@ class DynamoDbRepositoriesUnitTest {
         DynamoDbTables.ensure(dynamo, "users", "sessions");
 
         verify(dynamo, never()).updateTimeToLive(any(UpdateTimeToLiveRequest.class));
+    }
+
+    @Test
+    void deleteFallsBackWhenTheSsnClaimIsAnotherAccountsAndRethrowsOtherFailures() {
+        DynamoDbClient dynamo = mock(DynamoDbClient.class, CALLS_REAL_METHODS);
+        DynamoDbUserRepository repo = new DynamoDbUserRepository(dynamo, "users");
+        doReturn(GetItemResponse.builder().item(userItem("vic")).build()).when(dynamo).getItem(any(GetItemRequest.class));
+        ArgumentCaptor<TransactWriteItemsRequest> sent = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        doThrow(cancelled("None", "ConditionalCheckFailed", "None"))
+                .doReturn(software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse.builder().build())
+                .when(dynamo).transactWriteItems(sent.capture());
+
+        assertThat(repo.delete(user("vic"))).isTrue();
+        // First: user + ssn claim + email claim; the ssn claim is another account's, so then user + email claim.
+        assertThat(sent.getAllValues()).extracting(r -> r.transactItems().size()).containsExactly(3, 2);
+        verify(dynamo, never()).deleteItem(any(DeleteItemRequest.class));
+
+        doThrow(cancelled("ThrottlingError", "None", "None")).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        assertThatThrownBy(() -> repo.delete(user("vic"))).isInstanceOf(TransactionCanceledException.class);
+
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        repo.removeLegacyPhone("vic"); // deleted meanwhile: ignored
+        assertThat(repo.recordLogin("vic", NOW)).isFalse();
     }
 }

@@ -13,7 +13,7 @@ public final class InMemoryRepositories {
 
     private InMemoryRepositories() {}
 
-    public static final class Users implements UserRepository {
+    public static class Users implements UserRepository {
         public final Map<String, User> byId = new ConcurrentHashMap<>();
 
         @Override
@@ -43,16 +43,43 @@ public final class InMemoryRepositories {
 
         @Override
         public boolean updateReportStatus(String userId, ReportStatus status) {
-            return byId.computeIfPresent(userId, (id, u) -> new User(
-                    u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),
-                    u.kycVerificationId(), u.createdAt(), status, u.zip(), u.lastScore(), u.lastScoreAt())) != null;
+            return byId.computeIfPresent(userId, (id, u) -> u.withReportStatus(status)) != null;
         }
 
         @Override
         public boolean updateLastScore(String userId, int score, Instant at) {
-            return byId.computeIfPresent(userId, (id, u) -> new User(
-                    u.userId(), u.passwordHash(), u.email(), u.phone(), u.ssnHash(), u.ssnLastFour(),
-                    u.kycVerificationId(), u.createdAt(), u.reportStatus(), u.zip(), score, at)) != null;
+            return byId.computeIfPresent(userId, (id, u) -> u.withLastScore(score, at)) != null;
+        }
+
+        @Override
+        public boolean recordLogin(String userId, Instant at) {
+            return byId.computeIfPresent(userId, (id, u) -> u.withLastLogin(at)) != null;
+        }
+
+        /** Ids of accounts that still hold a phone number from before it stopped being collected. */
+        public final java.util.Set<String> legacyPhones = ConcurrentHashMap.newKeySet();
+
+        @Override
+        public boolean delete(User user) {
+            legacyPhones.remove(user.userId());
+            return byId.remove(user.userId()) != null;
+        }
+
+        @Override
+        public Page accounts(String after, int limit) {
+            java.util.List<String> ids = byId.keySet().stream().sorted()
+                    .filter(id -> after == null || id.compareTo(after) > 0).toList();
+            java.util.List<AccountSummary> page = ids.stream().limit(limit)
+                    .map(byId::get).filter(java.util.Objects::nonNull)
+                    .map(u -> new AccountSummary(u.userId(), u.email(), u.lastActiveAt(), legacyPhones.contains(u.userId())))
+                    .toList();
+            String next = ids.size() > limit ? page.get(page.size() - 1).userId() : null;
+            return new Page(page, next);
+        }
+
+        @Override
+        public void removeLegacyPhone(String userId) {
+            legacyPhones.remove(userId);
         }
     }
 
@@ -89,6 +116,13 @@ public final class InMemoryRepositories {
         public int deleteExpired(Instant now) {
             int before = byId.size();
             byId.values().removeIf(s -> s.isExpired(now));
+            return before - byId.size();
+        }
+
+        @Override
+        public int deleteAllForUser(String userId) {
+            int before = byId.size();
+            byId.values().removeIf(s -> s.userId().equals(userId) && !s.sessionId().startsWith(AuthService.USED_CODE_PREFIX));
             return before - byId.size();
         }
     }

@@ -13,6 +13,12 @@ import java.util.regex.Pattern;
  */
 public final class RegistrationPolicy {
 
+    /**
+     * The version of the terms of use, privacy notice and FCRA authorisation (static/terms.html,
+     * static/privacy.html) a new account accepts. Change it whenever those texts change materially.
+     */
+    public static final String CONSENT_VERSION = "2026-11-14";
+
     public static final int MIN_PASSWORD_LENGTH = 12;
     public static final int MAX_PASSWORD_LENGTH = 64;
     /** BCrypt only reads the first 72 bytes; refuse anything longer instead of silently truncating. */
@@ -20,7 +26,6 @@ public final class RegistrationPolicy {
 
     private static final Pattern USER_ID = Pattern.compile("^[a-z0-9][a-z0-9._-]{2,31}$");
     /** E.164: a plus sign, a country code and up to 15 digits in all. */
-    private static final Pattern PHONE = Pattern.compile("^\\+[1-9]\\d{7,14}$");
 
     /** A short list of the most common passwords that pass the length rule. */
     private static final Set<String> COMMON = Set.of(
@@ -82,14 +87,5 @@ public final class RegistrationPolicy {
             throw new InvalidRegistrationException("Enter your 5-digit ZIP code.");
         }
         return value.substring(0, 5);
-    }
-
-    /** Accepts spaces, dashes, dots and brackets as separators and stores E.164. */
-    public static String normalisePhone(String phone) {
-        String value = phone == null ? "" : phone.strip().replaceAll("[\\s().-]", "");
-        if (!PHONE.matcher(value).matches()) {
-            throw new InvalidRegistrationException("Enter the phone number in international form, e.g. +1 415 555 0100.");
-        }
-        return value;
     }
 }

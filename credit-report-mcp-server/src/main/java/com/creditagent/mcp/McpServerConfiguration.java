@@ -25,6 +25,11 @@ class McpServerConfiguration {
     static final String SERVER_VERSION = "0.1.0";
 
     @Bean
+    com.creditagent.common.AuditLog auditLog() {
+        return new com.creditagent.common.AuditLog();
+    }
+
+    @Bean
     ReportNormalizerClient reportNormalizerClient(RestClient.Builder builder, NrgProperties properties, RetrySettings retry) {
         // Normalizing is a pure computation, so any transient failure is retried.
         return new NrgHttpClient(HttpClients.restClient(builder, properties.url(), properties.timeout(), retry));

@@ -30,7 +30,8 @@ class CreditToolsTest {
     final ScoreService scores = mock(ScoreService.class);
     final AdviceClient advice = mock(AdviceClient.class);
     final AccountClient accounts = mock(AccountClient.class);
-    final CreditTools tools = new CreditTools(reports, scores, advice, accounts);
+    final com.creditagent.common.AuditLog audit = org.mockito.Mockito.mock(com.creditagent.common.AuditLog.class);
+    final CreditTools tools = new CreditTools(reports, scores, advice, accounts, audit);
 
     @Test
     void readsTheUsersOwnReportAndScore() {
@@ -82,5 +83,17 @@ class CreditToolsTest {
         assertThat(USER.hasScope("credit")).isTrue();
         assertThat(new ConnectorUser("a", SSN, "t", "r", null).hasScope("credit")).isFalse();
         assertThat(new ConnectorUser("a", SSN, "t", "r", "other credit").hasScope("credit")).isTrue();
+    }
+
+    @org.junit.jupiter.api.Test
+    void eachReportReadIsAuditedWithTheUser() {
+        org.mockito.BDDMockito.given(reports.findReport(org.mockito.ArgumentMatchers.any()))
+                .willReturn(java.util.Optional.of(new com.creditagent.common.CreditReport("r", "***-**-6789", "A",
+                        java.time.Instant.EPOCH, java.util.List.of(), 0, 0, 0)));
+        ConnectorUser user = new ConnectorUser("ada", com.creditagent.common.Ssn.parse("123-45-6789"), "token", "res", "scope");
+        tools.report(user);
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.REPORT_READ, "user:ada", "user:ada", "OK",
+                java.util.Map.of("via", "claude-connector"));
+        new CreditTools(reports, scores, advice, accounts).report(user); // default audit logger
     }
 }

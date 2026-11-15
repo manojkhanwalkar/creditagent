@@ -11,9 +11,14 @@
 
     <artifactId>common</artifactId>
     <name>CreditAgent :: Common</name>
-    <description>Framework-free domain model shared by all services (SSN, credit report, score bands)</description>
+    <description>Framework-free domain model shared by all services (SSN, credit report, score bands, audit log)</description>
 
     <dependencies>
+        <!-- Logging API only (for AuditLog); each service brings its own binding. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

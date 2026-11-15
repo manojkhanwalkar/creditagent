@@ -18,6 +18,7 @@ import org.springframework.web.client.RestClientException;
 public class AlertsClient {
 
     static final String PATH = "/internal/v1/alerts/lookup";
+    static final String ERASE_PATH = "/internal/v1/alerts/erase";
 
     public record Finding(String location, Instant foundAt) {}
 
@@ -47,6 +48,24 @@ public class AlertsClient {
             return answer;
         } catch (RestClientException | HttpMessageConversionException e) {
             throw new ServiceUnavailableException("Alerts service request failed", e);
+        }
+    }
+
+    /**
+     * Deletes every alert for the address (account deletion). Idempotent, so safe to retry.
+     *
+     * @throws ServiceUnavailableException if the service could not confirm it
+     */
+    public void erase(String email) {
+        try {
+            restClient.post().uri(ERASE_PATH)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + serviceToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("email", email))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientException e) {
+            throw new ServiceUnavailableException("Alerts service erase failed", e);
         }
     }
 }

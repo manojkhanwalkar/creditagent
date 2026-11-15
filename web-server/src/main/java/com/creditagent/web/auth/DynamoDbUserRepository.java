@@ -33,6 +33,11 @@ public class DynamoDbUserRepository implements UserRepository {
     static final String ZIP = "zip";
     static final String LAST_SCORE = "lastScore";
     static final String LAST_SCORE_AT = "lastScoreAt";
+    static final String CONSENT_VERSION = "consentVersion";
+    static final String CONSENTED_AT = "consentedAt";
+    static final String LAST_LOGIN_AT = "lastLoginAt";
+    /** Stored by accounts made before the phone number stopped being collected; removed by the retention job. */
+    static final String LEGACY_PHONE = "phone";
     private static final String CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailed";
 
     private final DynamoDbClient dynamo;
@@ -49,7 +54,6 @@ public class DynamoDbUserRepository implements UserRepository {
         item.put(KEY, s(user.userId()));
         item.put("passwordHash", s(user.passwordHash()));
         item.put("email", s(user.email()));
-        item.put("phone", s(user.phone()));
         item.put("ssnHash", s(user.ssnHash()));
         item.put("ssnLastFour", s(user.ssnLastFour()));
         if (user.kycVerificationId() != null) {
@@ -59,6 +63,10 @@ public class DynamoDbUserRepository implements UserRepository {
         item.put(REPORT_STATUS, s(user.reportStatus().name()));
         if (user.zip() != null) {
             item.put(ZIP, s(user.zip()));
+        }
+        if (user.consentVersion() != null) {
+            item.put(CONSENT_VERSION, s(user.consentVersion()));
+            item.put(CONSENTED_AT, s(user.consentedAt().toString()));
         }
         Map<String, AttributeValue> claim = Map.of(
                 KEY, s(SSN_CLAIM_PREFIX + user.ssnHash()),
@@ -109,7 +117,6 @@ public class DynamoDbUserRepository implements UserRepository {
                 item.get(KEY).s(),
                 item.get("passwordHash").s(),
                 item.get("email").s(),
-                item.get("phone").s(),
                 text(item, "ssnHash"),
                 text(item, "ssnLastFour"),
                 text(item, "kycVerificationId"),
@@ -117,7 +124,10 @@ public class DynamoDbUserRepository implements UserRepository {
                 ReportStatus.fromStored(text(item, REPORT_STATUS)),
                 text(item, ZIP),
                 item.containsKey(LAST_SCORE) ? Integer.valueOf(item.get(LAST_SCORE).n()) : null,
-                item.containsKey(LAST_SCORE_AT) ? Instant.parse(item.get(LAST_SCORE_AT).s()) : null));
+                instant(item, LAST_SCORE_AT),
+                text(item, CONSENT_VERSION),
+                instant(item, CONSENTED_AT),
+                instant(item, LAST_LOGIN_AT)));
     }
 
     /** Reads the {@code ssn#<hash>} claim, then its owner. Two consistent reads. */
@@ -175,6 +185,136 @@ public class DynamoDbUserRepository implements UserRepository {
         } catch (ConditionalCheckFailedException missing) {
             return false;
         }
+    }
+
+    /** Conditional, like {@link #updateReportStatus}: only an existing user item is changed. */
+    @Override
+    public boolean recordLogin(String userId, Instant at) {
+        if (isClaimOrMissing(userId)) {
+            return false;
+        }
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(userId)))
+                    .updateExpression("SET #login = :at")
+                    .conditionExpression("attribute_exists(#id) AND attribute_exists(#pw)")
+                    .expressionAttributeNames(Map.of("#id", KEY, "#pw", "passwordHash", "#login", LAST_LOGIN_AT))
+                    .expressionAttributeValues(Map.of(":at", s(at.toString()))));
+            return true;
+        } catch (ConditionalCheckFailedException missing) {
+            return false;
+        }
+    }
+
+    /**
+     * One transaction deletes the user item and its {@code ssn#} and {@code email#} claims, each claim
+     * only while it is absent or still names this user, so a claim never goes missing from under another
+     * account. If a claim names another account, the transaction is repeated without it. Either all of
+     * this account's items go or none do, so a retry after a failure finishes the job.
+     */
+    @Override
+    public boolean delete(User user) {
+        if (isClaimOrMissing(user.userId())) {
+            return false;
+        }
+        boolean existed = find(user.userId()).isPresent();
+        Map<String, String> ownerNames = Map.of("#owner", "owner");
+        Map<String, AttributeValue> owner = Map.of(":owner", s(user.userId()));
+        List<String> claims = new java.util.ArrayList<>(List.of(SSN_CLAIM_PREFIX + user.ssnHash()));
+        if (user.email() != null) {
+            claims.add(EMAIL_CLAIM_PREFIX + emailKey(user.email()));
+        }
+        while (true) {
+            List<software.amazon.awssdk.services.dynamodb.model.TransactWriteItem> items = new java.util.ArrayList<>();
+            items.add(software.amazon.awssdk.services.dynamodb.model.TransactWriteItem.builder()
+                    .delete(d -> d.tableName(table).key(Map.of(KEY, s(user.userId())))).build());
+            for (String claim : claims) {
+                items.add(software.amazon.awssdk.services.dynamodb.model.TransactWriteItem.builder()
+                        .delete(d -> d.tableName(table).key(Map.of(KEY, s(claim)))
+                                .conditionExpression("attribute_not_exists(#owner) OR #owner = :owner")
+                                .expressionAttributeNames(ownerNames).expressionAttributeValues(owner))
+                        .build());
+            }
+            try {
+                dynamo.transactWriteItems(r -> r.transactItems(items));
+                return existed;
+            } catch (TransactionCanceledException e) {
+                List<CancellationReason> reasons = e.cancellationReasons();
+                List<String> othersClaims = new java.util.ArrayList<>();
+                for (int i = 1; i < reasons.size() && i <= claims.size(); i++) {
+                    if (CONDITIONAL_CHECK_FAILED.equals(reasons.get(i).code())) {
+                        othersClaims.add(claims.get(i - 1));
+                    }
+                }
+                if (othersClaims.isEmpty()) {
+                    throw e;
+                }
+                claims.removeAll(othersClaims); // another account's claim: leave it, delete the rest
+            }
+        }
+    }
+
+    /**
+     * A scan for user items (they have a password hash; claims do not), projecting only what the
+     * retention job needs. DynamoDB's {@code Limit} counts items read before the filter, so pages are
+     * read until {@code limit} accounts are found or the table ends.
+     */
+    @Override
+    public Page accounts(String after, int limit) {
+        List<AccountSummary> found = new java.util.ArrayList<>();
+        Map<String, AttributeValue> startKey = after == null ? null : Map.of(KEY, s(after));
+        String lastSeen = after;
+        do {
+            Map<String, AttributeValue> start = startKey;
+            var page = dynamo.scan(r -> {
+                r.tableName(table)
+                        .filterExpression("attribute_exists(#pw)")
+                        .projectionExpression("#id, #email, #created, #login, #phone")
+                        .expressionAttributeNames(Map.of("#id", KEY, "#pw", "passwordHash", "#email", "email",
+                                "#created", "createdAt", "#login", LAST_LOGIN_AT, "#phone", LEGACY_PHONE))
+                        .limit(limit);
+                if (start != null) {
+                    r.exclusiveStartKey(start);
+                }
+            });
+            for (Map<String, AttributeValue> item : page.items()) {
+                if (found.size() == limit) {
+                    break;
+                }
+                Instant created = Instant.parse(item.get("createdAt").s());
+                Instant login = instant(item, LAST_LOGIN_AT);
+                found.add(new AccountSummary(item.get(KEY).s(), text(item, "email"),
+                        login != null && login.isAfter(created) ? login : created, item.containsKey(LEGACY_PHONE)));
+                lastSeen = item.get(KEY).s();
+            }
+            boolean more = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty();
+            if (found.size() == limit) {
+                return new Page(found, lastSeen);
+            }
+            startKey = more ? page.lastEvaluatedKey() : null;
+        } while (startKey != null);
+        return new Page(found, null);
+    }
+
+    @Override
+    public void removeLegacyPhone(String userId) {
+        if (isClaimOrMissing(userId)) {
+            return;
+        }
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(userId)))
+                    .updateExpression("REMOVE #phone")
+                    .conditionExpression("attribute_exists(#pw)")
+                    .expressionAttributeNames(Map.of("#phone", LEGACY_PHONE, "#pw", "passwordHash")));
+        } catch (ConditionalCheckFailedException gone) {
+            // Deleted meanwhile.
+        }
+    }
+
+    private static Instant instant(Map<String, AttributeValue> item, String name) {
+        String value = text(item, name);
+        return value == null ? null : Instant.parse(value);
     }
 
     static AttributeValue s(String value) {

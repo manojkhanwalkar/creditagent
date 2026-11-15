@@ -1,5 +1,8 @@
-import { bandFor, looksLikeSsn, ringDash } from './score-ring.js';
-import { authHeaders, checkRegistration, createSession, lockView, registrationFailure, ssnHint } from './auth.js';
+import { bandFor, looksLikeSsn, ringDash, scoreDescription } from './score-ring.js';
+import {
+  authHeaders, checkDeletion, checkRegistration, createSession, idleWarningDelayMs, lockView, nextTab,
+  registrationFailure, ssnHint,
+} from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
 import { RETRY_DELAYS_MS, alertsChecked, alertsView } from './alerts.js';
@@ -17,6 +20,7 @@ const scoreWidget = $('score-widget');
 const lockWidget = $('lock-widget');
 const chatWidget = $('chat-widget');
 const offersWidget = $('offers-widget');
+const dataWidget = $('data-widget');
 
 // ---------- signed-in / signed-out view ----------
 
@@ -29,7 +33,9 @@ function showSignedIn(userId, ssnMasked, offers, alerts) {
   lockWidget.hidden = false;
   chatWidget.hidden = false;
   offersWidget.hidden = false;
+  dataWidget.hidden = false;
   hideNotice();
+  scheduleIdleWarning();
   resetLockWidget();
   resetChat();
   loadReportStatus();
@@ -46,6 +52,9 @@ function showSignedOut(message) {
   lockWidget.hidden = true;
   chatWidget.hidden = true;
   offersWidget.hidden = true;
+  dataWidget.hidden = true;
+  resetDataWidget();
+  cancelIdleWarning();
   renderAlerts(null);
   alertsGeneration += 1;
   offersGeneration += 1;
@@ -59,8 +68,11 @@ function showSignedOut(message) {
 }
 
 function showNotice(message) {
-  notice.textContent = message;
+  // The live region must be in the accessibility tree before its text changes, or the message may not
+  // be announced (WCAG 4.1.3): show it empty, then fill it on the next frame.
+  notice.textContent = '';
   notice.hidden = false;
+  requestAnimationFrame(() => { notice.textContent = message; });
 }
 
 function hideNotice() {
@@ -141,8 +153,54 @@ async function api(path, { method = 'POST', body } = {}) {
     cache: 'no-store',
   });
   const data = await response.json().catch(() => ({}));
+  // Every authenticated request counts as activity on the server; restart the idle warning's clock.
+  if (response.ok && session.token()) scheduleIdleWarning();
   return { response, data };
 }
+
+// ---------- idle warning (WCAG 2.2.1: warn before the session times out, and let the user extend it) ----------
+
+const idleWarning = $('idle-warning');
+const IDLE_KEY = 'creditAgent.idleTimeoutSeconds';
+// The server's idle timeout, from the login answer; kept for this tab, so a reload warns on time too.
+let idleTimeoutSeconds = (() => {
+  try { return Number(window.sessionStorage.getItem(IDLE_KEY)) || 300; } catch { return 300; }
+})();
+let idleTimer = null;
+let focusBeforeWarning = null;
+
+function scheduleIdleWarning() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(showIdleWarning, idleWarningDelayMs(idleTimeoutSeconds));
+}
+
+function cancelIdleWarning() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  idleWarning.hidden = true;
+}
+
+function showIdleWarning() {
+  focusBeforeWarning = document.activeElement;
+  idleWarning.hidden = false;
+  $('idle-stay').focus();
+}
+
+async function staySignedIn() {
+  idleWarning.hidden = true;
+  if (focusBeforeWarning && typeof focusBeforeWarning.focus === 'function') focusBeforeWarning.focus();
+  try {
+    const { response, data } = await api('/api/v1/auth/session', { method: 'GET' });
+    if (response.status === 401) showSignedOut(messageFor(401, data));
+  } catch {
+    showNotice('Could not reach the server. Your session may end soon.');
+  }
+}
+
+$('idle-stay').addEventListener('click', staySignedIn);
+idleWarning.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') staySignedIn();
+});
 
 function messageFor(status, body) {
   if (status === 429) return 'Too many requests. Please wait a minute and try again.';
@@ -165,6 +223,9 @@ const registerForm = $('register-form');
 function selectTab(register) {
   tabLogin.setAttribute('aria-selected', String(!register));
   tabRegister.setAttribute('aria-selected', String(register));
+  // Roving tabindex: only the selected tab is in the Tab order; arrows move between tabs.
+  tabLogin.tabIndex = register ? -1 : 0;
+  tabRegister.tabIndex = register ? 0 : -1;
   loginForm.hidden = register;
   registerForm.hidden = !register;
   $('auth-title').textContent = register ? 'Create an account' : 'Sign in';
@@ -172,6 +233,15 @@ function selectTab(register) {
 
 tabLogin.addEventListener('click', () => selectTab(false));
 tabRegister.addEventListener('click', () => selectTab(true));
+const tabs = [tabLogin, tabRegister];
+tabs.forEach((tab, index) => tab.addEventListener('keydown', (event) => {
+  const next = nextTab(index, event.key, tabs.length);
+  if (next === null) return;
+  event.preventDefault();
+  selectTab(next === 1);
+  tabs[next].focus();
+}));
+selectTab(false);
 
 // ---------- login ----------
 
@@ -182,6 +252,10 @@ async function logIn(userId, password, errorElement) {
     return false;
   }
   session.save(data.token, data.userId, data.ssnMasked);
+  if (data.idleTimeoutSeconds) {
+    idleTimeoutSeconds = data.idleTimeoutSeconds;
+    try { window.sessionStorage.setItem(IDLE_KEY, String(idleTimeoutSeconds)); } catch { /* storage blocked */ }
+  }
   // The login answer carries the offers matched to the user's last score and ZIP code.
   showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts);
   return true;
@@ -214,7 +288,7 @@ registerForm.addEventListener('submit', async (event) => {
     password: $('reg-password').value,
     confirm: $('reg-confirm').value,
     email: $('reg-email').value.trim(),
-    phone: $('reg-phone').value.trim(),
+    authorize: $('reg-authorize').checked,
     zip: $('reg-zip').value.trim(),
     ssnCard: $('reg-ssn-card').files[0] || null,
   };
@@ -233,7 +307,7 @@ registerForm.addEventListener('submit', async (event) => {
     body.append('userId', form.userId);
     body.append('password', form.password);
     body.append('email', form.email);
-    body.append('phone', form.phone);
+    body.append('authorize', 'true'); // checkRegistration refused the form without it
     body.append('zip', form.zip);
     body.append('ssnCard', form.ssnCard, form.ssnCard.name);
     const response = await fetch('/api/v1/auth/register', {
@@ -373,6 +447,8 @@ function render({ score, ssnMasked }) {
   ringScore.textContent = String(score);
   ringScore.style.fill = band.color;
   $('ring-caption').textContent = `${band.label} · ${ssnMasked}`;
+  // The ring is role="img": its <title> is all a screen reader hears, so it carries the number.
+  $('ring-label').textContent = scoreDescription(score);
   result.hidden = false;
 }
 
@@ -589,6 +665,87 @@ chatMessage.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     chatForm.requestSubmit();
+  }
+});
+
+// ---------- your data: download and delete ----------
+
+function resetDataWidget() {
+  $('export-form').reset();
+  $('delete-form').reset();
+  $('delete-details').open = false;
+  showFormError($('export-error'), '');
+  showFormError($('delete-error'), '');
+}
+
+$('export-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const error = $('export-error');
+  const ssn = $('export-ssn').value.trim();
+  if (!looksLikeSsn(ssn)) {
+    showFormError(error, 'Enter your SSN as AAA-GG-SSSS or 9 digits.');
+    return;
+  }
+  showFormError(error, '');
+  const button = $('export-submit');
+  button.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/account/export', { body: { ssn } });
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    if (!response.ok) {
+      showFormError(error, messageFor(response.status, data));
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'creditagent-data.json';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    $('export-ssn').value = '';
+    showNotice('Your data was downloaded as creditagent-data.json.');
+  } catch {
+    showFormError(error, 'Could not reach the server. Check your connection and try again.');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('delete-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const error = $('delete-error');
+  const form = {
+    password: $('delete-password').value,
+    ssn: $('delete-ssn').value.trim(),
+    confirmed: $('delete-confirm').checked,
+  };
+  const problem = checkDeletion(form);
+  showFormError(error, problem || '');
+  if (problem) return;
+  const button = $('delete-submit');
+  button.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/account/delete', { body: { password: form.password, ssn: form.ssn } });
+    if (response.status === 204) {
+      showSignedOut('Your account and all of its data have been deleted.');
+      // The focused button is gone with its panel: move focus to the sign-in heading (WCAG 2.4.3).
+      $('auth-title').focus();
+      return;
+    }
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    showFormError(error, messageFor(response.status, data));
+  } catch {
+    showFormError(error, 'Could not reach the server. Nothing was deleted; try again.');
+  } finally {
+    button.disabled = false;
   }
 });
 

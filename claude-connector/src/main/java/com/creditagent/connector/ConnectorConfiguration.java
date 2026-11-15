@@ -61,7 +61,7 @@ class ConnectorConfiguration {
 
     @Bean
     CreditTools creditTools(CreditReportSource reports, ScoreService scores, AdviceClient advice, AccountClient accounts) {
-        return new CreditTools(reports, scores, advice, accounts);
+        return new CreditTools(reports, scores, advice, accounts, new com.creditagent.common.AuditLog());
     }
 
     @Bean

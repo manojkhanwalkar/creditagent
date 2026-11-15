@@ -160,4 +160,31 @@ public class DynamoDbSessionRepository implements SessionRepository {
         } while (startKey != null);
         return deleted;
     }
+
+    /** A scan filtered on the user id, keys only, then batched deletes; account deletion is rare. */
+    @Override
+    public int deleteAllForUser(String userId) {
+        int deleted = 0;
+        Map<String, AttributeValue> startKey = null;
+        do {
+            ScanRequest.Builder scan = ScanRequest.builder()
+                    .tableName(table)
+                    .projectionExpression("#id")
+                    .filterExpression("#user = :user AND NOT begins_with(#id, :code)")
+                    .expressionAttributeNames(Map.of("#id", KEY, "#user", "userId"))
+                    .expressionAttributeValues(Map.of(":user", AttributeValue.fromS(userId),
+                            ":code", AttributeValue.fromS(AuthService.USED_CODE_PREFIX)));
+            if (startKey != null) {
+                scan.exclusiveStartKey(startKey);
+            }
+            ScanResponse page = dynamo.scan(scan.build());
+            List<String> ids = page.items().stream().map(item -> item.get(KEY).s()).toList();
+            deleteAll(ids);
+            deleted += ids.size();
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty()
+                    ? new HashMap<>(page.lastEvaluatedKey())
+                    : null;
+        } while (startKey != null);
+        return deleted;
+    }
 }

@@ -26,6 +26,8 @@ credit:
     users-table: ${USERS_TABLE:credit-agent-users}
     alerts-table: ${ALERTS_TABLE:Alerts}
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
+    # Each alert expires (DynamoDB TTL) this long after it was found: GLBA disposal, two years.
+    alert-retention: ${ALERT_RETENTION:730d}
 
 management:
   endpoints:

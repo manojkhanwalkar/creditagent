@@ -12,6 +12,12 @@ credit:
   generator:
     # Comma-separated demo SSNs to generate at start-up, e.g. 123-45-6789,234-56-7890
     seed-ssns: ${CREDIT_SEED_SSNS:}
+    # The internal erase API (account deletion) needs this token; unset turns that API off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
+    # Reports not updated for this long are deleted by the daily retention job (GLBA disposal).
+    retention: ${CREDIT_REPORT_RETENTION:730d}
+    purge-max-per-run: ${CREDIT_REPORT_PURGE_MAX:10000}
+    retention-cron: ${CREDIT_REPORT_RETENTION_CRON:0 30 3 * * *}
   # The CreditReports DynamoDB table, shared with the MCP server (which reads it).
   reports:
     # Required, and the same in the MCP server: keys the SSN hash in the table's ssn column.

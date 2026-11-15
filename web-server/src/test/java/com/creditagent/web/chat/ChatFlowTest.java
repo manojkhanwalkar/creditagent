@@ -101,7 +101,7 @@ class ChatFlowTest {
     @BeforeEach
     void signIn() throws Exception {
         if (Wiring.USERS.find("avery").isEmpty()) {
-            auth.register("avery", PASSWORD, "avery@example.com", "+1 415 555 0100", FakeIdentityVerifier.card(SSN));
+            auth.register("avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(SSN));
         }
         String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"avery\",\"password\":\"" + PASSWORD + "\"}"))

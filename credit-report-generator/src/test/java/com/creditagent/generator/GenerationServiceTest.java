@@ -71,6 +71,6 @@ class GenerationServiceTest {
     void ssnsAreNeverPrinted() {
         assertThat(new GeneratorProperties(List.of("123-45-6789")).toString()).doesNotContain("6789").contains("seedSsns=1");
         assertThat(new ReportController.GenerateReportRequest("123-45-6789", "Avery").toString()).doesNotContain("6789");
-        assertThat(configuration.requestSizeLimitFilter().getUrlPatterns()).containsExactly("/api/*");
+        assertThat(configuration.requestSizeLimitFilter().getUrlPatterns()).containsExactly("/api/*", "/internal/*");
     }
 }
