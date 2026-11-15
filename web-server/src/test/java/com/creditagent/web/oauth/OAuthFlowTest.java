@@ -103,7 +103,7 @@ class OAuthFlowTest {
     @BeforeEach
     void registerAvery() {
         if (Wiring.USERS.find("avery").isEmpty()) {
-            auth.register("avery", PASSWORD, "avery@example.com", "+1 415 555 0100", FakeIdentityVerifier.card(SSN));
+            auth.register("avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(SSN));
         }
     }
 
@@ -487,6 +487,20 @@ class OAuthFlowTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("invalid_grant"));
         mvc.perform(introspect(token)).andExpect(jsonPath("$.active").value(false));
+    }
+
+    @Test
+    void aCodeForAnAccountDeletedMeanwhileOpensNoGrant() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String code = code(clientId);
+        com.creditagent.web.auth.User avery = Wiring.USERS.byId.remove("avery");
+        try {
+            mvc.perform(tokenRequest(clientId, code, VERIFIER))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error").value("invalid_grant"));
+        } finally {
+            Wiring.USERS.byId.put("avery", avery);
+        }
     }
 
     @Test

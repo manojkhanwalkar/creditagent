@@ -29,4 +29,13 @@ public interface SessionRepository {
 
     /** Removes every session whose {@code expiresAt} is not after {@code now}. @return how many */
     int deleteExpired(Instant now);
+
+    /**
+     * Removes every login session and connector grant of this user (account deletion), so no token of
+     * theirs works any more. Used-code markers ({@code code#…}) stay until they expire: they are what
+     * keeps an authorization code single use.
+     *
+     * @return how many were removed
+     */
+    int deleteAllForUser(String userId);
 }

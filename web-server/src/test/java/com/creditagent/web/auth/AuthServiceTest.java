@@ -27,7 +27,7 @@ class AuthServiceTest {
             Duration.ofMinutes(5), clock);
 
     String register() {
-        return auth.register("Avery", PASSWORD, "avery@example.com", "+1 415 555 0100", FakeIdentityVerifier.card(AVERY_SSN));
+        return auth.register("Avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(AVERY_SSN));
     }
 
     @Test
@@ -35,7 +35,10 @@ class AuthServiceTest {
         assertThat(register()).isEqualTo("avery");
         User user = users.find("avery").orElseThrow();
         assertThat(user.passwordHash()).startsWith("$2").doesNotContain(PASSWORD);
-        assertThat(user.phone()).isEqualTo("+14155550100");
+        // The terms, privacy notice and FCRA authorisation accepted, and when; no phone number is kept.
+        assertThat(user.consentVersion()).isEqualTo(RegistrationPolicy.CONSENT_VERSION);
+        assertThat(user.consentedAt()).isEqualTo(user.createdAt());
+        assertThat(user.lastLoginAt()).isNull();
         assertThat(user.toString()).doesNotContain("$2").doesNotContain("example.com").doesNotContain("6789");
         // The SSN itself is never stored: only its keyed hash and last four digits.
         assertThat(user.ssnHash()).isEqualTo(HASHER.hash(com.creditagent.common.Ssn.parse(AVERY_SSN)))
@@ -47,7 +50,7 @@ class AuthServiceTest {
     void anEmailCanOnlyBelongToOneAccount() {
         register();
         String email = users.find("avery").orElseThrow().email().toUpperCase(java.util.Locale.ROOT);
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", email, "+14155550101", FakeIdentityVerifier.card("234567890")))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", email, FakeIdentityVerifier.card("234567890")))
                 .isInstanceOf(AuthExceptions.EmailAlreadyRegisteredException.class);
         assertThat(users.find("blake")).isEmpty();
     }
@@ -55,7 +58,7 @@ class AuthServiceTest {
     @Test
     void anSsnCanOnlyBelongToOneAccount() {
         register();
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", FakeIdentityVerifier.card("123456789")))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", FakeIdentityVerifier.card("123456789")))
                 .isInstanceOf(AuthExceptions.SsnAlreadyRegisteredException.class);
         assertThat(users.find("blake")).isEmpty();
     }
@@ -71,17 +74,17 @@ class AuthServiceTest {
 
     @Test
     void registrationNeedsACardPhoto() {
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", null))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", null))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class)
                 .hasMessageContaining("Social Security card");
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", new byte[0]))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", new byte[0]))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
         assertThat(kyc.calls).hasValue(0);
     }
 
     @Test
     void aBlurryPhotoIsRejectedAndTheUserCanRetry() {
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+14155550101",
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com",
                         FakeIdentityVerifier.blurry()))
                 .isInstanceOf(DocumentRejectedException.class)
                 .hasMessageContaining("blurry")
@@ -89,20 +92,20 @@ class AuthServiceTest {
                 .isEqualTo(DocumentRejectedException.IMAGE_BLURRY);
         assertThat(users.find("blake")).isEmpty();
 
-        assertThat(auth.register("blake", "another long passphrase", "b@example.com", "+14155550101",
+        assertThat(auth.register("blake", "another long passphrase", "b@example.com",
                 FakeIdentityVerifier.card("234-56-7890"))).isEqualTo("blake");
     }
 
     @Test
     void cheapChecksRunBeforeTheKycCall() {
         register();
-        assertThatThrownBy(() -> auth.register("blake", "Password1234", "b@example.com", "+14155550101",
+        assertThatThrownBy(() -> auth.register("blake", "Password1234", "b@example.com",
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "not-an-email", "+14155550101",
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "not-an-email",
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
-        assertThatThrownBy(() -> auth.register("avery", "another long passphrase", "a@example.com", "+14155550101",
+        assertThatThrownBy(() -> auth.register("avery", "another long passphrase", "a@example.com",
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(UserAlreadyExistsException.class);
         assertThat(kyc.calls).hasValue(1); // only the first, successful registration
@@ -128,7 +131,7 @@ class AuthServiceTest {
     @Test
     void duplicateUserIdFailsRegardlessOfCase() {
         register();
-        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", "+14155550101", FakeIdentityVerifier.card("234-56-7890")))
+        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(UserAlreadyExistsException.class);
     }
 
@@ -191,7 +194,7 @@ class AuthServiceTest {
                 users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
                 Duration.ofSeconds(20), clock);
-        quick.register("quinn", PASSWORD, "q@example.com", "+14155550102", FakeIdentityVerifier.card("345-67-8901"));
+        quick.register("quinn", PASSWORD, "q@example.com", FakeIdentityVerifier.card("345-67-8901"));
         String token = quick.login("quinn", PASSWORD).token();
         clock.advance(Duration.ofSeconds(12));
         quick.authenticate(token);
@@ -254,7 +257,7 @@ class AuthServiceTest {
     @Test
     void aTokenForAnotherUsersSessionIsRejected() {
         register();
-        auth.register("blake", "another long passphrase", "b@example.com", "+14155550101", FakeIdentityVerifier.card("234-56-7890"));
+        auth.register("blake", "another long passphrase", "b@example.com", FakeIdentityVerifier.card("234-56-7890"));
         String averySession = sessions.byId.isEmpty() ? auth.login("avery", PASSWORD).token() : null;
         String sessionId = sessions.byId.keySet().iterator().next();
         String forged = new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock)
@@ -308,5 +311,48 @@ class AuthServiceTest {
 
         // No account for this SSN: not locked, and indistinguishable from an unlocked account.
         assertThat(auth.isReportLocked(com.creditagent.common.Ssn.parse("876-54-3210"))).isFalse();
+    }
+
+    @Test
+    void aLoginIsRecordedAndLockChangesAndGrantsAreAudited() {
+        com.creditagent.common.AuditLog audit = org.mockito.Mockito.mock(com.creditagent.common.AuditLog.class);
+        AuthService audited = new AuthService(users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
+                new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock), Duration.ofMinutes(5), clock, audit);
+        audited.register("Avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(AVERY_SSN));
+        audited.login("avery", PASSWORD);
+        assertThat(users.find("avery").orElseThrow().lastLoginAt()).isEqualTo(clock.instant());
+        assertThat(users.find("avery").orElseThrow().lastActiveAt()).isEqualTo(clock.instant());
+
+        AuthenticatedUser user = audited.authenticate(audited.login("avery", PASSWORD).token());
+        audited.setReportStatus(user, ReportStatus.LOCKED);
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.REPORT_LOCK_CHANGED, "user:avery",
+                "user:avery", "OK", java.util.Map.of("status", "LOCKED"));
+
+        com.creditagent.common.Ssn ssn = com.creditagent.common.Ssn.parse(AVERY_SSN);
+        audited.openGrant("g-1", "avery", ssn, clock.instant().plusSeconds(60), clock.instant().plusSeconds(3600));
+        audited.revokeGrant("g-1");
+        audited.revokeGrant("g-unknown");
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_OPENED, "user:avery", "user:avery", "OK");
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_REVOKED, "user:avery", "user:avery", "OK");
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_REVOKED, "user:-", "user:-", "OK");
+
+        audited.auditReportRead(user, "score");
+        org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.REPORT_READ, "user:avery", "user:avery", "OK",
+                java.util.Map.of("via", "score"));
+    }
+
+    @Test
+    void aLoginForAUserDeletedMidwayIsStillAnsweredButNotRecorded() {
+        register();
+        InMemoryRepositories.Users vanishing = new InMemoryRepositories.Users() {
+            @Override
+            public boolean recordLogin(String userId, Instant at) {
+                return false;
+            }
+        };
+        vanishing.byId.putAll(users.byId);
+        AuthService racing = new AuthService(vanishing, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
+                new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock), Duration.ofMinutes(5), clock);
+        assertThat(racing.login("avery", PASSWORD).userId()).isEqualTo("avery");
     }
 }

@@ -49,10 +49,7 @@ class RegistrationPolicyTest {
     @Test
     void contactDetails() {
         assertThat(RegistrationPolicy.normaliseEmail(" avery@example.com ")).isEqualTo("avery@example.com");
-        assertThat(RegistrationPolicy.normalisePhone("+1 (415) 555-0100")).isEqualTo("+14155550100");
         assertThatThrownBy(() -> RegistrationPolicy.normaliseEmail("not-an-email"))
-                .isInstanceOf(InvalidRegistrationException.class);
-        assertThatThrownBy(() -> RegistrationPolicy.normalisePhone("415 555 0100"))
                 .isInstanceOf(InvalidRegistrationException.class);
     }
 

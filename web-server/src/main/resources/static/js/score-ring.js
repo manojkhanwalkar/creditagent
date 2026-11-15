@@ -30,3 +30,8 @@ export function ringDash(score, radius) {
 export function looksLikeSsn(value) {
   return /^\d{3}-?\d{2}-?\d{4}$/.test(String(value).trim());
 }
+
+/** What a screen reader hears for the score ring (its <title>): the number, the scale and the band. */
+export function scoreDescription(score) {
+  return `Credit score ${score} of ${MAX_SCORE}, ${bandFor(score).label}`;
+}

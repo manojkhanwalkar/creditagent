@@ -110,4 +110,28 @@ class AlertsTableIntegrationTest {
         assertThat(dynamo.describeTable(r -> r.tableName("OldAlerts")).table().globalSecondaryIndexes())
                 .extracting(index -> index.indexName()).containsExactly(DynamoDbAlertRepository.BY_DAY);
     }
+
+    @Test
+    void alertsExpireAfterRetentionAndErasingAnEmailRemovesOnlyItsAlerts() {
+        DynamoDbAlertRepository alerts = new DynamoDbAlertRepository(dynamo, "Alerts", Duration.ofDays(30));
+        // In the future: DynamoDB Local really deletes expired items in the background.
+        Instant found = Instant.now().plus(Duration.ofDays(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        for (int i = 0; i < 30; i++) { // more than one delete batch
+            alerts.record(new Alert("erase-me@example.com", "loc-" + i, found));
+        }
+        alerts.record(new Alert("keep-me@example.com", "loc-a", found));
+
+        var item = dynamo.getItem(r -> r.tableName("Alerts").key(java.util.Map.of(
+                "email", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("keep-me@example.com"),
+                "location", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("loc-a")))).item();
+        assertThat(item.get(DynamoDbAlertRepository.EXPIRES_AT).n())
+                .isEqualTo(Long.toString(found.plus(Duration.ofDays(30)).getEpochSecond()));
+        assertThat(dynamo.describeTimeToLive(r -> r.tableName("Alerts")).timeToLiveDescription().attributeName())
+                .isEqualTo(DynamoDbAlertRepository.EXPIRES_AT);
+
+        assertThat(alerts.eraseAll("Erase-Me@Example.com")).isEqualTo(30);
+        assertThat(alerts.eraseAll("erase-me@example.com")).isZero();
+        assertThat(alerts.find("erase-me@example.com")).isEmpty();
+        assertThat(alerts.find("keep-me@example.com")).hasSize(1);
+    }
 }

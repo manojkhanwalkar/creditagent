@@ -58,6 +58,7 @@ public class AuthService {
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
     private final java.util.List<RegistrationListener> registrationListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final com.creditagent.common.AuditLog audit;
     /** Hash of a random password, checked when the user id is unknown so both paths cost the same. */
     private final String dummyHash;
 
@@ -70,6 +71,21 @@ public class AuthService {
             JwtService jwt,
             Duration idleTimeout,
             Clock clock) {
+        this(users, sessions, passwords, ssnHasher, identity, jwt, idleTimeout, clock, new com.creditagent.common.AuditLog());
+    }
+
+    /** @param audit where lock changes and connector grants are recorded */
+    public AuthService(
+            UserRepository users,
+            SessionRepository sessions,
+            PasswordEncoder passwords,
+            SsnHasher ssnHasher,
+            IdentityVerifier identity,
+            JwtService jwt,
+            Duration idleTimeout,
+            Clock clock,
+            com.creditagent.common.AuditLog audit) {
+        this.audit = Objects.requireNonNull(audit);
         this.users = Objects.requireNonNull(users);
         this.sessions = Objects.requireNonNull(sessions);
         this.passwords = Objects.requireNonNull(passwords);
@@ -96,21 +112,22 @@ public class AuthService {
      * @throws com.creditagent.clients.ServiceUnavailableException if the provider could not be reached
      * @throws SsnAlreadyRegisteredException if another account already has the SSN on the card
      */
-    public String register(String userId, String password, String email, String phone, byte[] ssnCardImage) {
-        return register(userId, password, email, phone, null, ssnCardImage);
+    public String register(String userId, String password, String email, byte[] ssnCardImage) {
+        return register(userId, password, email, null, ssnCardImage);
     }
 
     /**
-     * {@link #register(String, String, String, String, byte[])} with the user's ZIP code, which card
-     * offers are matched on. Null is allowed only for callers that predate it (the API requires it).
-     * Once the account exists, registration listeners are told about the new user and the SSN read
-     * from their card, so a first credit score can be recorded.
+     * {@link #register(String, String, String, byte[])} with the user's ZIP code, which card offers are
+     * matched on. Null is allowed only for callers that predate it (the API requires it). The account
+     * records that the user accepted the current terms, privacy notice and FCRA authorisation
+     * ({@link RegistrationPolicy#CONSENT_VERSION}): the API refuses a registration without it. Once the
+     * account exists, registration listeners are told about the new user and the SSN read from their
+     * card, so a first credit score can be recorded.
      */
-    public String register(String userId, String password, String email, String phone, String zip, byte[] ssnCardImage) {
+    public String register(String userId, String password, String email, String zip, byte[] ssnCardImage) {
         String id = RegistrationPolicy.normaliseUserId(userId);
         RegistrationPolicy.checkPassword(password, id);
         String normalisedEmail = RegistrationPolicy.normaliseEmail(email);
-        String normalisedPhone = RegistrationPolicy.normalisePhone(phone);
         String normalisedZip = zip == null ? null : RegistrationPolicy.normaliseZip(zip);
         if (ssnCardImage == null || ssnCardImage.length == 0) {
             throw new InvalidRegistrationException("Upload a photo of your Social Security card.");
@@ -121,18 +138,21 @@ public class AuthService {
         }
         IdentityVerifier.VerifiedSsn verified = identity.verifySsnCard(ssnCardImage);
         Ssn ssn = verified.ssn();
+        Instant now = clock.instant();
         User user = new User(
                 id,
                 passwords.encode(password),
                 normalisedEmail,
-                normalisedPhone,
                 ssnHasher.hash(ssn),
                 ssn.digits().substring(5),
                 verified.verificationId(),
-                clock.instant(),
+                now,
                 ReportStatus.UNLOCKED,
                 normalisedZip,
                 null,
+                null,
+                RegistrationPolicy.CONSENT_VERSION,
+                now,
                 null);
         // The conditional transaction is the real uniqueness check; there is no read-then-write race.
         switch (users.create(user)) {
@@ -179,6 +199,9 @@ public class AuthService {
         Session session = new Session(
                 randomId(), id, found.ssnHash(), found.ssnLastFour(), now, now, now.plus(idleTimeout));
         sessions.save(session);
+        if (!users.recordLogin(id, now)) {
+            log.info("Login not recorded: no user {}", id);
+        }
         log.info("User {} logged in", id);
         return new LoginResult(
                 jwt.issue(id, session.sessionId()), id, AuthenticatedUser.mask(found.ssnLastFour()), idleTimeout);
@@ -234,6 +257,7 @@ public class AuthService {
         }
         // The id is new (the marker above was), so this never collides; save() keeps it simple.
         sessions.save(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt));
+        audit.record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_OPENED, "user:" + userId, "user:" + userId, "OK");
         return true;
     }
 
@@ -252,7 +276,9 @@ public class AuthService {
 
     /** Ends a connector grant, so its access token stops working at once. */
     public void revokeGrant(String grantId) {
+        String owner = sessions.find(grantId).map(Session::userId).orElse("-");
         sessions.delete(grantId);
+        audit.record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_REVOKED, "user:" + owner, "user:" + owner, "OK");
         log.info("Connector grant revoked");
     }
 
@@ -295,6 +321,16 @@ public class AuthService {
     }
 
     /**
+     * Records that the signed-in user read their own credit report through this server ({@code via}:
+     * score, chat, export). The MCP server records every read too, by keyed SSN reference; this record
+     * adds who asked.
+     */
+    public void auditReportRead(AuthenticatedUser user, String via) {
+        audit.record(com.creditagent.common.AuditLog.Event.REPORT_READ, "user:" + user.userId(), "user:" + user.userId(),
+                "OK", java.util.Map.of("via", via));
+    }
+
+    /**
      * Whether the owner of {@code ssn} has locked their credit report; false when unlocked or when
      * no account has the SSN. For the internal lock check that third-party consumers make.
      */
@@ -317,6 +353,8 @@ public class AuthService {
         if (!users.updateReportStatus(user.userId(), status)) {
             throw new UnauthenticatedException("Your session has ended. Please log in again.");
         }
+        audit.record(com.creditagent.common.AuditLog.Event.REPORT_LOCK_CHANGED, "user:" + user.userId(), "user:" + user.userId(),
+                "OK", java.util.Map.of("status", status.name()));
         log.info("User {} set their credit report to {}", user.userId(), status);
         return status;
     }

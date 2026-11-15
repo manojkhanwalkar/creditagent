@@ -60,6 +60,7 @@ public class ChatService implements SessionEndListener {
     public AdvisorClient.ChatReply chat(AuthenticatedUser user, Ssn ssn, String message) {
         auth.requireOwnSsn(user, ssn);
         CreditReport report = reports.findReport(ssn).orElseThrow(NoReportException::new);
+        auth.auditReportRead(user, "chat");
         return advisor.chat(conversationId(user), message, withoutIdentity(report));
     }
 

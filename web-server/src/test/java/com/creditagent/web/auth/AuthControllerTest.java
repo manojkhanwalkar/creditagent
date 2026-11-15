@@ -58,8 +58,8 @@ class AuthControllerTest {
                 .param("userId", userId)
                 .param("password", PASSWORD)
                 .param("email", email)
-                .param("phone", "+1 415 555 0100")
-                .param("zip", "98101");
+                .param("zip", "98101")
+                .param("authorize", "true");
     }
 
     static MockMultipartHttpServletRequestBuilder register(String userId, String ssnOnCard) {
@@ -146,7 +146,7 @@ class AuthControllerTest {
         MockMultipartHttpServletRequestBuilder noZip = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
                 .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("567-89-0123")))
                 .param("userId", "zoe").param("password", PASSWORD).param("email", "zoe@example.com")
-                .param("phone", "+1 415 555 0100");
+                .param("authorize", "true");
         mvc.perform(noZip).andExpect(status().isBadRequest());
         mvc.perform(register("zoe", "567-89-0123").param("zip", "nope")).andExpect(status().isBadRequest());
         mvc.perform(register("yuri", "567-89-0124")).andExpect(status().isCreated());
@@ -174,15 +174,42 @@ class AuthControllerTest {
         // The old JSON form, SSN and all, is no longer accepted.
         mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"gail\",\"password\":\"" + PASSWORD
-                                + "\",\"email\":\"g@example.com\",\"phone\":\"+14155550101\",\"ssn\":\"678-90-1234\"}"))
+                                + "\",\"email\":\"g@example.com\",\"ssn\":\"678-90-1234\"}"))
                 .andExpect(status().isUnsupportedMediaType());
+    }
+
+    @Test
+    void registrationWithoutTheAuthorisationIsRefusedAndNothingIsStored() throws Exception {
+        for (String value : new String[] {null, "false", "on-no"}) {
+            MockMultipartHttpServletRequestBuilder form = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
+                    .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("678-90-1236")))
+                    .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("zip", "98101");
+            if (value != null) {
+                form.param("authorize", value);
+            }
+            mvc.perform(form).andExpect(status().isBadRequest());
+        }
+        MockMultipartHttpServletRequestBuilder declined = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
+                .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("678-90-1236")))
+                .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("zip", "98101")
+                .param("authorize", "false");
+        mvc.perform(declined).andExpect(jsonPath("$.detail").value(AuthController.AUTHORIZATION_REQUIRED));
+        assertThat(Wiring.USERS.find("ivy")).isEmpty();
+    }
+
+    @Test
+    void aPhoneNumberIfSentIsIgnoredAndTheConsentIsRecorded() throws Exception {
+        mvc.perform(register("jude", "678-90-1237").param("phone", "+14155550100")).andExpect(status().isCreated());
+        User jude = Wiring.USERS.find("jude").orElseThrow();
+        assertThat(jude.consentVersion()).isEqualTo(RegistrationPolicy.CONSENT_VERSION);
+        assertThat(jude.toString()).doesNotContain("4155550100");
     }
 
     @Test
     void aMissingCardIs400() throws Exception {
         mvc.perform(multipart("/api/v1/auth/register")
                         .param("userId", "hana").param("password", PASSWORD)
-                        .param("email", "h@example.com").param("phone", "+14155550101"))
+                        .param("email", "h@example.com").param("authorize", "true"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -201,7 +228,7 @@ class AuthControllerTest {
                         .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE,
                                 FakeIdentityVerifier.card("234-56-7890")))
                         .param("userId", "blake").param("password", "Password1234")
-                        .param("email", "b@example.com").param("phone", "+14155550101"))
+                        .param("email", "b@example.com").param("authorize", "true"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string(Matchers.not(Matchers.containsString("Password1234"))));
     }

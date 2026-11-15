@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BANDS, MAX_SCORE, bandFor, looksLikeSsn, ringDash } from '../../main/resources/static/js/score-ring.js';
+import { scoreDescription } from '../../main/resources/static/js/score-ring.js';
 
 test('perfect score is 850', () => {
   assert.equal(MAX_SCORE, 850);
@@ -41,4 +42,9 @@ test('SSN pre-check accepts dashed and undashed forms only', () => {
   assert.ok(!looksLikeSsn('12-345-6789'));
   assert.ok(!looksLikeSsn('1234567890'));
   assert.ok(!looksLikeSsn('<script>'));
+});
+
+test('the ring announces the score, the scale and the band', () => {
+  assert.equal(scoreDescription(742), 'Credit score 742 of 850, Good');
+  assert.equal(scoreDescription(580), 'Credit score 580 of 850, Poor');
 });

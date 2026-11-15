@@ -35,12 +35,27 @@ public class DynamoDbAlertRepository implements AlertRepository {
     /** An email is found at a handful of locations at most; bounds one look-up. */
     static final int MAX_ALERTS = 100;
 
+    /** The table's TTL attribute (epoch seconds): an alert is deleted this long after it was found. */
+    public static final String EXPIRES_AT = "expiresAt";
+    /** How long an alert is kept by default: two years, the GLBA disposal limit after last use. */
+    public static final java.time.Duration DEFAULT_RETENTION = java.time.Duration.ofDays(730);
+
     private final DynamoDbClient dynamo;
     private final String table;
+    private final java.time.Duration retention;
 
     public DynamoDbAlertRepository(DynamoDbClient dynamo, String table) {
+        this(dynamo, table, DEFAULT_RETENTION);
+    }
+
+    /** @param retention alerts expire (DynamoDB TTL) this long after they were first found */
+    public DynamoDbAlertRepository(DynamoDbClient dynamo, String table, java.time.Duration retention) {
         this.dynamo = Objects.requireNonNull(dynamo);
         this.table = Objects.requireNonNull(table);
+        this.retention = Objects.requireNonNull(retention);
+        if (retention.isNegative() || retention.isZero()) {
+            throw new IllegalArgumentException("Alert retention must be positive");
+        }
     }
 
     @Override
@@ -51,13 +66,57 @@ public class DynamoDbAlertRepository implements AlertRepository {
                             EMAIL, AttributeValue.fromS(alert.email()),
                             LOCATION, AttributeValue.fromS(alert.location()),
                             TIMESTAMP, AttributeValue.fromS(alert.timestamp().toString()),
-                            DAY, AttributeValue.fromS(day(alert.timestamp()))))
+                            DAY, AttributeValue.fromS(day(alert.timestamp())),
+                            EXPIRES_AT, AttributeValue.fromN(Long.toString(alert.timestamp().plus(retention).getEpochSecond()))))
                     .conditionExpression("attribute_not_exists(#email)")
                     .expressionAttributeNames(Map.of("#email", EMAIL)));
             return true;
         } catch (ConditionalCheckFailedException exists) {
             return false;
         }
+    }
+
+    /** Queries the email's partition, keys only, page by page, and deletes in batches of 25. */
+    @Override
+    public int eraseAll(String email) {
+        String key = Alert.normalise(email);
+        int deleted = 0;
+        Map<String, AttributeValue> startKey = null;
+        do {
+            Map<String, AttributeValue> start = startKey;
+            QueryResponse page = dynamo.query(r -> {
+                r.tableName(table)
+                        .keyConditionExpression("#email = :email")
+                        .projectionExpression("#email, #location")
+                        .expressionAttributeNames(Map.of("#email", EMAIL, "#location", LOCATION))
+                        .expressionAttributeValues(Map.of(":email", AttributeValue.fromS(key)))
+                        .consistentRead(true);
+                if (start != null) {
+                    r.exclusiveStartKey(start);
+                }
+            });
+            List<Map<String, AttributeValue>> keys = page.items();
+            for (int from = 0; from < keys.size(); from += 25) {
+                List<software.amazon.awssdk.services.dynamodb.model.WriteRequest> batch = keys.subList(from, Math.min(from + 25, keys.size()))
+                        .stream()
+                        .map(k -> software.amazon.awssdk.services.dynamodb.model.WriteRequest.builder()
+                                .deleteRequest(d -> d.key(Map.of(EMAIL, k.get(EMAIL), LOCATION, k.get(LOCATION)))).build())
+                        .toList();
+                Map<String, List<software.amazon.awssdk.services.dynamodb.model.WriteRequest>> pending = Map.of(table, batch);
+                for (int attempt = 0; !pending.isEmpty(); attempt++) {
+                    if (attempt == 3) {
+                        // Not all deleted: fail so the caller retries the whole (idempotent) erase.
+                        throw new IllegalStateException("Alerts could not all be deleted");
+                    }
+                    Map<String, List<software.amazon.awssdk.services.dynamodb.model.WriteRequest>> request = pending;
+                    var response = dynamo.batchWriteItem(b -> b.requestItems(request));
+                    pending = response.hasUnprocessedItems() ? response.unprocessedItems() : Map.of();
+                }
+            }
+            deleted += keys.size();
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() ? page.lastEvaluatedKey() : null;
+        } while (startKey != null);
+        return deleted;
     }
 
     @Override

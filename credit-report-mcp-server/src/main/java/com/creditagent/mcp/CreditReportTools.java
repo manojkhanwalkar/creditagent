@@ -58,7 +58,7 @@ public class CreditReportTools {
      */
     private String read(Ssn ssn) {
         try {
-            return reports.findNormalizedReport(ssn).orElse(NOT_FOUND);
+            return reports.findNormalizedReport(ssn, CreditReportService.Via.TOOL).orElse(NOT_FOUND);
         } catch (RuntimeException e) {
             log.warn("get_credit_report failed: {}", SafeLogging.describe(e));
             return READ_UNAVAILABLE;

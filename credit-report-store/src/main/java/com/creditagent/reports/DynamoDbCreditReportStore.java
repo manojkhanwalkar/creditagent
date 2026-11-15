@@ -13,6 +13,10 @@ import java.util.Objects;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
+import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 import software.amazon.awssdk.services.dynamodb.model.CancellationReason;
 import software.amazon.awssdk.services.dynamodb.model.ItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactGetItem;
@@ -123,6 +127,60 @@ public class DynamoDbCreditReportStore implements CreditReportStore {
             reports.put(bureau, new String(plaintext, StandardCharsets.UTF_8));
         }
         return reports;
+    }
+
+    /**
+     * A scan for rows whose {@code updatedAt} is before {@code cutoff} (ISO-8601 instants in UTC sort as
+     * time), keys only, then deletes in batches of 25. Reads the whole table once per run: the job runs
+     * daily, and a retention sweep tolerates that; at scale, add an index on an update-month bucket.
+     */
+    @Override
+    public int purgeOlderThan(java.time.Instant cutoff, int max) {
+        int deleted = 0;
+        Map<String, AttributeValue> startKey = null;
+        do {
+            ScanRequest.Builder scan = ScanRequest.builder()
+                    .tableName(table)
+                    .projectionExpression("#ssn, #bureau")
+                    .filterExpression("#updated < :cutoff")
+                    .expressionAttributeNames(Map.of("#ssn", SSN, "#bureau", BUREAU, "#updated", UPDATED_AT))
+                    .expressionAttributeValues(Map.of(":cutoff", AttributeValue.fromS(cutoff.toString())));
+            if (startKey != null) {
+                scan.exclusiveStartKey(startKey);
+            }
+            ScanResponse page = dynamo.scan(scan.build());
+            List<Map<String, AttributeValue>> keys = page.items().stream()
+                    .limit(Math.max(0, max - deleted))
+                    .map(item -> Map.of(SSN, item.get(SSN), BUREAU, item.get(BUREAU)))
+                    .toList();
+            deleteKeys(keys);
+            deleted += keys.size();
+            startKey = page.hasLastEvaluatedKey() && !page.lastEvaluatedKey().isEmpty() && deleted < max
+                    ? new java.util.HashMap<>(page.lastEvaluatedKey())
+                    : null;
+        } while (startKey != null);
+        return deleted;
+    }
+
+    /** BatchWriteItem in chunks of 25, handing unprocessed items back up to three times; the rest wait for the next run. */
+    private void deleteKeys(List<Map<String, AttributeValue>> keys) {
+        for (int from = 0; from < keys.size(); from += 25) {
+            List<WriteRequest> batch = keys.subList(from, Math.min(from + 25, keys.size())).stream()
+                    .map(k -> WriteRequest.builder().deleteRequest(d -> d.key(k)).build())
+                    .toList();
+            Map<String, List<WriteRequest>> pending = Map.of(table, batch);
+            for (int attempt = 0; !pending.isEmpty() && attempt < 3; attempt++) {
+                Map<String, List<WriteRequest>> request = pending;
+                BatchWriteItemResponse response = dynamo.batchWriteItem(r -> r.requestItems(request));
+                pending = response.hasUnprocessedItems() ? response.unprocessedItems() : Map.of();
+            }
+        }
+    }
+
+    /** The first 16 hex digits (64 bits) of the row key's HMAC: enough to correlate records, not to reverse. */
+    @Override
+    public String reference(Ssn ssn) {
+        return ssnHash.hex(ssn).substring(0, 16);
     }
 
     /**

@@ -20,4 +20,22 @@ public interface CreditReportStore {
 
     /** Each bureau's report JSON for this consumer; bureaus without one are absent. */
     Map<Bureau, String> findAll(Ssn ssn);
+
+    /** Removes every bureau's report for this consumer (account deletion). Idempotent. */
+    default void eraseAll(Ssn ssn) {
+        replaceAll(ssn, Map.of());
+    }
+
+    /**
+     * Deletes stored reports not updated since {@code cutoff} (retention), at most {@code max} rows a call.
+     *
+     * @return how many rows were deleted
+     */
+    int purgeOlderThan(java.time.Instant cutoff, int max);
+
+    /**
+     * A keyed, non-reversible reference to this consumer for audit records: the start of the row key's
+     * HMAC, never the SSN.
+     */
+    String reference(Ssn ssn);
 }

@@ -61,19 +61,29 @@ class AuthController {
         this.sessionEndListeners = sessionEndListeners.orderedStream().toList();
     }
 
-    /** The registration form. Bound from multipart fields; an {@code ssn} field, if sent, is ignored. */
+    /**
+     * The registration form. Bound from multipart fields; {@code ssn} and {@code phone} fields, if sent,
+     * are ignored (the SSN comes from the card; the phone number is no longer collected).
+     *
+     * @param authorize the user ticked "I agree to the terms and privacy notice and authorise CreditAgent
+     *     to obtain my credit reports" (FCRA written instruction); must be {@code true}
+     */
     record RegisterForm(
             @NotNull @Size(max = 64) String userId,
             @NotNull @Size(max = 256) String password,
             @NotNull @Size(max = 254) String email,
-            @NotNull @Size(max = 32) String phone,
             @NotNull @Size(max = 10) String zip,
+            Boolean authorize,
             @NotNull MultipartFile ssnCard) {
         @Override
         public String toString() {
-            return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, phone=<redacted>, zip=<redacted>, ssnCard=<redacted>]";
+            return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, zip=<redacted>, authorize="
+                    + authorize + ", ssnCard=<redacted>]";
         }
     }
+
+    static final String AUTHORIZATION_REQUIRED = "To open an account, agree to the terms of use and privacy notice and"
+            + " authorise CreditAgent to obtain your credit reports.";
 
     record RegisterResponse(String userId) {}
 
@@ -95,8 +105,11 @@ class AuthController {
 
     @PostMapping(path = "/register", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<RegisterResponse> register(@Valid @ModelAttribute RegisterForm form) {
-        String userId = auth.register(form.userId(), form.password(), form.email(), form.phone(), form.zip(),
-                bytes(form.ssnCard()));
+        // Checked first, so a registration without consent never costs a KYC call or stores anything.
+        if (!Boolean.TRUE.equals(form.authorize())) {
+            throw new InvalidRegistrationException(AUTHORIZATION_REQUIRED);
+        }
+        String userId = auth.register(form.userId(), form.password(), form.email(), form.zip(), bytes(form.ssnCard()));
         return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId));
     }
 

@@ -93,4 +93,40 @@ class AlertsApiTest {
         assertThat(lookup(huge, true).status()).isEqualTo(413);
         assertThat(Map.of()).isEmpty();
     }
+
+    Answer erase(String body, boolean withToken) {
+        return RestClient.create().post().uri("http://localhost:" + port + AlertsController.ERASE_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .headers(h -> {
+                    if (withToken) {
+                        h.setBearerAuth(TOKEN);
+                    }
+                })
+                .body(body)
+                .exchange((rq, rs) -> new Answer(rs.getStatusCode().value(), new String(rs.getBody().readAllBytes())));
+    }
+
+    @Test
+    void eraseDeletesTheAddressesAlertsOnlyWithTheToken() {
+        given(alerts.eraseAll("ada@example.com")).willReturn(2);
+        assertThat(erase("{\"email\":\"ada@example.com\"}", false).status()).isEqualTo(401);
+        org.mockito.Mockito.verify(alerts, org.mockito.Mockito.never()).eraseAll(org.mockito.ArgumentMatchers.anyString());
+        assertThat(erase("{\"email\":\"ada@example.com\"}", true).status()).isEqualTo(204);
+        org.mockito.Mockito.verify(alerts).eraseAll("ada@example.com");
+        assertThat(erase("{\"email\":\"not-an-email\"}", true).status()).isEqualTo(400);
+    }
+
+    @Test
+    void anIncompleteOrFailedEraseIs503WithRetryAfterSoTheCallerRetries() {
+        given(alerts.eraseAll("ada@example.com")).willThrow(new IllegalStateException("partial"));
+        assertThat(erase("{\"email\":\"ada@example.com\"}", true).status()).isEqualTo(503);
+        given(alerts.eraseAll("bob@example.com")).willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("down"));
+        assertThat(erase("{\"email\":\"bob@example.com\"}", true).status()).isEqualTo(503);
+    }
+
+    @Test
+    void theAuditReferenceIsAStableHashPrefixNotTheAddress() {
+        assertThat(AlertsController.emailReference(" Ada@Example.com ")).isEqualTo(AlertsController.emailReference("ada@example.com"))
+                .hasSize(16).doesNotContain("ada");
+    }
 }

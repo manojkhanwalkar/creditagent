@@ -122,4 +122,35 @@ class DynamoDbCreditReportStoreTest {
         assertThat(defaults.toString()).doesNotContain("secret-1").doesNotContain("secret-2");
         assertThat(new CreditReportsProperties(null, null, null, null, null, null, null, null).previousEncryptionKeys()).isEmpty();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void purgeFollowsPagesStopsAtMaxAndHandsUnprocessedDeletesBack() {
+        java.util.function.Function<String, Map<String, software.amazon.awssdk.services.dynamodb.model.AttributeValue>> row =
+                id -> Map.of("ssn", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS(id),
+                        "bureau", software.amazon.awssdk.services.dynamodb.model.AttributeValue.fromS("Equifax"));
+        when(dynamo.scan(any(software.amazon.awssdk.services.dynamodb.model.ScanRequest.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.ScanResponse.builder()
+                        .items(row.apply("a"), row.apply("b")).lastEvaluatedKey(row.apply("b")).build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.ScanResponse.builder()
+                        .items(row.apply("c"), row.apply("d")).build());
+        var unprocessed = Map.of("CreditReports", java.util.List.of(
+                software.amazon.awssdk.services.dynamodb.model.WriteRequest.builder().deleteRequest(d -> d.key(row.apply("a"))).build()));
+        when(dynamo.batchWriteItem(any(Consumer.class)))
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().unprocessedItems(unprocessed).build())
+                .thenReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().build());
+
+        assertThat(store.purgeOlderThan(Instant.parse("2025-01-01T00:00:00Z"), 3)).isEqualTo(3);
+        verify(dynamo, times(2)).scan(any(software.amazon.awssdk.services.dynamodb.model.ScanRequest.class));
+        verify(dynamo, times(3)).batchWriteItem(any(Consumer.class)); // page 1, its retry, page 2 (one row)
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void eraseDeletesEveryBureauInOneTransaction() {
+        when(dynamo.transactWriteItems(any(Consumer.class))).thenReturn(TransactWriteItemsResponse.builder().build());
+        store.eraseAll(ssn);
+        verify(dynamo).transactWriteItems(any(Consumer.class));
+        assertThat(store.reference(ssn)).hasSize(16).isEqualTo(new SsnHmac(KEY, "k").hex(ssn).substring(0, 16));
+    }
 }

@@ -39,6 +39,14 @@ credit:
     # The User Advisor Agent behind the chat (it needs the same INTERNAL_API_TOKEN).
     advisor-url: ${ADVISOR_URL:http://localhost:8089}
     timeout: ${ADVISOR_TIMEOUT:15s}
+  account:
+    # The report generator, which erases a deleted account's stored bureau reports (same INTERNAL_API_TOKEN).
+    reports-url: ${REPORTS_URL:http://localhost:8083}
+    timeout: ${ACCOUNT_ERASE_TIMEOUT:5s}
+    # Accounts with no login for this long are deleted with their data (GLBA disposal: two years).
+    retention: ${ACCOUNT_RETENTION:730d}
+    max-per-run: ${ACCOUNT_RETENTION_MAX_PER_RUN:1000}
+    retention-cron: ${ACCOUNT_RETENTION_CRON:0 15 4 * * *}
   kyc:
     # KYC provider that checks the SSN card photo and reads the SSN from it (kyc-service locally).
     url: ${KYC_URL:http://localhost:8087}

@@ -59,7 +59,7 @@ class ReportLockLookupTest {
     CreditScoreService scores;
 
     static void store(String userId, String ssn, ReportStatus status) {
-        Wiring.USERS.byId.put(userId, new User(userId, "$2a$hash", userId + "@example.com", "+14155550100",
+        Wiring.USERS.byId.put(userId, new User(userId, "$2a$hash", userId + "@example.com",
                 Wiring.HASHER.hash(Ssn.parse(ssn)), ssn.substring(ssn.length() - 4), "kyc_" + userId,
                 Instant.parse("2026-11-08T12:00:00Z"), status));
     }

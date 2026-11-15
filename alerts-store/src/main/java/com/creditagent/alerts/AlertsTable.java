@@ -56,6 +56,7 @@ public final class AlertsTable {
             if (!hasIndex) {
                 addIndex(dynamo, table);
             }
+            enableTtl(dynamo, table);
         } catch (ResourceNotFoundException missing) {
             try {
                 dynamo.createTable(r -> r.tableName(table)
@@ -71,9 +72,32 @@ public final class AlertsTable {
                         .globalSecondaryIndexes(byDay()));
                 dynamo.waiter().waitUntilTableExists(r -> r.tableName(table));
                 log.info("Created DynamoDB table {}", table);
+                enableTtl(dynamo, table);
             } catch (ResourceInUseException raced) {
                 // Another service created it first.
             }
+        }
+    }
+
+    /**
+     * Turns on DynamoDB TTL on {@value DynamoDbAlertRepository#EXPIRES_AT}, so alerts are deleted after
+     * their retention. Alerts written before this existed carry no expiry; the store keeps them until
+     * the account is deleted (which erases them) or an operator backfills the attribute.
+     */
+    static void enableTtl(DynamoDbClient dynamo, String table) {
+        var status = dynamo.describeTimeToLive(r -> r.tableName(table)).timeToLiveDescription();
+        if (status != null && status.timeToLiveStatus() != null
+                && (status.timeToLiveStatus() == software.amazon.awssdk.services.dynamodb.model.TimeToLiveStatus.ENABLED
+                        || status.timeToLiveStatus() == software.amazon.awssdk.services.dynamodb.model.TimeToLiveStatus.ENABLING)) {
+            return;
+        }
+        try {
+            dynamo.updateTimeToLive(r -> r.tableName(table).timeToLiveSpecification(
+                    t -> t.enabled(true).attributeName(DynamoDbAlertRepository.EXPIRES_AT)));
+            log.info("Enabled TTL on DynamoDB table {}", table);
+        } catch (software.amazon.awssdk.services.dynamodb.model.DynamoDbException raced) {
+            // Another service enabled it first ("TimeToLive is already enabled").
+            log.info("TTL on {} not changed: {}", table, raced.getClass().getSimpleName());
         }
     }
 

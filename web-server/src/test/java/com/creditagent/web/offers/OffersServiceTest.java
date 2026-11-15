@@ -25,7 +25,7 @@ class OffersServiceTest {
     final OffersService offers = new OffersService(auth, retrying, once);
 
     static User scored() {
-        return new User("ada", "h", "e", "p", "s", "6789", "k", Instant.EPOCH, ReportStatus.UNLOCKED, "98101", 720, Instant.EPOCH);
+        return new User("ada", "h", "e", "s", "6789", "k", Instant.EPOCH, ReportStatus.UNLOCKED, "98101", 720, Instant.EPOCH);
     }
 
     @Test

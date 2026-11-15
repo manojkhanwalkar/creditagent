@@ -181,7 +181,8 @@ public class CreditReportMcpHandler {
                 return refusal;
             }
         }
-        Optional<String> report = reports.findNormalizedReport(ssn);
+        Optional<String> report = reports.findNormalizedReport(ssn,
+                trusted ? CreditReportService.Via.RESOURCE_SERVICE : CreditReportService.Via.RESOURCE_HOST);
         if (report.isEmpty()) {
             // Do not echo the URI: it contains the SSN.
             return error(id, RESOURCE_NOT_FOUND, "Resource not found");

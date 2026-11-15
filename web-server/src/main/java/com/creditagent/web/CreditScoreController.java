@@ -59,6 +59,7 @@ class CreditScoreController {
         Ssn ssn = Ssn.parse(request.ssn());
         auth.requireOwnSsn(user, ssn);
         CreditScore score = service.scoreFor(ssn);
+        auth.auditReportRead(user, "score");
         // Kept for offers at the next login; the SSN itself is never stored. A failed write must not
         // turn a score the user already has into an error.
         try {

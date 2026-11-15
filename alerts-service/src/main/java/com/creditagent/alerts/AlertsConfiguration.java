@@ -22,7 +22,7 @@ class AlertsConfiguration {
 
     @Bean
     FilterRegistrationBean<RequestSizeLimitFilter> requestSizeLimitFilter() {
-        return RequestSizeLimitFilter.registration(MAX_BODY_BYTES, AlertsController.PATH);
+        return RequestSizeLimitFilter.registration(MAX_BODY_BYTES, AlertsController.PATH, AlertsController.ERASE_PATH);
     }
 
     @Bean(destroyMethod = "close")
@@ -37,6 +37,11 @@ class AlertsConfiguration {
             AlertsTable.ensure(client, table);
         }
         return client;
+    }
+
+    @Bean
+    com.creditagent.common.AuditLog auditLog() {
+        return new com.creditagent.common.AuditLog();
     }
 
     @Bean

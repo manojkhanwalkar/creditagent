@@ -50,7 +50,7 @@ class RegisterUploadLimitTest {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         for (String[] field : new String[][] {
             {"userId", "avery"}, {"password", "correct horse battery staple"},
-            {"email", "avery@example.com"}, {"phone", "+14155550100"}}) {
+            {"email", "avery@example.com"}, {"zip", "98101"}, {"authorize", "true"}}) {
             body.writeBytes(("--" + BOUNDARY + "\r\nContent-Disposition: form-data; name=\"" + field[0] + "\"\r\n\r\n"
                     + field[1] + "\r\n").getBytes(StandardCharsets.US_ASCII));
         }

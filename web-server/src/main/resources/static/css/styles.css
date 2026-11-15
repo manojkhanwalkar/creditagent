@@ -6,6 +6,8 @@
   --muted: #55554f;
   --accent: #2457c5;
   --error: #c2272d;
+  /* Form-field borders: at least 3:1 against white (WCAG 1.4.11). */
+  --field-border: #767670;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -18,7 +20,8 @@ body { margin: 0; }
 
 .widgets {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  /* min(): one column that fits a 320 CSS px viewport without horizontal scrolling (WCAG 1.4.10). */
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 24px;
   padding: 24px 32px 48px;
 }
@@ -37,7 +40,7 @@ input {
   flex: 1;
   font: inherit;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--field-border);
   border-radius: 8px;
   letter-spacing: 0.08em;
 }
@@ -109,7 +112,7 @@ figcaption { color: var(--muted); margin-top: 8px; }
 .chat-entry.refused { border-left: 4px solid var(--error); }
 .chat-disclaimer { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
 #chat-form input, #chat-form textarea { display: block; width: 100%; box-sizing: border-box; margin-bottom: 12px; }
-#chat-form textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+#chat-form textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--field-border); border-radius: 8px; resize: vertical; }
 #chat-form textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .chat-note { margin-bottom: 0; }
 
@@ -131,3 +134,27 @@ figcaption { color: var(--muted); margin-top: 8px; }
 .alert-banner p { margin: 0 0 8px; }
 .alert-banner ul { margin: 0; padding-left: 20px; font-size: 14px; }
 @media (max-width: 480px) { .alert-banner { margin-left: 16px; margin-right: 16px; } }
+
+/* ---------- consent, data rights, idle warning, footer ---------- */
+.consent { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 6px; }
+.consent input[type="checkbox"] { flex: 0 0 auto; width: 24px; height: 24px; margin: 2px 0 0; accent-color: var(--accent); }
+.consent label { font-weight: 400; margin: 0; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible, input[type="checkbox"]:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+#data-widget input:not([type="checkbox"]) { display: block; width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+.danger-zone { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 12px; }
+.danger-zone summary { cursor: pointer; font-weight: 600; color: var(--error); min-height: 24px; }
+button.danger { background: var(--error); border-color: var(--error); }
+.ai-label { margin: -8px 0 12px; font-size: 14px; color: var(--muted); }
+.score-note { margin-bottom: 0; }
+.idle-warning { position: fixed; inset: auto 16px 16px auto; max-width: 360px; background: var(--surface);
+  border: 2px solid var(--accent); border-radius: 12px; padding: 16px 20px; box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
+.idle-warning h2 { margin: 0 0 8px; font-size: 18px; }
+.page-footer { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 32px 32px; font-size: 14px; }
+@media (max-width: 480px) { .page-footer { padding-left: 16px; padding-right: 16px; } }
+
+/* ---------- legal pages ---------- */
+.legal { max-width: 760px; padding: 8px 32px 32px; line-height: 1.55; }
+.legal h2 { font-size: 20px; margin-top: 28px; }
+.home-link { margin: 0; font-weight: 600; }
+@media (max-width: 480px) { .legal { padding-left: 16px; padding-right: 16px; } }

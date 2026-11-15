@@ -1,7 +1,13 @@
-# Replace the placeholders with real GitHub users or teams, then require code-owner review
-# in the main branch protection rule.
-#
-# *                                   OWNER_HANDLE
-# /.github/                           OWNER_HANDLE
-# /docs/security-review.md            SECURITY_TEAM_HANDLE
-# /common/src/main/java/**/Ssn.java   SECURITY_TEAM_HANDLE
+# Code owners: their review is requested on every PR that touches these paths. Branch protection on
+# main can require it once the repository has a second maintainer (GitHub does not let authors
+# approve their own PRs).
+*                                        @manojkhanwalkar
+/.github/                                @manojkhanwalkar
+/docs/security-review.md                 @manojkhanwalkar
+/common/src/main/java/**/Ssn.java        @manojkhanwalkar
+/common/src/main/java/**/AuditLog.java   @manojkhanwalkar
+/credit-report-store/                    @manojkhanwalkar
+/web-server/src/main/java/com/creditagent/web/auth/     @manojkhanwalkar
+/web-server/src/main/java/com/creditagent/web/account/  @manojkhanwalkar
+/web-server/src/main/resources/static/privacy.html      @manojkhanwalkar
+/web-server/src/main/resources/static/terms.html        @manojkhanwalkar
