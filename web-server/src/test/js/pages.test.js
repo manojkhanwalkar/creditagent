@@ -6,10 +6,23 @@ import { readFileSync } from 'node:fs';
 const page = (name) => readFileSync(new URL(`../../main/resources/static/${name}`, import.meta.url), 'utf8');
 const index = page('index.html');
 
-test('registration asks for the FCRA authorisation, links the terms and privacy notice, and no phone', () => {
+test('registration asks for the FCRA authorisation, links the terms and privacy notice, and a mobile number', () => {
   assert.match(index, /<input id="reg-authorize" name="authorize" type="checkbox" required/);
   assert.match(index, /<label for="reg-authorize">[\s\S]*href="\/terms.html"[\s\S]*href="\/privacy.html"[\s\S]*credit reports/);
-  assert.doesNotMatch(index, /reg-phone|name="phone"/);
+  // Required for sign-in codes, and stated as used for nothing else.
+  assert.match(index, /<input id="reg-phone" name="mobilePhone" type="tel" autocomplete="tel" required/);
+  assert.match(index, /Used only for sign-in codes/);
+  assert.doesNotMatch(index, /name="phone"/);
+});
+
+test('the code step is a labelled group with an autofillable one-time-code field', () => {
+  assert.match(index, /<form id="otp-form"[^>]*hidden/);
+  assert.match(index, /<fieldset>\s*<legend>Send my sign-in code by<\/legend>/);
+  assert.match(index, /<input id="otp-email" name="channel" type="radio" value="EMAIL"/);
+  assert.match(index, /<input id="otp-sms" name="channel" type="radio" value="SMS"/);
+  assert.match(index, /<input id="otp-code"[^>]*autocomplete="one-time-code"/);
+  assert.match(index, /<p id="otp-status"[^>]*role="status"/);
+  assert.match(index, /<p id="otp-error"[^>]*role="alert"/);
 });
 
 test('every form control on the main page has a label', () => {

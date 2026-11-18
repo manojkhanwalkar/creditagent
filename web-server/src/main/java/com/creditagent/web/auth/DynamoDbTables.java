@@ -9,7 +9,8 @@ import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
 /**
- * Creates the users and sessions tables if they are missing, and turns on TTL for sessions. Used
+ * Creates the users, sessions and login-challenge tables if they are missing, and turns on TTL for
+ * sessions and challenges. Used
  * with DynamoDB Local and in tests ({@code credit.auth.dynamodb.create-tables=true}); in AWS the
  * tables belong to infrastructure code.
  */
@@ -21,9 +22,14 @@ public final class DynamoDbTables {
 
     public static void ensure(DynamoDbClient dynamo, String usersTable, String sessionsTable) {
         create(dynamo, usersTable, DynamoDbUserRepository.KEY);
-        if (create(dynamo, sessionsTable, DynamoDbSessionRepository.KEY)) {
-            dynamo.updateTimeToLive(r -> r.tableName(sessionsTable).timeToLiveSpecification(
-                    t -> t.enabled(true).attributeName(DynamoDbSessionRepository.TTL_ATTRIBUTE)));
+        ensureWithTtl(dynamo, sessionsTable, DynamoDbSessionRepository.KEY, DynamoDbSessionRepository.TTL_ATTRIBUTE);
+    }
+
+    /** Creates a table keyed on {@code key} with TTL on {@code ttlAttribute}, if it is missing. */
+    public static void ensureWithTtl(DynamoDbClient dynamo, String table, String key, String ttlAttribute) {
+        if (create(dynamo, table, key)) {
+            dynamo.updateTimeToLive(r -> r.tableName(table).timeToLiveSpecification(
+                    t -> t.enabled(true).attributeName(ttlAttribute)));
         }
     }
 

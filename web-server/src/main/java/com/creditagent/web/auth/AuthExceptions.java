@@ -49,4 +49,64 @@ public final class AuthExceptions {
             super(message);
         }
     }
+
+    /** 400: a sign-in code request that cannot be acted on (unknown channel, malformed code, no code sent yet). */
+    static final class InvalidOtpRequestException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        InvalidOtpRequestException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * 401: the code step failed. {@code restart}: the sign-in is over (expired, used up or unknown) and
+     * the user must enter their password again; otherwise they may try again.
+     */
+    static final class OtpFailedException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private final boolean restart;
+        private final Integer attemptsLeft;
+
+        OtpFailedException(String message, boolean restart, Integer attemptsLeft) {
+            super(message);
+            this.restart = restart;
+            this.attemptsLeft = attemptsLeft;
+        }
+
+        static OtpFailedException restart(String message) {
+            return new OtpFailedException(message, true, null);
+        }
+
+        boolean restart() {
+            return restart;
+        }
+
+        Integer attemptsLeft() {
+            return attemptsLeft;
+        }
+    }
+
+    /** 429: no more codes for now; {@code restart} when this sign-in can send no more at all. */
+    static final class TooManyCodesException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private final java.time.Duration retryAfter;
+        private final boolean restart;
+
+        TooManyCodesException(String message, java.time.Duration retryAfter, boolean restart) {
+            super(message);
+            this.retryAfter = retryAfter;
+            this.restart = restart;
+        }
+
+        java.time.Duration retryAfter() {
+            return retryAfter;
+        }
+
+        boolean restart() {
+            return restart;
+        }
+    }
 }

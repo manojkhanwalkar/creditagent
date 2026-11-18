@@ -136,6 +136,13 @@ figcaption { color: var(--muted); margin-top: 8px; }
 @media (max-width: 480px) { .alert-banner { margin-left: 16px; margin-right: 16px; } }
 
 /* ---------- consent, data rights, idle warning, footer ---------- */
+fieldset { border: 1px solid var(--field-border); border-radius: 8px; margin: 12px 0; padding: 8px 12px 4px; }
+legend { font-weight: 600; padding: 0 4px; }
+.choice { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+.choice input[type="radio"] { flex: 0 0 auto; width: 24px; height: 24px; margin: 0; accent-color: var(--accent); }
+.choice label { font-weight: 400; margin: 0; }
+#otp-form h3 { margin: 0 0 4px; }
+#otp-form button + button { margin-left: 8px; }
 .consent { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 6px; }
 .consent input[type="checkbox"] { flex: 0 0 auto; width: 24px; height: 24px; margin: 2px 0 0; accent-color: var(--accent); }
 .consent label { font-weight: 400; margin: 0; }

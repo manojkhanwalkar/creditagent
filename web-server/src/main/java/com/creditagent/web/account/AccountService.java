@@ -50,7 +50,7 @@ public class AccountService {
             String notes) {}
 
     /** The account's stored fields, minus secrets (password hash) and keyed hashes. */
-    public record Account(String userId, String email, String zip, String ssnMasked, Instant createdAt, Instant lastLoginAt,
+    public record Account(String userId, String email, String mobilePhone, String zip, String ssnMasked, Instant createdAt, Instant lastLoginAt,
             ReportStatus reportStatus, Integer lastScore, Instant lastScoreAt, String consentVersion, Instant consentedAt,
             String kycVerificationId) {}
 
@@ -101,7 +101,7 @@ public class AccountService {
         auth.auditReportRead(user, "export");
         List<AlertsClient.Finding> findings = account.email() == null ? List.of() : alerts.findingsFor(account.email());
         audit.record(Event.ACCOUNT_EXPORTED, "user:" + user.userId(), "user:" + user.userId(), "OK");
-        return new Export(clock.instant(), new Account(account.userId(), account.email(), account.zip(),
+        return new Export(clock.instant(), new Account(account.userId(), account.email(), account.mobilePhone(), account.zip(),
                 AuthenticatedUser.mask(account.ssnLastFour()), account.createdAt(), account.lastLoginAt(),
                 account.reportStatus(), account.lastScore(), account.lastScoreAt(), account.consentVersion(),
                 account.consentedAt(), account.kycVerificationId()), report, findings, EXPORT_NOTES);

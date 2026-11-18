@@ -147,10 +147,30 @@ class DynamoDbRepositoriesUnitTest {
         assertThat(found.createdAt()).isEqualTo(NOW);
         assertThat(found.kycVerificationId()).isNull();
         assertThat(found.reportStatus()).isEqualTo(ReportStatus.UNLOCKED); // no attribute: an older row
+        // The legacy "phone" attribute is never read as the mobile number codes are texted to.
+        assertThat(found.mobilePhone()).isNull();
         ArgumentCaptor<GetItemRequest> sent = ArgumentCaptor.forClass(GetItemRequest.class);
         verify(dynamo).getItem(sent.capture());
         assertThat(sent.getValue().consistentRead()).isTrue();
         assertThat(sent.getValue().key()).containsEntry("userId", AttributeValue.fromS("avery"));
+    }
+
+    @Test
+    void theMobileNumberIsStoredAndReadInItsOwnAttribute() {
+        doReturn(null).when(dynamo).transactWriteItems(any(TransactWriteItemsRequest.class));
+        User avery = new User("avery", "$2a$hash", "avery@example.com", "hash-avery", "6789", "kyc", NOW,
+                ReportStatus.UNLOCKED, "98101", null, null, "v1", NOW, null, "+12065550100");
+        users.create(avery);
+        ArgumentCaptor<TransactWriteItemsRequest> sent = ArgumentCaptor.forClass(TransactWriteItemsRequest.class);
+        verify(dynamo).transactWriteItems(sent.capture());
+        assertThat(sent.getValue().transactItems().get(0).put().item())
+                .containsEntry("mobilePhone", AttributeValue.fromS("+12065550100")).doesNotContainKey("phone");
+
+        Map<String, AttributeValue> item = userItem("avery");
+        item.put("mobilePhone", AttributeValue.fromS("+12065550100"));
+        doReturn(GetItemResponse.builder().item(item).build()).when(dynamo).getItem(any(GetItemRequest.class));
+        assertThat(users.find("avery").orElseThrow().mobilePhone()).isEqualTo("+12065550100");
+        assertThat(avery.toString()).doesNotContain("2065550100");
     }
 
     @Test

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   AUTHORIZATION_REQUIRED, checkDeletion, idleWarningDelayMs, nextTab,
   authHeaders, checkCardPhoto, checkRegistration, createSession, lockView, MAX_CARD_BYTES, registrationFailure, ssnHint,
+  checkMobilePhone, checkOtpCode, codeSentMessage, otpChoices, otpFailure,
 } from '../../main/resources/static/js/auth.js';
 
 const valid = {
@@ -10,6 +11,7 @@ const valid = {
   password: 'correct horse battery staple',
   confirm: 'correct horse battery staple',
   email: 'avery@example.com',
+  mobilePhone: '(206) 555-0100',
   authorize: true,
   zip: '98101',
   ssnCard: { name: 'card.png', type: 'image/png', size: 120_000 },
@@ -121,4 +123,56 @@ test('the tabs follow the APG keyboard model', () => {
   assert.equal(nextTab(1, 'Home', 2), 0);
   assert.equal(nextTab(0, 'End', 2), 1);
   assert.equal(nextTab(0, 'Enter', 2), null);
+});
+
+test('registration needs a mobile number the server accepts', () => {
+  assert.match(checkRegistration({ ...valid, mobilePhone: '' }), /mobile number/);
+  assert.match(checkRegistration({ ...valid, mobilePhone: undefined }), /mobile number/);
+  for (const good of ['2065550100', '206.555.0100', '1 206 555 0100', '+1 (206) 555-0100', '+44 7700 900123']) {
+    assert.equal(checkMobilePhone(good), null, good);
+  }
+  for (const bad of ['555-0100', '+0 206 555 0100', '+1 206 555 01000', '+1234567890123456', 'call me']) {
+    assert.match(checkMobilePhone(bad), /mobile number/, bad);
+  }
+});
+
+test('codes are six digits; spaces and dashes are ignored', () => {
+  assert.deepEqual(checkOtpCode(' 123-456 '), { code: '123456', error: null });
+  assert.deepEqual(checkOtpCode('012345'), { code: '012345', error: null });
+  for (const bad of ['', null, '12345', '1234567', '12a456']) {
+    assert.deepEqual(checkOtpCode(bad), { code: null, error: 'Enter the 6-digit code.' });
+  }
+});
+
+test('the code step offers the channels the server listed', () => {
+  assert.deepEqual(otpChoices([
+    { channel: 'EMAIL', destination: 'a***@example.com' },
+    { channel: 'SMS', destination: '***-***-0100' },
+  ]), { email: 'a***@example.com', sms: '***-***-0100' });
+  assert.deepEqual(otpChoices([{ channel: 'EMAIL', destination: 'a***@example.com' }]), { email: 'a***@example.com', sms: null });
+  assert.deepEqual(otpChoices(undefined), { email: null, sms: null });
+  assert.deepEqual(otpChoices([null, { channel: 'SMS' }]), { email: null, sms: '' });
+});
+
+test('the page says where the code went and for how long', () => {
+  assert.equal(codeSentMessage({ channel: 'SMS', destination: '***-***-0100', codeExpiresInSeconds: 300 }),
+    'We texted a code to ***-***-0100. It expires in 5 minutes.');
+  assert.equal(codeSentMessage({ channel: 'EMAIL', destination: 'a***@example.com', codeExpiresInSeconds: 600 }),
+    'We emailed a code to a***@example.com. It expires in 10 minutes.');
+  assert.equal(codeSentMessage({}), 'We emailed a code. It expires in 5 minutes.');
+});
+
+test('code failures say whether to retry, wait or start again', () => {
+  assert.deepEqual(otpFailure(401, { detail: 'That code is not right.', restart: false, attemptsLeft: 3 }),
+    { message: 'That code is not right. 3 tries left.', restart: false, retryAfterSeconds: 0 });
+  assert.deepEqual(otpFailure(401, { detail: 'That code is not right.', restart: false, attemptsLeft: 1 }),
+    { message: 'That code is not right. 1 try left.', restart: false, retryAfterSeconds: 0 });
+  assert.deepEqual(otpFailure(401, { detail: 'Your sign-in has expired.', restart: true }),
+    { message: 'Your sign-in has expired.', restart: true, retryAfterSeconds: 0 });
+  assert.deepEqual(otpFailure(429, { detail: 'Please wait 12 seconds.', retryAfterSeconds: 12, restart: false }),
+    { message: 'Please wait 12 seconds.', restart: false, retryAfterSeconds: 12 });
+  assert.deepEqual(otpFailure(429, {}),
+    { message: 'Too many requests. Please wait and try again.', restart: false, retryAfterSeconds: 30 });
+  assert.deepEqual(otpFailure(503, null),
+    { message: 'Something went wrong. Please try again.', restart: false, retryAfterSeconds: 0 });
 });

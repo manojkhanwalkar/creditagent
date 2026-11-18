@@ -19,7 +19,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-/** Registration, login, per-request authentication and logout. */
+/**
+ * Registration, the password step of login, opening a session once the one-time code is checked (see
+ * {@link OtpLoginService}), per-request authentication and logout.
+ */
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
@@ -104,6 +107,14 @@ public class AuthService {
      * photo of the user's Social Security card, after checking that the photo is a sharp, authentic
      * card. The cheap checks run first, so a bad password or a taken user id never costs a KYC call.
      *
+     * <p>The email and mobile number are both required: sign-in codes go to the one the user picks at
+     * each login. The ZIP code is what card offers are matched on; null is allowed only for callers that
+     * predate it (the API requires it). The account records that the user accepted the current terms,
+     * privacy notice and FCRA authorisation ({@link RegistrationPolicy#CONSENT_VERSION}): the API refuses
+     * a registration without it. Once the account exists, registration listeners are told about the new
+     * user and the SSN read from their card, so a first credit score can be recorded.
+     *
+     * @param mobilePhone a mobile number (US 10-digit, or E.164 with {@code +})
      * @param ssnCardImage the uploaded photo of the card (PNG or JPEG)
      * @return the stored (lower-case) user id
      * @throws AuthExceptions.InvalidRegistrationException if a field breaks a rule or no photo was sent
@@ -112,22 +123,12 @@ public class AuthService {
      * @throws com.creditagent.clients.ServiceUnavailableException if the provider could not be reached
      * @throws SsnAlreadyRegisteredException if another account already has the SSN on the card
      */
-    public String register(String userId, String password, String email, byte[] ssnCardImage) {
-        return register(userId, password, email, null, ssnCardImage);
-    }
-
-    /**
-     * {@link #register(String, String, String, byte[])} with the user's ZIP code, which card offers are
-     * matched on. Null is allowed only for callers that predate it (the API requires it). The account
-     * records that the user accepted the current terms, privacy notice and FCRA authorisation
-     * ({@link RegistrationPolicy#CONSENT_VERSION}): the API refuses a registration without it. Once the
-     * account exists, registration listeners are told about the new user and the SSN read from their
-     * card, so a first credit score can be recorded.
-     */
-    public String register(String userId, String password, String email, String zip, byte[] ssnCardImage) {
+    public String register(String userId, String password, String email, String mobilePhone, String zip,
+            byte[] ssnCardImage) {
         String id = RegistrationPolicy.normaliseUserId(userId);
         RegistrationPolicy.checkPassword(password, id);
         String normalisedEmail = RegistrationPolicy.normaliseEmail(email);
+        String normalisedPhone = RegistrationPolicy.normaliseMobilePhone(mobilePhone);
         String normalisedZip = zip == null ? null : RegistrationPolicy.normaliseZip(zip);
         if (ssnCardImage == null || ssnCardImage.length == 0) {
             throw new InvalidRegistrationException("Upload a photo of your Social Security card.");
@@ -153,7 +154,8 @@ public class AuthService {
                 null,
                 RegistrationPolicy.CONSENT_VERSION,
                 now,
-                null);
+                null,
+                normalisedPhone);
         // The conditional transaction is the real uniqueness check; there is no read-then-write race.
         switch (users.create(user)) {
             case USER_ID_TAKEN -> throw new UserAlreadyExistsException();
@@ -188,12 +190,27 @@ public class AuthService {
         return users.find(userId);
     }
 
-    /** Checks the password and opens a session. @throws UnauthenticatedException on any mismatch */
-    public LoginResult login(String userId, String password) {
-        User found = checkPassword(userId, password).orElseThrow(() -> {
+    /**
+     * The first login step: checks the user id and password. It does not open a session; the caller
+     * opens one with {@link #openSession} only after the second factor (a one-time code) is checked.
+     *
+     * @throws UnauthenticatedException on any mismatch (which one is not revealed)
+     */
+    public User checkCredentials(String userId, String password) {
+        return checkPassword(userId, password).orElseThrow(() -> {
             log.info("Failed login");
             return new UnauthenticatedException(BAD_CREDENTIALS);
         });
+    }
+
+    /**
+     * The last login step: opens a session for a user who passed both factors, and records the login.
+     * Re-reads the account, so one deleted between the steps gets no session.
+     *
+     * @throws UnauthenticatedException if the account no longer exists
+     */
+    public LoginResult openSession(String userId) {
+        User found = users.find(userId).orElseThrow(() -> new UnauthenticatedException(BAD_CREDENTIALS));
         String id = found.userId();
         Instant now = clock.instant();
         Session session = new Session(
@@ -202,6 +219,7 @@ public class AuthService {
         if (!users.recordLogin(id, now)) {
             log.info("Login not recorded: no user {}", id);
         }
+        audit.record(com.creditagent.common.AuditLog.Event.LOGIN_SUCCEEDED, "user:" + id, "user:" + id, "OK");
         log.info("User {} logged in", id);
         return new LoginResult(
                 jwt.issue(id, session.sessionId()), id, AuthenticatedUser.mask(found.ssnLastFour()), idleTimeout);

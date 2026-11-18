@@ -11,11 +11,13 @@
   <header class="page-header"><p class="home-link"><a href="/">Credit Agent</a></p></header>
   <main class="legal">
     <h1>Privacy notice</h1>
-    <p class="help">Version 2026-11-14. How CreditAgent collects, uses, shares and protects your personal information.</p>
+    <p class="help">Version 2026-11-18. How CreditAgent collects, uses, shares and protects your personal information.</p>
     <h2>What we collect</h2>
     <ul>
       <li><strong>Account details:</strong> your user id, email address, ZIP code and a password (stored only as a
         one-way hash).</li>
+      <li><strong>Mobile number:</strong> used only to text you one-time sign-in codes, never for marketing.</li>
+      <li><strong>Sign-in codes:</strong> each one-time code is kept only as a keyed hash, for at most 10 minutes.</li>
       <li><strong>Your Social Security number:</strong> read by our identity provider from the photo of your card. We
         keep only a keyed hash of it and its last four digits; the photo is not stored.</li>
       <li><strong>Credit information:</strong> your reports from the three credit bureaus, stored encrypted, and the
@@ -26,8 +28,7 @@
       <li><strong>Chat questions:</strong> kept in memory for at most 5 minutes; a redacted copy is kept for up to
         30 days to test the assistant's safety checks.</li>
     </ul>
-    <p>We do not use cookies or tracking technologies for advertising or analytics, and we do not collect your phone
-      number.</p>
+    <p>We do not use cookies or tracking technologies for advertising or analytics.</p>
 
     <h2>Why we use it</h2>
     <p>To verify your identity, show you your credit reports, score, card offers and alerts, answer your questions,
@@ -38,7 +39,9 @@
     <ul>
       <li>Our identity-verification provider (the photo of your card, to read and verify your SSN).</li>
       <li>The credit bureaus (to obtain your reports, on your authorisation).</li>
-      <li>Our email provider (to send your alerts).</li>
+      <li>Our email provider (to send your alerts, and the sign-in codes you ask for by email).</li>
+      <li>Our text-message provider and the mobile carriers (your mobile number and the sign-in code, when you ask for
+        a code by text message).</li>
       <li>If you connect CreditAgent to Claude, the Claude app you authorise receives your score, report and advice in
         your conversations. An optional AI model that writes advice receives only de-identified report data.</li>
       <li>Authorities, when the law requires it.</li>
@@ -63,8 +66,9 @@
     </ul>
 
     <h2>Security</h2>
-    <p>Credit reports are encrypted, your SSN is never stored in readable form, passwords are hashed, and sessions end
-      after 5 idle minutes.</p>
+    <p>Credit reports are encrypted, your SSN is never stored in readable form, passwords are hashed, every sign-in
+      needs a one-time code sent to your email or mobile phone as well as your password, and sessions end after 5 idle
+      minutes.</p>
 
     <h2>Contact</h2>
     <p>Questions or requests: <a href="mailto:privacy@creditagent.example">privacy@creditagent.example</a>

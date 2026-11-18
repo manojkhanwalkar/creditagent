@@ -2,7 +2,7 @@
 
 A web app that shows a credit score as a coloured ring, plus a pair of A2A agents that turn a credit report into recommendations for raising the score.
 
-* **Login:** users register by uploading a photo of their Social Security card, which a (dummy) **KYC service** checks and reads the SSN from; a blurred photo is refused with a request to retry. They then log in through the web UI; accounts and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
+* **Login:** users register by uploading a photo of their Social Security card, which a (dummy) **KYC service** checks and reads the SSN from; a blurred photo is refused with a request to retry. Registration also asks for an email address and a mobile number, both required. Login takes two factors: the password, then a 6-digit one-time code sent by email (Amazon SES) or text message (Amazon SNS), whichever the user picks (see [Sign-in codes](#sign-in-codes)). Accounts, login challenges and sessions are in DynamoDB, and the score API needs the JWT issued at login. A user can only see the credit report for their own SSN; asking for any other SSN gets 403. Sessions end on logout or after 5 idle minutes.
 * **Web flow:** browser → Spring Boot web server → Credit Report **MCP** server (reads the Equifax, Experian and TransUnion reports; the **Normalized Report Generator** merges them) → Score Calculator → score ring.
 * **Agent flow:** Client Agent → (**A2A**) → Credit Intelligence Agent → MCP server + Score Calculator → recommendations.
 * **Offers:** at login, the web server asks the **Offers** service for up to 10 credit card offers ranked for the user's last credit score and the ZIP code they registered with, and the UI shows them. See [Card offers](#card-offers).
@@ -24,7 +24,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 
 | Module | Port | What it does |
 |---|---|---|
-| `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo), `POST /api/v1/auth/{login,logout}`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
+| `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo and `mobilePhone`), `POST /api/v1/auth/login` (password → challenge), `POST /api/v1/auth/login/otp` (send a code), `POST /api/v1/auth/login/verify` (code → JWT), `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
 | `credit-report-generator` | 8083 | `POST /api/v1/reports`; stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
@@ -65,7 +65,7 @@ Then:
   curl -o card.png localhost:8087/api/v1/sample-cards/123-45-6789
   curl -o blurry.png 'localhost:8087/api/v1/sample-cards/123-45-6789?blur=4'
   ```
-* open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN;
+* open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN. The local stack has no AWS account, so sign-in codes are written to the web server's log instead of being sent (`OTP_DELIVERY=log`): `docker compose logs web-server | grep 'sign-in code'`;
 * get recommendations through the agents:
   ```bash
   curl -s localhost:8086/api/v1/advice -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
@@ -90,6 +90,28 @@ CREDIT_SEED_SSNS=123-45-6789 mvn -pl credit-report-generator spring-boot:run
 mvn -pl normalized-report-generator spring-boot:run
 mvn -pl credit-report-mcp-server spring-boot:run
 ```
+
+## Sign-in codes
+
+Every login needs the password and a one-time code:
+
+1. `POST /api/v1/auth/login` `{userId, password}` checks the password and answers `{challengeId, channels, expiresInSeconds}`: where a code can go, masked (`a***@example.com`, `***-***-0100`). No token yet.
+2. `POST /api/v1/auth/login/otp` `{challengeId, channel: EMAIL|SMS}` sends a fresh 6-digit code (202). Asking again replaces the code.
+3. `POST /api/v1/auth/login/verify` `{challengeId, code}` checks it and answers with the JWT, offers and alerts (what login answered before).
+
+| Limit | Default |
+|---|---|
+| A code works for | 5 minutes (`OTP_CODE_TTL`) |
+| A sign-in must finish within | 10 minutes of the password (`OTP_CHALLENGE_TTL`) |
+| Wrong codes per sign-in | 5, then start again from the password (`OTP_MAX_ATTEMPTS`) |
+| Codes per sign-in | 3, at least 30 s apart (`OTP_MAX_SENDS`, `OTP_RESEND_COOLDOWN`); 429 with `Retry-After` |
+| Codes per account per hour | 10, across all sign-ins (`OTP_MAX_SENDS_PER_USER_PER_HOUR`) |
+
+Codes are stored only as an HMAC bound to their challenge (key derived from `JWT_SECRET`), compared in constant time and used once; challenge ids are stored as SHA-256 hashes; challenges expire through the table's TTL. Each limit is a conditional DynamoDB write, so parallel requests cannot get past it. Sends, failures and successful logins are audit events (`LOGIN_CODE_SENT`, `LOGIN_CODE_FAILED`, `LOGIN_SUCCEEDED`). Accounts made before the mobile number was asked for get codes by email only.
+
+**AWS.** With `OTP_DELIVERY=aws` (the default) the web server's role needs `ses:SendEmail` (from a verified `OTP_EMAIL_FROM` identity, out of the SES sandbox) and `sns:Publish` to phone numbers (SMS spend limit raised, and for US numbers a registered toll-free, 10DLC or short-code origination number in `OTP_SMS_ORIGINATION_NUMBER`). Calls are bounded by `OTP_TIMEOUT` (5 s) with the SDK's standard retries; a send that fails answers 503 and the user can retry or pick the other channel. Tests mock the SES and SNS clients; no AWS account is needed. `OTP_DELIVERY=log` writes codes to the log instead, and is refused unless `DYNAMODB_ENDPOINT` points at a local DynamoDB.
+
+The Claude connector's OAuth sign-in form still asks for the password and the SSN, not a code.
 
 ## Card offers
 
@@ -219,6 +241,11 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `AWS_REGION`, `USERS_TABLE`, `SESSIONS_TABLE` | web server | `us-east-1`, `credit-agent-users`, `credit-agent-sessions` |
 | `DYNAMODB_CREATE_TABLES` | web server | `false` (compose sets `true` for DynamoDB Local) |
 | `DYNAMODB_TIMEOUT` | web server | `5s` (longest DynamoDB call, retries included; the SDK's standard retry mode backs off with jitter) |
+| `OTP_DELIVERY` | web server | `aws` (SES and SNS); `log` for local development only (docker compose sets it) |
+| `OTP_EMAIL_FROM`, `OTP_SES_CONFIGURATION_SET`, `OTP_SES_ENDPOINT` | web server | `CreditAgent <no-reply@creditagent.example>` (a verified SES identity), none, AWS |
+| `OTP_SMS_ORIGINATION_NUMBER`, `OTP_SMS_SENDER_ID`, `OTP_SNS_ENDPOINT` | web server | account default, none, AWS |
+| `OTP_AWS_REGION`, `OTP_TIMEOUT`, `OTP_CHALLENGES_TABLE` | web server | `AWS_REGION`, `5s`, `credit-agent-login-challenges` (TTL on `expiresAt`) |
+| `OTP_CODE_TTL`, `OTP_CHALLENGE_TTL`, `OTP_MAX_ATTEMPTS`, `OTP_MAX_SENDS`, `OTP_RESEND_COOLDOWN`, `OTP_MAX_SENDS_PER_USER_PER_HOUR` | web server | `5m`, `10m`, `5`, `3`, `30s`, `10` |
 | `CREDIT_RETRY_MAX_ATTEMPTS`, `CREDIT_RETRY_INITIAL_DELAY`, `CREDIT_RETRY_MULTIPLIER`, `CREDIT_RETRY_MAX_DELAY`, `CREDIT_RETRY_JITTER` | every service that calls another | `3`, `100ms`, `2`, `1s`, `50ms`: retries of recoverable failures with exponential backoff and jitter (see [architecture](docs/architecture.md#resilience)) |
 | `OAUTH_TOKEN_KEY` | web server | empty = OAuth (and so the Claude connector's sign-in) is off. At least 32 characters; signs client ids and encrypts codes and access tokens |
 | `OAUTH_ISSUER` | web server, connector | `http://localhost:8080`: the web server's public URL, exactly as Claude and browsers reach it |

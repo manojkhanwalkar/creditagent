@@ -20,13 +20,14 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Requires {@code Authorization: Bearer <jwt>} on every {@code /api/} call except register and
- * login. Runs after the rate limiter, so login attempts are rate limited too.
+ * the login steps. Runs after the rate limiter, so login attempts are rate limited too.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 class AuthenticationFilter extends OncePerRequestFilter {
 
-    static final Set<String> OPEN_PATHS = Set.of(AuthController.BASE + "/register", AuthController.BASE + "/login");
+    static final Set<String> OPEN_PATHS = Set.of(AuthController.BASE + "/register", AuthController.BASE + "/login",
+            AuthController.BASE + "/login/otp", AuthController.BASE + "/login/verify");
     private static final String BEARER = "Bearer ";
 
     private final AuthService auth;

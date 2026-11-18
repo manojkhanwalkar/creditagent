@@ -5,9 +5,11 @@ import java.time.Instant;
 /**
  * A registered user. {@code userId} is stored lower case, so ids are unique regardless of case.
  * The SSN is kept only as a keyed hash (to check that a look-up is for the user's own SSN) and its
- * last four digits (for display). No phone number: it was collected for a password recovery that was
- * never built, so it is no longer asked for (data minimisation), and the retention job removes it from
- * accounts made before.
+ * last four digits (for display).
+ *
+ * <p>The mobile number is collected for one purpose only: sending one-time sign-in codes by text
+ * message. It is stored in its own attribute ({@code mobilePhone}); the older {@code phone} attribute,
+ * collected for a password recovery that was never built, is still removed by the retention job.
  *
  * @param kycVerificationId the KYC provider's reference for the check that read the SSN from the
  *     user's card; null only for rows written before registration required a card
@@ -25,6 +27,8 @@ import java.time.Instant;
  * @param consentedAt when they accepted it
  * @param lastLoginAt the last successful login; with {@code createdAt}, what the retention job measures
  *     inactivity from; null until the first login after it was recorded
+ * @param mobilePhone the E.164 mobile number sign-in codes can be texted to; null for accounts made
+ *     before it was asked for (they get codes by email only)
  */
 public record User(
         String userId,
@@ -40,10 +44,19 @@ public record User(
         Instant lastScoreAt,
         String consentVersion,
         Instant consentedAt,
-        Instant lastLoginAt) {
+        Instant lastLoginAt,
+        String mobilePhone) {
 
     public User {
         reportStatus = reportStatus == null ? ReportStatus.UNLOCKED : reportStatus;
+    }
+
+    /** A user without a mobile number (accounts made before it was asked for). */
+    public User(String userId, String passwordHash, String email, String ssnHash, String ssnLastFour,
+            String kycVerificationId, Instant createdAt, ReportStatus reportStatus, String zip, Integer lastScore,
+            Instant lastScoreAt, String consentVersion, Instant consentedAt, Instant lastLoginAt) {
+        this(userId, passwordHash, email, ssnHash, ssnLastFour, kycVerificationId, createdAt, reportStatus,
+                zip, lastScore, lastScoreAt, consentVersion, consentedAt, lastLoginAt, null);
     }
 
     /** A user without a ZIP code, score, consent record or login. */
@@ -68,21 +81,21 @@ public record User(
 
     User withReportStatus(ReportStatus status) {
         return new User(userId, passwordHash, email, ssnHash, ssnLastFour, kycVerificationId, createdAt, status,
-                zip, lastScore, lastScoreAt, consentVersion, consentedAt, lastLoginAt);
+                zip, lastScore, lastScoreAt, consentVersion, consentedAt, lastLoginAt, mobilePhone);
     }
 
     User withLastScore(int score, Instant at) {
         return new User(userId, passwordHash, email, ssnHash, ssnLastFour, kycVerificationId, createdAt, reportStatus,
-                zip, score, at, consentVersion, consentedAt, lastLoginAt);
+                zip, score, at, consentVersion, consentedAt, lastLoginAt, mobilePhone);
     }
 
     User withLastLogin(Instant at) {
         return new User(userId, passwordHash, email, ssnHash, ssnLastFour, kycVerificationId, createdAt, reportStatus,
-                zip, lastScore, lastScoreAt, consentVersion, consentedAt, at);
+                zip, lastScore, lastScoreAt, consentVersion, consentedAt, at, mobilePhone);
     }
 
     @Override
     public String toString() {
-        return "User[userId=" + userId + ", passwordHash=<redacted>, email=<redacted>, ssn=<redacted>]";
+        return "User[userId=" + userId + ", passwordHash=<redacted>, email=<redacted>, mobilePhone=<redacted>, ssn=<redacted>]";
     }
 }

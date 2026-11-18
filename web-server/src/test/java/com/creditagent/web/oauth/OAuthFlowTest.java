@@ -103,7 +103,7 @@ class OAuthFlowTest {
     @BeforeEach
     void registerAvery() {
         if (Wiring.USERS.find("avery").isEmpty()) {
-            auth.register("avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(SSN));
+            auth.register("avery", PASSWORD, "avery@example.com", "+12065550100", null, FakeIdentityVerifier.card(SSN));
         }
     }
 

@@ -93,6 +93,31 @@ credit:
       create-tables: ${DYNAMODB_CREATE_TABLES:false}
       # Longest a DynamoDB call may take, retries included (each attempt gets half).
       timeout: ${DYNAMODB_TIMEOUT:5s}
+    # One-time sign-in codes: after the password, a 6-digit code by email (Amazon SES) or text message
+    # (Amazon SNS), whichever the user picks.
+    otp:
+      # aws = SES and SNS (the web server's IAM role needs ses:SendEmail and sns:Publish). log = write the
+      # code to the server log instead (local development only; refused without a local DYNAMODB_ENDPOINT).
+      delivery: ${OTP_DELIVERY:aws}
+      region: ${OTP_AWS_REGION:${AWS_REGION:us-east-1}}
+      # Endpoint overrides, e.g. LocalStack; empty = AWS.
+      ses-endpoint: ${OTP_SES_ENDPOINT:}
+      sns-endpoint: ${OTP_SNS_ENDPOINT:}
+      # A verified SES identity.
+      email-from: ${OTP_EMAIL_FROM:CreditAgent <no-reply@creditagent.example>}
+      ses-configuration-set: ${OTP_SES_CONFIGURATION_SET:}
+      sms-sender-id: ${OTP_SMS_SENDER_ID:}
+      # US carriers need a registered toll-free, 10DLC or short-code number to send from.
+      sms-origination-number: ${OTP_SMS_ORIGINATION_NUMBER:}
+      # Longest one SES or SNS call may take, retries included (each attempt gets half).
+      timeout: ${OTP_TIMEOUT:5s}
+      table: ${OTP_CHALLENGES_TABLE:credit-agent-login-challenges}
+      code-ttl: ${OTP_CODE_TTL:5m}
+      challenge-ttl: ${OTP_CHALLENGE_TTL:10m}
+      max-attempts: ${OTP_MAX_ATTEMPTS:5}
+      max-sends: ${OTP_MAX_SENDS:3}
+      resend-cooldown: ${OTP_RESEND_COOLDOWN:30s}
+      max-sends-per-user-per-hour: ${OTP_MAX_SENDS_PER_USER_PER_HOUR:10}
 
 management:
   endpoints:

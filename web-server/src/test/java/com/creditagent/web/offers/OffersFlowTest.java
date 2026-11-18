@@ -91,9 +91,9 @@ class OffersFlowTest {
     @BeforeEach
     void registerUsers() {
         if (Wiring.USERS.find("ada").isEmpty()) {
-            auth.register("ada", PASSWORD, "ada@example.com", "98101-1234", FakeIdentityVerifier.card("123-45-6789"));
-            auth.register("bob", PASSWORD, "bob@example.com", FakeIdentityVerifier.card("234-56-7890"));
-            auth.register("eve", PASSWORD, "eve@example.com", "02134", FakeIdentityVerifier.card("567-89-0123"));
+            auth.register("ada", PASSWORD, "ada@example.com", "+12065550100", "98101-1234", FakeIdentityVerifier.card("123-45-6789"));
+            auth.register("bob", PASSWORD, "bob@example.com", "+12065550100", null, FakeIdentityVerifier.card("234-56-7890"));
+            auth.register("eve", PASSWORD, "eve@example.com", "+12065550100", "02134", FakeIdentityVerifier.card("567-89-0123"));
         }
     }
 
@@ -106,8 +106,7 @@ class OffersFlowTest {
     }
 
     String login(String user) throws Exception {
-        return mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + user + "\",\"password\":\"" + PASSWORD + "\"}"))
+        return mvc.perform(com.creditagent.web.auth.OtpTesting.loginRequest(mvc, com.creditagent.web.auth.AuthControllerConfig.OTP, user, PASSWORD))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
     }
@@ -170,7 +169,7 @@ class OffersFlowTest {
         java.util.List<Runnable> queued = new java.util.ArrayList<>();
         given(scores.scoreFor(Ssn.parse("345-67-8901"))).willReturn(com.creditagent.common.CreditScore.of(688));
         auth.addRegistrationListener(new ScoreRecorder(auth, scores, queued::add));
-        auth.register("cyd", PASSWORD, "cyd@example.com", "10001", FakeIdentityVerifier.card("345-67-8901"));
+        auth.register("cyd", PASSWORD, "cyd@example.com", "+12065550100", "10001", FakeIdentityVerifier.card("345-67-8901"));
         assertThat(Wiring.USERS.find("cyd").orElseThrow().lastScore()).isNull();   // not on the request thread
         queued.forEach(Runnable::run);
         assertThat(Wiring.USERS.find("cyd").orElseThrow().lastScore()).isEqualTo(688);
@@ -178,7 +177,7 @@ class OffersFlowTest {
         // A failure (no report yet, a service down) is swallowed: registration already succeeded.
         given(scores.scoreFor(Ssn.parse("456-78-9012"))).willThrow(new ServiceUnavailableException("down", null));
         queued.clear();
-        auth.register("dia", PASSWORD, "dia@example.com", "10001", FakeIdentityVerifier.card("456-78-9012"));
+        auth.register("dia", PASSWORD, "dia@example.com", "+12065550100", "10001", FakeIdentityVerifier.card("456-78-9012"));
         queued.forEach(Runnable::run);
         assertThat(Wiring.USERS.find("dia").orElseThrow().lastScore()).isNull();
         // An unknown user is ignored.

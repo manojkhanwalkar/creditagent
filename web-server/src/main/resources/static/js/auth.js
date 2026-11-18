@@ -79,7 +79,19 @@ export function ssnHint(ssnMasked) {
 export const AUTHORIZATION_REQUIRED = 'To open an account, agree to the terms of use and privacy notice and authorise'
   + ' CreditAgent to obtain your credit reports.';
 
-export function checkRegistration({ userId, password, confirm, email, zip, authorize, ssnCard }) {
+/**
+ * A mobile number the server will accept: 10 digits (US), 11 starting with 1, or + and 8–15 digits.
+ * Spaces, dots, dashes and brackets are ignored, as the server ignores them.
+ * @returns an error message, or null if the number looks valid
+ */
+export function checkMobilePhone(phone) {
+  const value = String(phone || '').trim().replace(/[\s().-]/g, '');
+  if (/^1?\d{10}$/.test(value) || /^\+1\d{10}$/.test(value)) return null;
+  if (/^\+[2-9]\d{7,14}$/.test(value)) return null;
+  return 'Enter your mobile number: 10 digits for a US number, or + and the country code for others.';
+}
+
+export function checkRegistration({ userId, password, confirm, email, mobilePhone, zip, authorize, ssnCard }) {
   const id = (userId || '').trim();
   if (!USER_ID.test(id)) return 'User id must be 3–32 characters: letters, digits, ".", "_" or "-".';
   if ((password || '').length < 12) return 'Password must be at least 12 characters.';
@@ -87,6 +99,8 @@ export function checkRegistration({ userId, password, confirm, email, zip, autho
   if (password.toLowerCase().includes(id.toLowerCase())) return 'Password must not contain the user id.';
   if (password !== confirm) return 'Passwords do not match.';
   if (!EMAIL.test((email || '').trim())) return 'Enter a valid email address.';
+  const phone = checkMobilePhone(mobilePhone);
+  if (phone) return phone;
   if (!/^\d{5}(-\d{4})?$/.test((zip || '').trim())) return 'Enter your 5-digit ZIP code.';
   const photo = checkCardPhoto(ssnCard);
   if (photo) return photo;
@@ -152,4 +166,51 @@ export function nextTab(current, key, count) {
     case 'End': return count - 1;
     default: return null;
   }
+}
+
+/**
+ * The code as the server wants it: six digits, with spaces and dashes the user typed removed.
+ * @returns {{ code: string|null, error: string|null }}
+ */
+export function checkOtpCode(input) {
+  const code = String(input || '').replace(/[\s-]/g, '');
+  return /^\d{6}$/.test(code) ? { code, error: null } : { code: null, error: 'Enter the 6-digit code.' };
+}
+
+/** The radio labels for the code step, from the password step's `channels`. */
+export function otpChoices(channels) {
+  const list = Array.isArray(channels) ? channels : [];
+  const find = (name) => list.find((c) => c && c.channel === name);
+  const email = find('EMAIL');
+  const sms = find('SMS');
+  return {
+    email: email ? String(email.destination || '') : null,
+    sms: sms ? String(sms.destination || '') : null,
+  };
+}
+
+/** What the page says once a code is on its way. */
+export function codeSentMessage(sent) {
+  const where = sent && sent.channel === 'SMS' ? 'texted' : 'emailed';
+  const minutes = Math.max(1, Math.round(Number(sent && sent.codeExpiresInSeconds) / 60) || 5);
+  const to = sent && sent.destination ? ` to ${sent.destination}` : '';
+  return `We ${where} a code${to}. It expires in ${minutes} minutes.`;
+}
+
+/**
+ * What a failed code request means for the form.
+ * @returns {{ message: string, restart: boolean, retryAfterSeconds: number }} restart: back to the
+ *   password; retryAfterSeconds: how long to keep "Send code" disabled (0 = not at all)
+ */
+export function otpFailure(status, body) {
+  const detail = body && typeof body.detail === 'string' ? body.detail : null;
+  const restart = Boolean(body && body.restart === true);
+  const retryAfterSeconds = status === 429 ? Math.max(1, Number(body && body.retryAfterSeconds) || 30) : 0;
+  if (status === 401 && detail && body && Number.isInteger(body.attemptsLeft)) {
+    const tries = body.attemptsLeft === 1 ? '1 try' : `${body.attemptsLeft} tries`;
+    return { message: `${detail} ${tries} left.`, restart, retryAfterSeconds };
+  }
+  if (detail) return { message: detail, restart, retryAfterSeconds };
+  if (status === 429) return { message: 'Too many requests. Please wait and try again.', restart, retryAfterSeconds };
+  return { message: 'Something went wrong. Please try again.', restart, retryAfterSeconds };
 }

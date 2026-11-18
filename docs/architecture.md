@@ -170,7 +170,9 @@ sequenceDiagram
     participant K as kyc-service :8087
     participant U as DynamoDB users
     participant S as DynamoDB sessions
-    UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, zip, authorize=true, ssnCard image)
+    participant C as DynamoDB login-challenges
+    participant M as Amazon SES / SNS
+    UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, mobilePhone, zip, authorize=true, ssnCard image)
     WS->>WS: check fields, password rules, user id free (400 / 409, no KYC call)
     WS->>K: POST /api/v1/ssn-verifications (multipart: document)
     alt photo blurred, not a card, or unreadable
@@ -182,9 +184,19 @@ sequenceDiagram
         WS-->>UI: 201, or 409 if the user id or the SSN is taken
     end
     UI->>WS: POST /api/v1/auth/login {userId, password}
-    WS->>U: GetItem userId
+    WS->>U: GetItem userId; BCrypt check (401 on any mismatch)
+    WS->>C: PutItem challenge (key = SHA-256 of challengeId, TTL 10 min)
+    WS-->>UI: {challengeId, channels: EMAIL a***@…, SMS ***-***-0100} (no token)
+    UI->>WS: POST /api/v1/auth/login/otp {challengeId, channel}
+    WS->>C: UpdateItem per-account hourly counter (if < 10)
+    WS->>C: UpdateItem code HMAC (if not expired, sends < 3, last send ≥ 30 s ago)
+    WS->>M: SES SendEmail / SNS Publish (Transactional) the 6-digit code
+    WS-->>UI: 202 {destination, codeExpiresInSeconds, resendAfterSeconds}, or 429 Retry-After, or 503
+    UI->>WS: POST /api/v1/auth/login/verify {challengeId, code}
+    WS->>C: UpdateItem attempts + 1 (if < 5); compare HMAC in constant time
+    WS->>C: DeleteItem challenge (if code hash unchanged): single use
     WS->>S: PutItem session (SSN hash, expiresAt = now + 5 min)
-    WS-->>UI: JWT (sub = userId, jti = sessionId)
+    WS-->>UI: JWT (sub = userId, jti = sessionId), or 401 {attemptsLeft | restart}
     UI->>WS: POST /api/v1/credit-score {ssn}, Authorization: Bearer JWT
     WS->>S: GetItem jti; refuse if missing or idle 5 min; else refresh expiresAt
     WS->>WS: HMAC(ssn) == session SSN hash? else 403
@@ -192,6 +204,8 @@ sequenceDiagram
     UI->>WS: POST /api/v1/auth/logout
     WS->>S: DeleteItem session
 ```
+
+**Two-factor login.** The password step only opens a *challenge* in `credit-agent-login-challenges` (TTL on `expiresAt`); only a correct one-time code opens a session. Codes are 6 random digits stored as an HMAC-SHA256 bound to the challenge id (key derived from `JWT_SECRET`), valid 5 minutes, compared in constant time and consumed by a conditional delete, so each works once. Limits are conditional writes: 5 tries per sign-in, 3 sends per sign-in at least 30 s apart, 10 sends per account per clock hour (counter items `user#<sha-256 of id>#<hour>` in the same table). Trade-offs: a fixed hourly window lets up to 20 sends straddle an hour boundary, accepted for one write per send; codes are not locked to a device, so they defend against password reuse and stuffing, not real-time phishing (passkeys would); SMS is weaker than email against SIM swap, so both are offered and the user picks. `OtpSender` has three implementations: `SesEmailOtpSender`, `SnsSmsOtpSender` (Transactional, optional origination number) and `LoggingOtpSender` (local only, refused against AWS). SES and SNS calls have a 5 s budget with the SDK's standard retry (backoff with jitter); a duplicate send after a retry delivers the same code. The connector's OAuth form keeps password + SSN and is not yet behind a code.
 
 **SSN from the card, not the keyboard.** Registration has no SSN field. The user uploads a photo of their Social Security card and the web server sends it to the KYC provider through `IdentityVerifier` (`KycHttpClient`). The SSN bound to the account is the one the provider read, so nobody can claim another person's SSN by typing it. Field, password and user-id checks run first, so a bad form never costs a KYC call. The web server only forwards PNG and JPEG files (by magic bytes) up to 5 MB, and never decodes them itself.
 
@@ -204,7 +218,7 @@ sequenceDiagram
 | `REJECTED` `UNSUPPORTED_IMAGE`, `IMAGE_SIZE`, `NOT_AN_SSN_CARD`, `SSN_UNREADABLE` | 422 with that reason | the reason's message, asks for a new photo |
 | error, timeout, or a malformed answer | 503 | "try again in a few minutes" |
 
-**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, ZIP, the SSN's HMAC (`ssnHash`) and last four digits, the KYC verification id (`kycVerificationId`), the credit report lock (`reportStatus`: `LOCKED` or `UNLOCKED`), the accepted terms version and time (`consentVersion`, `consentedAt`), the last login (`lastLoginAt`), and creation time. No phone number: it is no longer collected, and the account retention job removes it from older rows. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
+**Tables.** `credit-agent-users` is keyed by `userId` (stored lower case) and holds the BCrypt hash, email, ZIP, the SSN's HMAC (`ssnHash`) and last four digits, the KYC verification id (`kycVerificationId`), the credit report lock (`reportStatus`: `LOCKED` or `UNLOCKED`), the accepted terms version and time (`consentVersion`, `consentedAt`), the last login (`lastLoginAt`), the E.164 mobile number sign-in codes are texted to (`mobilePhone`), and creation time. The older `phone` attribute (collected for a password recovery that was never built) is still removed by the account retention job; `mobilePhone` is a separate attribute, so the job never touches it. The same table holds one `ssn#<hash>` item per user, written in the same transaction, so an SSN cannot be registered twice. The SSN itself is never stored. `credit-agent-sessions` is keyed by `sessionId` and holds `userId`, the SSN hash and last four, `createdAt`, `lastActivityAt` and `expiresAt` (epoch seconds, the table's TTL attribute).
 
 **Credit report lock.** A signed-in user can lock or unlock their own credit report from the UI. `GET /api/v1/credit-report/status` returns `{"reportStatus":"LOCKED"|"UNLOCKED"}` and `PUT` with the same body sets it; both need the bearer token, and the user id comes from the session, so a user can only change their own status. The value is the `reportStatus` attribute on the user's item. New accounts start `UNLOCKED`, and rows written before the attribute existed read as `UNLOCKED`. The update is conditional (`attribute_exists` on the user id and password hash), so it can never create a user or touch an `ssn#` claim item. 
 
@@ -417,7 +431,7 @@ The bureau reports live in the DynamoDB table `CreditReports`, written by the ge
 
 The compliance checks of 2026-11-14 (`compliance-check`, `digital-regulation-check`, `ada-compatibility`) found the product handled data carefully but lacked its lifecycle and accountability. This section is what closed that gap.
 
-**Consent at registration.** Registration requires `authorize=true`: the user agrees to the [terms](../web-server/src/main/resources/static/terms.html) and [privacy notice](../web-server/src/main/resources/static/privacy.html), and authorises CreditAgent to obtain their credit reports (their written instruction under the FCRA). The server refuses the form without it, before the KYC call, and stores `consentVersion` (`RegistrationPolicy.CONSENT_VERSION`) and `consentedAt`. Change the version when those texts change materially. The phone number is no longer collected (minimisation).
+**Consent at registration.** Registration requires `authorize=true`: the user agrees to the [terms](../web-server/src/main/resources/static/terms.html) and [privacy notice](../web-server/src/main/resources/static/privacy.html), and authorises CreditAgent to obtain their credit reports (their written instruction under the FCRA). The server refuses the form without it, before the KYC call, and stores `consentVersion` (`RegistrationPolicy.CONSENT_VERSION`) and `consentedAt`. Change the version when those texts change materially (2026-11-18: the privacy notice now covers the mobile number and SES/SNS as processors). The mobile number is collected for one purpose, sign-in codes, and the form says so.
 
 **Download my data.** `POST /api/v1/account/export` with `{ssn}` (own SSN, bearer token) returns everything held about the user: the account fields (no password hash or keyed hashes), the merged credit report, the dark-web findings, and a note on what isn't kept. It is a JSON attachment with `no-store`. A failure reading the report or alerts is a 503, never a silently incomplete export.
 

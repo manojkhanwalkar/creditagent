@@ -46,7 +46,13 @@ public final class AuditLog {
         /** A user authorised the Claude connector. */
         CONNECTOR_GRANT_OPENED,
         /** A connector grant was revoked. */
-        CONNECTOR_GRANT_REVOKED
+        CONNECTOR_GRANT_REVOKED,
+        /** A user passed the password and one-time-code steps and a session was opened. */
+        LOGIN_SUCCEEDED,
+        /** A one-time sign-in code was sent (detail: the channel). */
+        LOGIN_CODE_SENT,
+        /** A one-time sign-in code was wrong, expired or used up its attempts. */
+        LOGIN_CODE_FAILED
     }
 
     static final int MAX_VALUE_LENGTH = 96;

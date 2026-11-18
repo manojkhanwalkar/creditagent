@@ -43,6 +43,31 @@
         <p id="login-error" class="error" role="alert" hidden></p>
       </form>
 
+      <!-- Second login step: a one-time code by email or text message. Shown after a correct password. -->
+      <form id="otp-form" aria-labelledby="otp-title" novalidate hidden>
+        <h3 id="otp-title" tabindex="-1">Confirm it's you</h3>
+        <fieldset>
+          <legend>Send my sign-in code by</legend>
+          <div class="choice">
+            <input id="otp-email" name="channel" type="radio" value="EMAIL" checked>
+            <label for="otp-email">Email to <span id="otp-email-destination"></span></label>
+          </div>
+          <div class="choice" id="otp-sms-choice">
+            <input id="otp-sms" name="channel" type="radio" value="SMS">
+            <label for="otp-sms">Text message to <span id="otp-sms-destination"></span></label>
+          </div>
+        </fieldset>
+        <button type="button" id="otp-send" class="secondary">Send code</button>
+        <p id="otp-status" class="help" role="status"></p>
+        <label for="otp-code">6-digit code</label>
+        <input id="otp-code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="7"
+               spellcheck="false" aria-describedby="otp-code-help">
+        <p id="otp-code-help" class="help">Codes expire after 5 minutes. Never share your code: we will never ask for it.</p>
+        <button type="submit" id="otp-submit">Verify and sign in</button>
+        <button type="button" id="otp-cancel" class="secondary">Start over</button>
+        <p id="otp-error" class="error" role="alert" hidden></p>
+      </form>
+
       <form id="register-form" role="tabpanel" aria-labelledby="tab-register" novalidate hidden>
         <label for="reg-user">User id</label>
         <input id="reg-user" name="userId" autocomplete="username" required maxlength="32" spellcheck="false"
@@ -55,7 +80,14 @@
         <label for="reg-confirm">Confirm password</label>
         <input id="reg-confirm" name="confirm" type="password" autocomplete="new-password" required maxlength="64">
         <label for="reg-email">Email</label>
-        <input id="reg-email" name="email" type="email" autocomplete="email" required maxlength="254">
+        <input id="reg-email" name="email" type="email" autocomplete="email" required maxlength="254"
+               aria-describedby="reg-email-help">
+        <p id="reg-email-help" class="help">Sign-in codes can be sent here.</p>
+        <label for="reg-phone">Mobile number</label>
+        <input id="reg-phone" name="mobilePhone" type="tel" autocomplete="tel" required maxlength="32"
+               placeholder="206-555-0100" aria-describedby="reg-phone-help">
+        <p id="reg-phone-help" class="help">Sign-in codes can be texted here. 10 digits for a US number, or + and the
+          country code. Used only for sign-in codes. Message and data rates may apply.</p>
         <label for="reg-zip">ZIP code</label>
         <input id="reg-zip" name="zip" inputmode="numeric" autocomplete="postal-code" required maxlength="10"
                placeholder="98101" aria-describedby="reg-zip-help">
