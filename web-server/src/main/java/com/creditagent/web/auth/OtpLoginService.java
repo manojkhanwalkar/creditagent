@@ -5,6 +5,7 @@ import com.creditagent.web.auth.AuthExceptions.InvalidOtpRequestException;
 import com.creditagent.web.auth.AuthExceptions.OtpFailedException;
 import com.creditagent.web.auth.AuthExceptions.TooManyCodesException;
 import com.creditagent.web.auth.otp.OtpChannel;
+import com.creditagent.web.auth.otp.OtpDeliveryException;
 import com.creditagent.web.auth.otp.OtpSender;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
@@ -181,10 +182,17 @@ public class OtpLoginService {
         }
         try {
             senders.get(channel).send(destination, code, limits.codeTtl());
-        } catch (RuntimeException e) {
-            // Not delivered: give the send back, so "try again or choose the other option" works at once.
-            release(challengeId, codeHash, user.userId(), now, e);
-            throw e;
+        } catch (OtpDeliveryException e) {
+            if (e.refused()) {
+                // Certainly not delivered: give the send back, so "try again or choose the other option"
+                // works at once.
+                release(challengeId, codeHash, user.userId(), now, e);
+                throw e;
+            }
+            // A timeout, 5xx or throttling may still have delivered it: the send keeps counting (so the
+            // limits hold) and its code stays valid in case it arrives late.
+            log.warn("Sign-in code for user {} by {} may not have been delivered", user.userId(), channel);
+            throw e.withRetryAfter(limits.resendCooldown());
         }
         audit.record(AuditLog.Event.LOGIN_CODE_SENT, "user:" + user.userId(), "user:" + user.userId(), "OK",
                 Map.of("channel", channel.name()));

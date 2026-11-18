@@ -60,13 +60,40 @@ class AwsOtpSendersTest {
     void anSesRefusalBecomesADeliveryFailureWithoutTheAddressOrCode() {
         SesV2Client ses = mock(SesV2Client.class);
         when(ses.sendEmail(any(SendEmailRequest.class)))
-                .thenThrow(MessageRejectedException.builder().message("Email address is not verified: a@example.com").build());
+                .thenThrow(MessageRejectedException.builder().statusCode(400)
+                        .message("Email address is not verified: a@example.com").build());
 
         assertThatThrownBy(() -> new SesEmailOtpSender(ses, "no-reply@creditagent.example", null)
                 .send("a@example.com", "123456", Duration.ofMinutes(5)))
                 .isInstanceOf(OtpDeliveryException.class)
                 .hasMessage("Could not send a sign-in code by EMAIL")
-                .hasCauseInstanceOf(MessageRejectedException.class);
+                .hasCauseInstanceOf(MessageRejectedException.class)
+                .satisfies(e -> assertThat(((OtpDeliveryException) e).refused()).isTrue());
+    }
+
+    @Test
+    void onlyAClearRejectionCountsAsNotDelivered() {
+        assertThat(OtpDeliveryException.clearlyRefused(
+                MessageRejectedException.builder().statusCode(400).build())).isTrue();
+        // Throttling, 5xx, timeouts and client errors may have delivered the message.
+        assertThat(OtpDeliveryException.clearlyRefused(ThrottledException.builder().statusCode(400).build())).isFalse();
+        assertThat(OtpDeliveryException.clearlyRefused(software.amazon.awssdk.awscore.exception.AwsServiceException.builder()
+                .statusCode(400).awsErrorDetails(software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                        .errorCode("Throttled").build()).build())).isFalse();
+        assertThat(OtpDeliveryException.clearlyRefused(software.amazon.awssdk.awscore.exception.AwsServiceException.builder()
+                .statusCode(400).awsErrorDetails(software.amazon.awssdk.awscore.exception.AwsErrorDetails.builder()
+                        .errorCode("InvalidParameter").build()).build())).isTrue();
+        assertThat(OtpDeliveryException.clearlyRefused(
+                software.amazon.awssdk.awscore.exception.AwsServiceException.builder().statusCode(503).build())).isFalse();
+        assertThat(OtpDeliveryException.clearlyRefused(SdkClientException.create("timed out"))).isFalse();
+        assertThat(OtpDeliveryException.clearlyRefused(
+                software.amazon.awssdk.core.exception.ApiCallTimeoutException.create(5000))).isFalse();
+        assertThat(OtpDeliveryException.clearlyRefused(new RuntimeException())).isFalse();
+        OtpDeliveryException later = new OtpDeliveryException(OtpChannel.SMS, SdkClientException.create("x"))
+                .withRetryAfter(Duration.ofSeconds(30));
+        assertThat(later.retryAfter()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(later.channel()).isEqualTo(OtpChannel.SMS);
+        assertThat(later.refused()).isFalse();
     }
 
     @Test

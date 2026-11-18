@@ -47,9 +47,23 @@ public final class OtpProblems {
                 .header(HttpHeaders.RETRY_AFTER, Long.toString(seconds)).body(problem);
     }
 
+    /**
+     * 503. When the provider refused the message, the user can retry or switch channel at once. When it
+     * may still arrive, the send counted: {@code retryAfterSeconds} and {@code Retry-After} say when a new
+     * code may be asked for.
+     */
     public static ResponseEntity<ProblemDetail> notSent(OtpDeliveryException e) {
         log.warn("Sign-in code not sent: {}", SafeLogging.describe(e));
+        if (e.refused() || e.retryAfter() == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, NOT_SENT));
+        }
+        long seconds = Math.max(1, e.retryAfter().toSeconds());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "We could not confirm that your code was sent. If it does not arrive, ask for a new one in "
+                        + seconds + " seconds, or choose the other option then.");
+        problem.setProperty("retryAfterSeconds", seconds);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, NOT_SENT));
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(seconds)).body(problem);
     }
 }

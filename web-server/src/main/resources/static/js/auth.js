@@ -205,7 +205,9 @@ export function codeSentMessage(sent) {
 export function otpFailure(status, body) {
   const detail = body && typeof body.detail === 'string' ? body.detail : null;
   const restart = Boolean(body && body.restart === true);
-  const retryAfterSeconds = status === 429 ? Math.max(1, Number(body && body.retryAfterSeconds) || 30) : 0;
+  const given = Number(body && body.retryAfterSeconds) || 0;
+  // 429, and a 503 whose send may still arrive (it counted), both say how long to wait.
+  const retryAfterSeconds = status === 429 ? Math.max(1, given || 30) : (status === 503 && given > 0 ? given : 0);
   if (status === 401 && detail && body && Number.isInteger(body.attemptsLeft)) {
     const tries = body.attemptsLeft === 1 ? '1 try' : `${body.attemptsLeft} tries`;
     return { message: `${detail} ${tries} left.`, restart, retryAfterSeconds };

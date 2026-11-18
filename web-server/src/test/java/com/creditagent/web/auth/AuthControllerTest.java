@@ -450,13 +450,22 @@ class AuthControllerTest {
         mvc.perform(post("/api/v1/auth/login/otp").contentType(MediaType.APPLICATION_JSON).content("{\"channel\":\"EMAIL\"}"))
                 .andExpect(status().isBadRequest());
 
-        Wiring.OTP.failure = new com.creditagent.web.auth.otp.OtpDeliveryException(
-                com.creditagent.web.auth.otp.OtpChannel.EMAIL, new RuntimeException("SES is down"));
+        Wiring.OTP.failure = OtpLoginServiceTest.rejected(com.creditagent.web.auth.otp.OtpChannel.EMAIL);
         try {
             send(challenge, "EMAIL")
                     .andExpect(status().isServiceUnavailable())
                     .andExpect(jsonPath("$.detail").value(Matchers.containsString("could not send your code")))
-                    .andExpect(content().string(Matchers.not(Matchers.containsString("SES is down"))));
+                    .andExpect(jsonPath("$.retryAfterSeconds").doesNotExist())
+                    .andExpect(header().doesNotExist("Retry-After"));
+            // Refused, so given back: the other channel works at once. Then a failure that may have
+            // delivered counts, and says when to ask again.
+            Wiring.OTP.failure = OtpLoginServiceTest.uncertain(com.creditagent.web.auth.otp.OtpChannel.SMS);
+            send(challenge, "SMS")
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.detail").value(Matchers.containsString("could not confirm")))
+                    .andExpect(jsonPath("$.retryAfterSeconds").value(30))
+                    .andExpect(header().string("Retry-After", "30"))
+                    .andExpect(content().string(Matchers.not(Matchers.containsString("5000"))));
         } finally {
             Wiring.OTP.failure = null;
         }

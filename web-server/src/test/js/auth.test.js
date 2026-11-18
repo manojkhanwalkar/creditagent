@@ -173,6 +173,8 @@ test('code failures say whether to retry, wait or start again', () => {
     { message: 'Please wait 12 seconds.', restart: false, retryAfterSeconds: 12 });
   assert.deepEqual(otpFailure(429, {}),
     { message: 'Too many requests. Please wait and try again.', restart: false, retryAfterSeconds: 30 });
+  assert.deepEqual(otpFailure(503, { detail: 'We could not confirm that your code was sent.', retryAfterSeconds: 30 }),
+    { message: 'We could not confirm that your code was sent.', restart: false, retryAfterSeconds: 30 });
   assert.deepEqual(otpFailure(503, null),
     { message: 'Something went wrong. Please try again.', restart: false, retryAfterSeconds: 0 });
 });

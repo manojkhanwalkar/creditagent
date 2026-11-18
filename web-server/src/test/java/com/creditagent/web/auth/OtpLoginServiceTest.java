@@ -328,10 +328,66 @@ class OtpLoginServiceTest {
         assertThat(challenges.byId.get(id).attempts()).isZero();
     }
 
+    /** A 4xx the provider answers when it rejects a message outright (not throttling). */
+    static OtpDeliveryException rejected(OtpChannel channel) {
+        return new OtpDeliveryException(channel,
+                software.amazon.awssdk.services.sesv2.model.MessageRejectedException.builder().statusCode(400).build());
+    }
+
+    /** A failure after which the message may still have been delivered. */
+    static OtpDeliveryException uncertain(OtpChannel channel) {
+        return new OtpDeliveryException(channel,
+                software.amazon.awssdk.core.exception.ApiCallTimeoutException.create(5000));
+    }
+
     @Test
-    void aProviderFailureReachesTheCallerAndGivesTheSendBack() {
+    void aSendThatMayHaveBeenDeliveredStillCountsAndItsCodeStillWorks() {
         String id = otp.start("avery", PASSWORD).challengeId();
-        email.failure = new OtpDeliveryException(OtpChannel.EMAIL, new RuntimeException("SES down"));
+        // The provider takes the message, then the call times out.
+        OtpSenderThatDeliversThenFails late = new OtpSenderThatDeliversThenFails();
+        OtpLoginService service = new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, late, OtpChannel.SMS, sms),
+                OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+
+        assertThatThrownBy(() -> service.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class)
+                .satisfies(e -> {
+                    assertThat(((OtpDeliveryException) e).refused()).isFalse();
+                    assertThat(((OtpDeliveryException) e).retryAfter()).isEqualTo(Duration.ofSeconds(30));
+                });
+        // Still counted: the cooldown holds, so failures cannot be used to send without limit.
+        assertThat(challenges.byId.get(id).sends()).isEqualTo(1);
+        assertThat(challenges.userSends.values()).containsOnly(1);
+        assertThatThrownBy(() -> service.send(id, OtpChannel.SMS)).isInstanceOf(TooManyCodesException.class);
+        // And the code that did arrive works.
+        assertThat(service.verify(id, late.code).userId()).isEqualTo("avery");
+    }
+
+    @Test
+    void repeatedUncertainFailuresStillHitTheLimits() {
+        email.failure = uncertain(OtpChannel.EMAIL);
+        String id = otp.start("avery", PASSWORD).challengeId();
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> otp.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class);
+            clock.advance(Duration.ofSeconds(30));
+        }
+        assertThatThrownBy(() -> otp.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class)
+                .hasMessageContaining("most codes");
+    }
+
+    /** Delivers the message, then fails as a timed-out call would. */
+    static final class OtpSenderThatDeliversThenFails implements com.creditagent.web.auth.otp.OtpSender {
+        String code;
+
+        @Override
+        public void send(String destination, String code, Duration validFor) {
+            this.code = code;
+            throw uncertain(OtpChannel.EMAIL);
+        }
+    }
+
+    @Test
+    void aProviderRefusalReachesTheCallerAndGivesTheSendBack() {
+        String id = otp.start("avery", PASSWORD).challengeId();
+        email.failure = rejected(OtpChannel.EMAIL);
 
         assertThatThrownBy(() -> otp.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class);
         assertThat(auditLines).noneMatch(l -> l.contains("LOGIN_CODE_SENT"));
@@ -357,7 +413,7 @@ class OtpLoginServiceTest {
         OtpLoginService service = new OtpLoginService(auth, broken, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
         String id = service.start("avery", PASSWORD).challengeId();
-        email.failure = new OtpDeliveryException(OtpChannel.EMAIL, new RuntimeException("SES down"));
+        email.failure = rejected(OtpChannel.EMAIL);
 
         assertThatThrownBy(() -> service.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class)
                 .satisfies(e -> assertThat(e.getSuppressed()).hasSize(1));

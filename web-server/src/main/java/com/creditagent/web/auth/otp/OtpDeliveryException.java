@@ -1,11 +1,70 @@
 package com.creditagent.web.auth.otp;
 
-/** The email or SMS provider did not accept a sign-in code. The message never holds the code or destination. */
+import java.time.Duration;
+import software.amazon.awssdk.core.exception.SdkServiceException;
+
+/**
+ * The email or SMS provider did not confirm a sign-in code. The message never holds the code or
+ * destination.
+ *
+ * <p>{@link #refused()} is true only when the provider clearly rejected the message (a 4xx answer that
+ * is not throttling), so it was certainly not delivered. A timeout, a 5xx or throttling may still have
+ * delivered it: those sends keep counting against the limits, and their code stays valid.
+ */
 public class OtpDeliveryException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+    private final OtpChannel channel;
+    private final boolean refused;
+    private final transient Duration retryAfter;
+
     public OtpDeliveryException(OtpChannel channel, Throwable cause) {
+        this(channel, cause, clearlyRefused(cause), null);
+    }
+
+    private OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused, Duration retryAfter) {
         super("Could not send a sign-in code by " + channel, cause);
+        this.channel = channel;
+        this.refused = refused;
+        this.retryAfter = retryAfter;
+    }
+
+    /** The same failure, saying how long until another code may be asked for (the send still counts). */
+    public OtpDeliveryException withRetryAfter(Duration wait) {
+        return new OtpDeliveryException(channel, getCause(), refused, wait);
+    }
+
+    /** Error names that mean "slow down" or "over a limit", not "this message is invalid". */
+    private static final java.util.regex.Pattern THROTTLED =
+            java.util.regex.Pattern.compile("(?i)throttl|limit|toomany|slowdown");
+
+    /**
+     * A 4xx from the provider that is not throttling or a limit: the message was not accepted. SNS answers
+     * {@code Throttled}, which the SDK's own throttling check does not know, so names are checked too.
+     */
+    static boolean clearlyRefused(Throwable cause) {
+        if (!(cause instanceof SdkServiceException service)
+                || service.statusCode() < 400 || service.statusCode() >= 500 || service.isThrottlingException()) {
+            return false;
+        }
+        String code = service instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws
+                && aws.awsErrorDetails() != null && aws.awsErrorDetails().errorCode() != null
+                ? aws.awsErrorDetails().errorCode() : "";
+        return !THROTTLED.matcher(code).find() && !THROTTLED.matcher(cause.getClass().getSimpleName()).find();
+    }
+
+    public OtpChannel channel() {
+        return channel;
+    }
+
+    /** True when the message was certainly not delivered. */
+    public boolean refused() {
+        return refused;
+    }
+
+    /** Wait before another code may be asked for, when the send still counts; null when it does not. */
+    public Duration retryAfter() {
+        return retryAfter;
     }
 }
