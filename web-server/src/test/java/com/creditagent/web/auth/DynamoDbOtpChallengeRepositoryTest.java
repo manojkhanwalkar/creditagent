@@ -99,6 +99,25 @@ class DynamoDbOtpChallengeRepositoryTest {
     }
 
     @Test
+    void anUndeliveredSendIsGivenBack() {
+        repo.create(OtpChallenge.opened("c-3", "avery", NOW, NOW.plusSeconds(600)));
+        assertThat(repo.recordSend("c-3", OtpChannel.SMS, "h1", NOW, NOW.plusSeconds(300), NOW.minusSeconds(30), 3)).isTrue();
+        repo.releaseSend("c-3", "other"); // not the current code: untouched
+        assertThat(repo.find("c-3").orElseThrow().sends()).isEqualTo(1);
+        repo.releaseSend("c-3", "h1");
+        assertThat(repo.find("c-3").orElseThrow()).isEqualTo(OtpChallenge.opened("c-3", "avery", NOW, NOW.plusSeconds(600)));
+        // No cooldown left: a new send works at once.
+        assertThat(repo.recordSend("c-3", OtpChannel.EMAIL, "h2", NOW, NOW.plusSeconds(300), NOW.minusSeconds(30), 3)).isTrue();
+        repo.releaseSend("missing", "h");
+
+        assertThat(repo.reserveUserSend("dana", NOW, 1)).isTrue();
+        assertThat(repo.reserveUserSend("dana", NOW, 1)).isFalse();
+        repo.releaseUserSend("dana", NOW);
+        assertThat(repo.reserveUserSend("dana", NOW, 1)).isTrue();
+        repo.releaseUserSend("nobody", NOW); // no counter: no error, nothing created below zero
+    }
+
+    @Test
     void anAccountsHourlySendsAreCapped() {
         assertThat(repo.reserveUserSend("blake", NOW, 2)).isTrue();
         assertThat(repo.reserveUserSend("blake", NOW, 2)).isTrue();

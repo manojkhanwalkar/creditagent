@@ -23,13 +23,15 @@ class OAuthDisabledAndPropertiesTest {
 
     @Test
     void withoutAKeyEveryEndpointIs404AndNoTokenIsActive() {
-        OAuthController controller = new OAuthController(disabled, auth);
+        OAuthController controller = new OAuthController(disabled, auth, mock(com.creditagent.web.auth.OtpLoginService.class));
         assertThat(disabled.enabled()).isFalse();
         for (Runnable call : List.<Runnable>of(
                 controller::metadata,
                 () -> controller.register(new OAuthController.RegistrationRequest(List.of(), null)),
                 () -> controller.authorize(new LinkedMultiValueMap<>(), new MockHttpServletResponse()),
                 () -> controller.decide(new LinkedMultiValueMap<>()),
+                () -> controller.signIn(new OAuthController.SignInRequest("a", "b", "c")),
+                () -> controller.approve(java.util.Map.of()),
                 () -> controller.token(new LinkedMultiValueMap<>()),
                 () -> controller.revoke("t"))) {
             assertThatThrownBy(call::run).isInstanceOfSatisfying(ResponseStatusException.class,

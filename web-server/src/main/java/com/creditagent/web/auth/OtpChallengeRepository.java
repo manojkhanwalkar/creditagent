@@ -48,4 +48,13 @@ public interface OtpChallengeRepository {
      * @return false if the account's hourly limit is reached
      */
     boolean reserveUserSend(String userId, Instant now, int maxPerHour);
+
+    /**
+     * Undoes {@link #recordSend} for a code that was not delivered: removes the code and its send time
+     * and gives back one send, only while {@code codeHash} is still the current code.
+     */
+    void releaseSend(String challengeId, String codeHash);
+
+    /** Undoes one {@link #reserveUserSend} in the clock hour of {@code now}; never below zero. */
+    void releaseUserSend(String userId, Instant now);
 }

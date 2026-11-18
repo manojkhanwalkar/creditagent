@@ -15,16 +15,41 @@
     <p><strong id="client-name">An application</strong> is asking to use your CreditAgent account: read your
       credit score, credit report and advice, and lock or unlock your credit report.</p>
     <p class="muted" id="return-line" hidden>After you allow it, you go back to <code id="return-origin"></code>.</p>
-    <p class="error" id="sign-in-error" role="alert" hidden>User id, password or SSN is incorrect.</p>
+    <p class="error" id="sign-in-error" role="alert" hidden>Sign in again: allowing access needs your password, your
+      SSN and a one-time code.</p>
     <form id="consent-form" method="post" action="/oauth/authorize">
-      <label>User id <input name="userId" autocomplete="username" maxlength="64" required></label>
-      <label>Password <input type="password" name="password" autocomplete="current-password" maxlength="256" required></label>
-      <label>Your SSN <input name="ssn" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="123-45-6789" required></label>
-      <p class="muted">Your SSN confirms the account is yours and lets CreditAgent fetch your report. It is never
-        shown to the application. See our <a href="/privacy.html">privacy notice</a> and
-        <a href="/terms.html">terms of use</a>.</p>
+      <div id="credentials">
+        <label>User id <input id="user-id" name="userId" autocomplete="username" maxlength="64" required></label>
+        <label>Password <input id="password" type="password" name="password" autocomplete="current-password" maxlength="256" required></label>
+        <label>Your SSN <input id="ssn" name="ssn" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="123-45-6789" required></label>
+        <p class="muted">Your SSN confirms the account is yours and lets CreditAgent fetch your report. It is never
+          shown to the application. See our <a href="/privacy.html">privacy notice</a> and
+          <a href="/terms.html">terms of use</a>.</p>
+      </div>
+      <!-- Second step, shown after a correct password and SSN: a one-time code by email or text message. -->
+      <div id="code-step" hidden>
+        <h2 id="code-title" tabindex="-1">Confirm it's you</h2>
+        <fieldset>
+          <legend>Send my sign-in code by</legend>
+          <div class="choice">
+            <input id="otp-email" name="channel" type="radio" value="EMAIL" checked>
+            <label for="otp-email">Email to <span id="otp-email-destination"></span></label>
+          </div>
+          <div class="choice" id="otp-sms-choice">
+            <input id="otp-sms" name="channel" type="radio" value="SMS">
+            <label for="otp-sms">Text message to <span id="otp-sms-destination"></span></label>
+          </div>
+        </fieldset>
+        <button type="button" id="otp-send" class="secondary">Send code</button>
+        <p id="otp-status" class="muted" role="status"></p>
+        <label for="otp-code">6-digit code</label>
+        <input id="otp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" spellcheck="false"
+               aria-describedby="otp-code-help">
+        <p id="otp-code-help" class="muted">Codes expire after 5 minutes. Never share your code.</p>
+      </div>
+      <p class="error" id="step-error" role="alert" hidden></p>
       <div class="actions">
-        <button type="submit" name="decision" value="allow">Allow</button>
+        <button type="submit" name="decision" value="allow" id="allow">Allow</button>
         <button type="submit" name="decision" value="deny" class="secondary" formnovalidate>Deny</button>
       </div>
     </form>

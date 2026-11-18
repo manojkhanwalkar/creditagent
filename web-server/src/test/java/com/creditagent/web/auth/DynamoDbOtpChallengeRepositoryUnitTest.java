@@ -173,4 +173,32 @@ class DynamoDbOtpChallengeRepositoryUnitTest {
         doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
         assertThat(repo.reserveUserSend("avery", NOW, 10)).isFalse();
     }
+
+    @Test
+    void releaseSendUndoesOnlyTheCodeItWrote() {
+        doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        repo.releaseSend(ID, "hash");
+        ArgumentCaptor<UpdateItemRequest> sent = ArgumentCaptor.forClass(UpdateItemRequest.class);
+        verify(dynamo).updateItem(sent.capture());
+        assertThat(sent.getValue().conditionExpression()).isEqualTo("#hash = :hash AND #sends > :zero");
+        assertThat(sent.getValue().updateExpression()).isEqualTo("REMOVE #channel, #hash, #codeExp, #last ADD #sends :minus");
+        assertThat(sent.getValue().expressionAttributeValues()).containsEntry(":minus", n(-1));
+
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        repo.releaseSend(ID, "hash"); // replaced or gone: nothing to undo, no error
+    }
+
+    @Test
+    void releaseUserSendDecrementsThisHoursCounterButNotBelowZero() {
+        doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        repo.releaseUserSend("avery", NOW);
+        ArgumentCaptor<UpdateItemRequest> sent = ArgumentCaptor.forClass(UpdateItemRequest.class);
+        verify(dynamo).updateItem(sent.capture());
+        assertThat(sent.getValue().key().get("challengeId").s())
+                .isEqualTo(DynamoDbOtpChallengeRepository.userCounterKey("avery", NOW));
+        assertThat(sent.getValue().conditionExpression()).isEqualTo("#sends > :zero");
+
+        doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        repo.releaseUserSend("avery", NOW);
+    }
 }

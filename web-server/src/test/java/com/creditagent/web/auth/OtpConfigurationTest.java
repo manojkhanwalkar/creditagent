@@ -60,7 +60,12 @@ class OtpConfigurationTest {
                 auth("http://dynamodb:8000", true), null, null);
         assertThat(senders.values()).hasSize(2).allMatch(LoggingOtpSender.class::isInstance);
 
-        for (String awsEndpoint : new String[] {null, " "}) {
+        for (String local : new String[] {"http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"}) {
+            assertThat(OtpConfiguration.senders(otp(OtpProperties.Delivery.LOG, null, null), auth(local, false), null, null))
+                    .hasSize(2);
+        }
+        for (String awsEndpoint : new String[] {null, " ", "https://dynamodb.us-east-1.amazonaws.com",
+                "https://vpce-1a2b-dynamodb.us-east-1.vpce.amazonaws.com", "http://localhost.evil.example", "::not a uri"}) {
             assertThatThrownBy(() -> OtpConfiguration.senders(otp(OtpProperties.Delivery.LOG, null, null),
                     auth(awsEndpoint, false), null, null))
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("local development only");

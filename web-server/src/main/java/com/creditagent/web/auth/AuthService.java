@@ -254,6 +254,19 @@ public class AuthService {
         return Optional.of(new VerifiedOwner(found.userId(), found.ssnHash(), found.ssnLastFour()));
     }
 
+    /**
+     * The owner of {@code userId} if {@code ssn} is the account's own SSN, for the connector's consent
+     * form once the user has also passed the one-time code. The password was checked by
+     * {@link #verifyOwner} before the code was sent.
+     *
+     * @return empty if the account is gone or the SSN is not its own
+     */
+    public Optional<VerifiedOwner> ownerOf(String userId, Ssn ssn) {
+        return users.find(userId)
+                .filter(u -> ssn != null && ssnHasher.matches(ssn, u.ssnHash()))
+                .map(u -> new VerifiedOwner(u.userId(), u.ssnHash(), u.ssnLastFour()));
+    }
+
     /** Prefix of the rows that mark an authorization code as used; never a grant or login session id. */
     static final String USED_CODE_PREFIX = "code#";
 

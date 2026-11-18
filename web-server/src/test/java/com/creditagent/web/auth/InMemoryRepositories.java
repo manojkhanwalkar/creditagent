@@ -182,6 +182,21 @@ public final class InMemoryRepositories {
         }
 
         @Override
+        public synchronized void releaseSend(String challengeId, String codeHash) {
+            OtpChallenge c = byId.get(challengeId);
+            if (c != null && codeHash.equals(c.codeHash()) && c.sends() > 0) {
+                byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(), null,
+                        null, null, null, c.sends() - 1, c.attempts()));
+            }
+        }
+
+        @Override
+        public synchronized void releaseUserSend(String userId, Instant now) {
+            userSends.computeIfPresent(userId + "#" + now.truncatedTo(java.time.temporal.ChronoUnit.HOURS),
+                    (k, n) -> n > 0 ? n - 1 : 0);
+        }
+
+        @Override
         public synchronized boolean reserveUserSend(String userId, Instant now, int maxPerHour) {
             String key = userId + "#" + now.truncatedTo(java.time.temporal.ChronoUnit.HOURS);
             int sent = userSends.getOrDefault(key, 0);

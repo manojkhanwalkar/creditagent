@@ -137,7 +137,7 @@ public class DynamoDbOtpChallengeRepository implements OtpChallengeRepository {
     @Override
     public boolean reserveUserSend(String userId, Instant now, int maxPerHour) {
         Instant hour = now.truncatedTo(ChronoUnit.HOURS);
-        String counter = USER_COUNTER_PREFIX + sha256(userId) + "#" + hour.getEpochSecond();
+        String counter = userCounterKey(userId, now);
         try {
             dynamo.updateItem(r -> r.tableName(table)
                     .key(Map.of(KEY, s(counter)))
@@ -152,6 +152,39 @@ public class DynamoDbOtpChallengeRepository implements OtpChallengeRepository {
         } catch (ConditionalCheckFailedException limit) {
             return false;
         }
+    }
+
+    @Override
+    public void releaseSend(String challengeId, String codeHash) {
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(key(challengeId))))
+                    .updateExpression("REMOVE #channel, #hash, #codeExp, #last ADD #sends :minus")
+                    .conditionExpression("#hash = :hash AND #sends > :zero")
+                    .expressionAttributeNames(Map.of("#channel", "channel", "#hash", "codeHash",
+                            "#codeExp", "codeExpiresAt", "#last", "lastSentAt", "#sends", "sends"))
+                    .expressionAttributeValues(Map.of(":hash", s(codeHash), ":minus", n(-1), ":zero", n(0))));
+        } catch (ConditionalCheckFailedException changed) {
+            // Gone, or another send replaced the code: nothing of ours to undo.
+        }
+    }
+
+    @Override
+    public void releaseUserSend(String userId, Instant now) {
+        try {
+            dynamo.updateItem(r -> r.tableName(table)
+                    .key(Map.of(KEY, s(userCounterKey(userId, now))))
+                    .updateExpression("ADD #sends :minus")
+                    .conditionExpression("#sends > :zero")
+                    .expressionAttributeNames(Map.of("#sends", "sends"))
+                    .expressionAttributeValues(Map.of(":minus", n(-1), ":zero", n(0))));
+        } catch (ConditionalCheckFailedException none) {
+            // Already at zero or expired.
+        }
+    }
+
+    static String userCounterKey(String userId, Instant now) {
+        return USER_COUNTER_PREFIX + sha256(userId) + "#" + now.truncatedTo(ChronoUnit.HOURS).getEpochSecond();
     }
 
     /** The stored key of a challenge id. */

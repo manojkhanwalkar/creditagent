@@ -102,15 +102,28 @@ class OtpConfiguration {
         return senders;
     }
 
+    /** DynamoDB hosts that mean "local development": this machine, or the compose service. */
+    static final java.util.Set<String> LOCAL_DYNAMODB_HOSTS =
+            java.util.Set.of("localhost", "127.0.0.1", "[::1]", "::1", "dynamodb", "dynamodb-local");
+
     /**
      * Codes in the log would let anyone who reads it sign in, so log delivery is allowed only against a
-     * local DynamoDB (an endpoint override), never against AWS.
+     * DynamoDB on this machine or in compose, never against AWS (an AWS, VPC or FIPS endpoint override
+     * included).
      */
     static void requireLocal(AuthProperties auth) {
         String endpoint = auth.dynamodb().endpoint();
-        if (endpoint == null || endpoint.isBlank()) {
-            throw new IllegalStateException(
-                    "OTP_DELIVERY=log is for local development only and needs a local DYNAMODB_ENDPOINT");
+        String host = null;
+        if (endpoint != null && !endpoint.isBlank()) {
+            try {
+                host = URI.create(endpoint.strip()).getHost();
+            } catch (IllegalArgumentException malformed) {
+                host = null;
+            }
+        }
+        if (host == null || !LOCAL_DYNAMODB_HOSTS.contains(host.toLowerCase(java.util.Locale.ROOT))) {
+            throw new IllegalStateException("OTP_DELIVERY=log is for local development only and needs DYNAMODB_ENDPOINT"
+                    + " on localhost or the compose dynamodb service");
         }
     }
 

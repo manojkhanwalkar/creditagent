@@ -51,7 +51,7 @@ public final class AuthExceptions {
     }
 
     /** 400: a sign-in code request that cannot be acted on (unknown channel, malformed code, no code sent yet). */
-    static final class InvalidOtpRequestException extends RuntimeException {
+    public static final class InvalidOtpRequestException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
         InvalidOtpRequestException(String message) {
@@ -63,7 +63,7 @@ public final class AuthExceptions {
      * 401: the code step failed. {@code restart}: the sign-in is over (expired, used up or unknown) and
      * the user must enter their password again; otherwise they may try again.
      */
-    static final class OtpFailedException extends RuntimeException {
+    public static final class OtpFailedException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
         private final boolean restart;
@@ -79,17 +79,17 @@ public final class AuthExceptions {
             return new OtpFailedException(message, true, null);
         }
 
-        boolean restart() {
+        public boolean restart() {
             return restart;
         }
 
-        Integer attemptsLeft() {
+        public Integer attemptsLeft() {
             return attemptsLeft;
         }
     }
 
     /** 429: no more codes for now; {@code restart} when this sign-in can send no more at all. */
-    static final class TooManyCodesException extends RuntimeException {
+    public static final class TooManyCodesException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
         private final java.time.Duration retryAfter;
@@ -101,11 +101,11 @@ public final class AuthExceptions {
             this.restart = restart;
         }
 
-        java.time.Duration retryAfter() {
+        public java.time.Duration retryAfter() {
             return retryAfter;
         }
 
-        boolean restart() {
+        public boolean restart() {
             return restart;
         }
     }

@@ -26,6 +26,8 @@ class JsonSizeLimitCoverageTest {
             "/internal/v1/connector/report-status",
             "/oauth/register",
             "/oauth/authorize",
+            "/oauth/authorize/sign-in",
+            "/oauth/authorize/approve",
             "/oauth/token",
             "/oauth/revoke");
 

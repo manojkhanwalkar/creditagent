@@ -1,6 +1,6 @@
 import { bandFor, looksLikeSsn, ringDash, scoreDescription } from './score-ring.js';
 import {
-  authHeaders, checkDeletion, checkOtpCode, checkRegistration, codeSentMessage, createSession, idleWarningDelayMs,
+  authHeaders, checkDeletion, checkOtpCode, checkRegistration, codeSentMessage, createSession, resendWaitMessage, idleWarningDelayMs,
   lockView, nextTab, otpChoices, otpFailure, registrationFailure, ssnHint,
 } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
@@ -17,10 +17,13 @@ const $ = (id) => document.getElementById(id);
 let otpChallenge = null;
 let otpResendTimer = null;
 let loginAfterRegistration = false;
+/** The last "we sent a code" line, kept when the resend wait ends. */
+let sentMessage = '';
 
 /** Leaves the code step, if it is showing, and forgets its challenge. */
 function resetCodeStep() {
   otpChallenge = null;
+  sentMessage = '';
   clearTimeout(otpResendTimer);
   const form = $('otp-form');
   form.reset();
@@ -307,7 +310,12 @@ function showPasswordStep(message) {
 function holdSend(seconds) {
   clearTimeout(otpResendTimer);
   otpSend.disabled = seconds > 0;
-  if (seconds > 0) otpResendTimer = setTimeout(() => { otpSend.disabled = false; }, seconds * 1000);
+  if (seconds > 0) {
+    otpResendTimer = setTimeout(() => {
+      otpSend.disabled = false;
+      $('otp-status').textContent = [sentMessage, resendWaitMessage(0)].filter(Boolean).join(' ');
+    }, seconds * 1000);
+  }
 }
 
 /** Step 3 succeeded: the answer carries the token, offers and alerts, as login did before. */
@@ -358,9 +366,12 @@ otpSend.addEventListener('click', async () => {
       }
       showFormError(error, failure.message);
       holdSend(failure.retryAfterSeconds);
+      if (failure.retryAfterSeconds > 0) $('otp-status').textContent = resendWaitMessage(failure.retryAfterSeconds);
+      $('otp-code').focus(); // the button just pressed is disabled: keep focus on a usable control
       return;
     }
-    $('otp-status').textContent = codeSentMessage(data);
+    sentMessage = codeSentMessage(data);
+    $('otp-status').textContent = sentMessage;
     otpSend.textContent = 'Send a new code';
     holdSend(Number(data.resendAfterSeconds) || 0);
     $('otp-code').focus();

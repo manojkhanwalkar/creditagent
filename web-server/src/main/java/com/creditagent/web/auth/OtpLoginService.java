@@ -108,6 +108,23 @@ public class OtpLoginService {
      */
     public Challenge start(String userId, String password) {
         User user = auth.checkCredentials(userId, password);
+        log.info("User {} passed the password step", user.userId());
+        return open(user);
+    }
+
+    /**
+     * Step 1 for a sign-in whose first factor was checked elsewhere: the Claude connector's consent
+     * form, which checks the password and the SSN ({@link AuthService#verifyOwner}).
+     *
+     * @throws AuthExceptions.UnauthenticatedException if the account no longer exists
+     */
+    public Challenge startFor(String verifiedUserId) {
+        User user = auth.account(verifiedUserId)
+                .orElseThrow(() -> new AuthExceptions.UnauthenticatedException(AuthService.BAD_CREDENTIALS));
+        return open(user);
+    }
+
+    private Challenge open(User user) {
         Instant now = clock.instant();
         String challengeId = randomId();
         challenges.create(OtpChallenge.opened(challengeId, user.userId(), now, now.plus(limits.challengeTtl())));
@@ -116,7 +133,6 @@ public class OtpLoginService {
         if (user.mobilePhone() != null) {
             channels.add(new ChannelOption(OtpChannel.SMS, OtpChannel.SMS.mask(user.mobilePhone())));
         }
-        log.info("User {} passed the password step", user.userId());
         return new Challenge(challengeId, List.copyOf(channels), limits.challengeTtl());
     }
 
@@ -147,19 +163,29 @@ public class OtpLoginService {
                 throw tooSoon(Duration.between(now, nextAllowed));
             }
         }
+        String code = newCode();
+        String codeHash = hash(challengeId, code);
+        Instant codeExpiresAt = now.plus(limits.codeTtl());
+        if (!challenges.recordSend(challengeId, channel, codeHash, now, codeExpiresAt,
+                now.minus(limits.resendCooldown()), limits.maxSends())) {
+            // Changed since it was read: gone or expired means start again; otherwise a parallel send won.
+            openChallenge(challengeId, now);
+            throw tooSoon(limits.resendCooldown());
+        }
+        // Counted only once this sign-in's own limits passed, so a refused send costs no hourly quota.
         if (!challenges.reserveUserSend(user.userId(), now, limits.maxSendsPerUserPerHour())) {
+            release(challengeId, codeHash, null, now, null);
             log.warn("User {} reached the hourly sign-in code limit", user.userId());
             throw new TooManyCodesException("Too many sign-in codes were sent to this account. Please try again later.",
                     Duration.between(now, now.truncatedTo(ChronoUnit.HOURS).plus(Duration.ofHours(1))), true);
         }
-        String code = newCode();
-        Instant codeExpiresAt = now.plus(limits.codeTtl());
-        if (!challenges.recordSend(challengeId, channel, hash(challengeId, code), now, codeExpiresAt,
-                now.minus(limits.resendCooldown()), limits.maxSends())) {
-            // Another request for this sign-in changed it first.
-            throw tooSoon(limits.resendCooldown());
+        try {
+            senders.get(channel).send(destination, code, limits.codeTtl());
+        } catch (RuntimeException e) {
+            // Not delivered: give the send back, so "try again or choose the other option" works at once.
+            release(challengeId, codeHash, user.userId(), now, e);
+            throw e;
         }
-        senders.get(channel).send(destination, code, limits.codeTtl());
         audit.record(AuditLog.Event.LOGIN_CODE_SENT, "user:" + user.userId(), "user:" + user.userId(), "OK",
                 Map.of("channel", channel.name()));
         log.info("Sent a sign-in code to user {} by {}", user.userId(), channel);
@@ -173,6 +199,18 @@ public class OtpLoginService {
      * @throws OtpFailedException if the code is wrong or expired, or the sign-in is over
      */
     public AuthService.LoginResult verify(String challengeId, String code) {
+        return auth.openSession(verifyCode(challengeId, code));
+    }
+
+    /**
+     * Step 3 without a web session: checks the code and uses it up. The connector's consent form
+     * calls this, then issues an authorization code instead of a login session.
+     *
+     * @return the id of the user who passed both factors
+     * @throws InvalidOtpRequestException if the code is not six digits or none was sent yet
+     * @throws OtpFailedException if the code is wrong or expired, or the sign-in is over
+     */
+    public String verifyCode(String challengeId, String code) {
         Instant now = clock.instant();
         OtpChallenge challenge = openChallenge(challengeId, now);
         if (challenge.codeHash() == null) {
@@ -206,7 +244,25 @@ public class OtpLoginService {
             // Used by a parallel request, or replaced by a resend, since it was read.
             throw OtpFailedException.restart(SIGN_IN_EXPIRED);
         }
-        return auth.openSession(challenge.userId());
+        return challenge.userId();
+    }
+
+    /**
+     * Undoes a recorded send (only while its code is still the current one) and, with {@code userId},
+     * its hourly count. A failure here is logged and attached to {@code cause}; the TTL clears the rest.
+     */
+    private void release(String challengeId, String codeHash, String userId, Instant now, RuntimeException cause) {
+        try {
+            challenges.releaseSend(challengeId, codeHash);
+            if (userId != null) {
+                challenges.releaseUserSend(userId, now);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not release an unsent sign-in code: {}", com.creditagent.common.SafeLogging.describe(e));
+            if (cause != null) {
+                cause.addSuppressed(e);
+            }
+        }
     }
 
     private OtpChallenge openChallenge(String challengeId, Instant now) {

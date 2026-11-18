@@ -17,7 +17,7 @@
       <li><strong>Account details:</strong> your user id, email address, ZIP code and a password (stored only as a
         one-way hash).</li>
       <li><strong>Mobile number:</strong> used only to text you one-time sign-in codes, never for marketing.</li>
-      <li><strong>Sign-in codes:</strong> each one-time code is kept only as a keyed hash, for at most 10 minutes.</li>
+      <li><strong>Sign-in codes:</strong> each one-time code is kept only as a keyed hash. It stops working after 5 minutes, and the record of the sign-in is deleted when you finish it or, if you don't, automatically within a few days.</li>
       <li><strong>Your Social Security number:</strong> read by our identity provider from the photo of your card. We
         keep only a keyed hash of it and its last four digits; the photo is not stored.</li>
       <li><strong>Credit information:</strong> your reports from the three credit bureaus, stored encrypted, and the

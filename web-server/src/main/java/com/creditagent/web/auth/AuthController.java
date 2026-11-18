@@ -221,37 +221,24 @@ class AuthController {
     }
 
     @ExceptionHandler(InvalidOtpRequestException.class)
-    ProblemDetail invalidOtp(InvalidOtpRequestException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+    ResponseEntity<ProblemDetail> invalidOtp(InvalidOtpRequestException e) {
+        return OtpProblems.invalid(e);
     }
 
     /** 401; {@code restart: true} sends the user back to the password, {@code attemptsLeft} when known. */
     @ExceptionHandler(OtpFailedException.class)
     ResponseEntity<ProblemDetail> otpFailed(OtpFailedException e) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage());
-        problem.setProperty("restart", e.restart());
-        if (e.attemptsLeft() != null) {
-            problem.setProperty("attemptsLeft", e.attemptsLeft());
-        }
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).header(org.springframework.http.HttpHeaders.WWW_AUTHENTICATE, "Bearer")
-                .body(problem);
+        return OtpProblems.failed(e);
     }
 
     @ExceptionHandler(TooManyCodesException.class)
     ResponseEntity<ProblemDetail> tooManyCodes(TooManyCodesException e) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
-        problem.setProperty("restart", e.restart());
-        long seconds = Math.max(1, e.retryAfter().toSeconds());
-        problem.setProperty("retryAfterSeconds", seconds);
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, Long.toString(seconds)).body(problem);
+        return OtpProblems.tooMany(e);
     }
 
     @ExceptionHandler(OtpDeliveryException.class)
-    ProblemDetail otpNotSent(OtpDeliveryException e) {
-        log.warn("Sign-in code not sent: {}", SafeLogging.describe(e));
-        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
-                "We could not send your code just now. Please try again, or choose the other option.");
+    ResponseEntity<ProblemDetail> otpNotSent(OtpDeliveryException e) {
+        return OtpProblems.notSent(e);
     }
 
     @ExceptionHandler(UserAlreadyExistsException.class)

@@ -214,3 +214,10 @@ export function otpFailure(status, body) {
   if (status === 429) return { message: 'Too many requests. Please wait and try again.', restart, retryAfterSeconds };
   return { message: 'Something went wrong. Please try again.', restart, retryAfterSeconds };
 }
+
+/** What the status line says while "Send code" waits, and once it is usable again. */
+export function resendWaitMessage(seconds) {
+  const wait = Math.max(0, Math.ceil(Number(seconds) || 0));
+  if (wait === 0) return 'You can ask for a new code now.';
+  return `You can ask for a new code in ${wait} ${wait === 1 ? 'second' : 'seconds'}.`;
+}

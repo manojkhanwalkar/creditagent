@@ -263,6 +263,7 @@ class OtpLoginServiceTest {
 
         assertThatThrownBy(() -> raced.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class);
         assertThat(email.sent).isEmpty();
+        assertThat(racing.userSends).isEmpty(); // a refused send costs no hourly quota
     }
 
     @Test
@@ -328,12 +329,82 @@ class OtpLoginServiceTest {
     }
 
     @Test
-    void aProviderFailureReachesTheCaller() {
+    void aProviderFailureReachesTheCallerAndGivesTheSendBack() {
         String id = otp.start("avery", PASSWORD).challengeId();
         email.failure = new OtpDeliveryException(OtpChannel.EMAIL, new RuntimeException("SES down"));
 
         assertThatThrownBy(() -> otp.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class);
         assertThat(auditLines).noneMatch(l -> l.contains("LOGIN_CODE_SENT"));
+        OtpChallenge after = challenges.byId.get(id);
+        assertThat(after.sends()).isZero();
+        assertThat(after.codeHash()).isNull();
+        assertThat(after.lastSentAt()).isNull();
+        assertThat(challenges.userSends.values()).containsOnly(0);
+
+        // "Try again, or choose the other option": at once, no cooldown.
+        otp.send(id, OtpChannel.SMS);
+        assertThat(otp.verify(id, sms.lastCode()).userId()).isEqualTo("avery");
+    }
+
+    @Test
+    void aReleaseThatFailsIsAttachedToTheDeliveryError() {
+        InMemoryRepositories.OtpChallenges broken = new InMemoryRepositories.OtpChallenges() {
+            @Override
+            public synchronized void releaseSend(String challengeId, String codeHash) {
+                throw new IllegalStateException("DynamoDB down");
+            }
+        };
+        OtpLoginService service = new OtpLoginService(auth, broken, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+                OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+        String id = service.start("avery", PASSWORD).challengeId();
+        email.failure = new OtpDeliveryException(OtpChannel.EMAIL, new RuntimeException("SES down"));
+
+        assertThatThrownBy(() -> service.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class)
+                .satisfies(e -> assertThat(e.getSuppressed()).hasSize(1));
+    }
+
+    @Test
+    void theHourlyLimitRefusalLeavesTheSignInAsItWas() {
+        OtpLoginService strict = service(new OtpLoginService.Limits(
+                Duration.ofMinutes(5), Duration.ofMinutes(10), 5, 3, Duration.ofSeconds(30), 1));
+        strict.send(strict.start("avery", PASSWORD).challengeId(), OtpChannel.EMAIL);
+        String id = strict.start("avery", PASSWORD).challengeId();
+
+        assertThatThrownBy(() -> strict.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class);
+        assertThat(challenges.byId.get(id).sends()).isZero();
+        assertThat(challenges.byId.get(id).codeHash()).isNull();
+    }
+
+    @Test
+    void aSignInThatExpiresWhileACodeIsBeingSentMustStartAgain() {
+        String id = otp.start("avery", PASSWORD).challengeId();
+        InMemoryRepositories.OtpChallenges expiring = new InMemoryRepositories.OtpChallenges() {
+            @Override
+            public synchronized boolean recordSend(String challengeId, OtpChannel channel, String codeHash, Instant now,
+                    Instant codeExpiresAt, Instant notSentSince, int maxSends) {
+                byId.remove(challengeId); // swept between the read and the write
+                return false;
+            }
+        };
+        expiring.byId.putAll(challenges.byId);
+        OtpLoginService raced = new OtpLoginService(auth, expiring, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+                OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+
+        assertThatThrownBy(() -> raced.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpFailedException.class)
+                .satisfies(e -> assertThat(((OtpFailedException) e).restart()).isTrue());
+        assertThat(expiring.userSends).isEmpty();
+        assertThat(email.sent).isEmpty();
+    }
+
+    @Test
+    void theConnectorStartsASignInForAnOwnerItAlreadyCheckedAndGetsNoSession() {
+        OtpLoginService.Challenge challenge = otp.startFor("avery");
+        assertThat(challenge.channels()).hasSize(2);
+        otp.send(challenge.challengeId(), OtpChannel.EMAIL);
+
+        assertThat(otp.verifyCode(challenge.challengeId(), email.lastCode())).isEqualTo("avery");
+        assertThat(sessions.byId).isEmpty();
+        assertThatThrownBy(() -> otp.startFor("nobody")).isInstanceOf(UnauthenticatedException.class);
     }
 
     @Test

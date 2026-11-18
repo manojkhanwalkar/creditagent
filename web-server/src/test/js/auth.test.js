@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   AUTHORIZATION_REQUIRED, checkDeletion, idleWarningDelayMs, nextTab,
   authHeaders, checkCardPhoto, checkRegistration, createSession, lockView, MAX_CARD_BYTES, registrationFailure, ssnHint,
-  checkMobilePhone, checkOtpCode, codeSentMessage, otpChoices, otpFailure,
+  checkMobilePhone, checkOtpCode, codeSentMessage, otpChoices, otpFailure, resendWaitMessage,
 } from '../../main/resources/static/js/auth.js';
 
 const valid = {
@@ -175,4 +175,12 @@ test('code failures say whether to retry, wait or start again', () => {
     { message: 'Too many requests. Please wait and try again.', restart: false, retryAfterSeconds: 30 });
   assert.deepEqual(otpFailure(503, null),
     { message: 'Something went wrong. Please try again.', restart: false, retryAfterSeconds: 0 });
+});
+
+test('the resend wait is spelled out, and its end announced', () => {
+  assert.equal(resendWaitMessage(30), 'You can ask for a new code in 30 seconds.');
+  assert.equal(resendWaitMessage(1), 'You can ask for a new code in 1 second.');
+  assert.equal(resendWaitMessage(0.2), 'You can ask for a new code in 1 second.');
+  assert.equal(resendWaitMessage(0), 'You can ask for a new code now.');
+  assert.equal(resendWaitMessage(undefined), 'You can ask for a new code now.');
 });
