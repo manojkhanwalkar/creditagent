@@ -303,7 +303,8 @@ function showPasswordStep(message) {
   loginAfterRegistration = false;
   selectTab(false);
   showFormError($('login-error'), message || '');
-  $('login-user').focus();
+  // The user id is still filled in: go straight to the password.
+  $($('login-user').value ? 'login-password' : 'login-user').focus();
 }
 
 /** Keeps "Send code" disabled for `seconds` (the server's resend wait). */
@@ -322,6 +323,7 @@ function holdSend(seconds) {
 function finishLogin(data) {
   const afterRegistration = loginAfterRegistration;
   resetCodeStep();
+  loginForm.reset();
   loginAfterRegistration = false;
   session.save(data.token, data.userId, data.ssnMasked);
   if (data.idleTimeoutSeconds) {
@@ -341,7 +343,8 @@ loginForm.addEventListener('submit', async (event) => {
   button.disabled = true;
   try {
     if (await logIn($('login-user').value.trim(), $('login-password').value, error)) {
-      loginForm.reset();
+      // Keep the user id: if the code step has to start over, only the password is asked again (WCAG 3.3.7).
+      $('login-password').value = '';
     }
   } catch {
     showFormError(error, 'Could not reach the server. Check your connection and try again.');
