@@ -58,6 +58,7 @@ class AuthControllerTest {
                 .param("userId", userId)
                 .param("password", PASSWORD)
                 .param("email", email)
+                .param("mobilePhone", "(206) 555-0100")
                 .param("zip", "98101")
                 .param("authorize", "true");
     }
@@ -74,6 +75,8 @@ class AuthControllerTest {
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
         static final InMemoryRepositories.Users USERS = new InMemoryRepositories.Users();
         static final FakeIdentityVerifier KYC = new FakeIdentityVerifier();
+        static final RecordingOtpSender OTP = new RecordingOtpSender();
+        static final InMemoryRepositories.OtpChallenges CHALLENGES = new InMemoryRepositories.OtpChallenges();
 
         @Bean
         AuthService authService() {
@@ -81,6 +84,11 @@ class AuthControllerTest {
                     USERS, SESSIONS, new BCryptPasswordEncoder(4), new SsnHasher(TestSecrets.of("ssn")), KYC,
                     new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), CLOCK),
                     Duration.ofMinutes(5), CLOCK);
+        }
+
+        @Bean
+        OtpLoginService otpLoginService(AuthService auth) {
+            return OtpTesting.service(auth, CHALLENGES, OTP, CLOCK, new com.creditagent.common.AuditLog());
         }
     }
 
@@ -108,8 +116,7 @@ class AuthControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.detail").value("An account already exists for that email address."));
 
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"avery\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(OtpTesting.loginRequest(mvc, Wiring.OTP, "avery", PASSWORD))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.idleTimeoutSeconds").value(300))
@@ -165,8 +172,7 @@ class AuthControllerTest {
         // An ssn field is ignored: the account gets the SSN on the card, not the one typed.
         mvc.perform(register("frank", "567-89-0123").param("ssn", "123-45-6789"))
                 .andExpect(status().isCreated());
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"frank\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(OtpTesting.loginRequest(mvc, Wiring.OTP, "frank", PASSWORD))
                 .andExpect(jsonPath("$.ssnMasked").value("***-**-0123"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(login).doesNotContain("6789");
@@ -183,7 +189,7 @@ class AuthControllerTest {
         for (String value : new String[] {null, "false", "on-no"}) {
             MockMultipartHttpServletRequestBuilder form = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
                     .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("678-90-1236")))
-                    .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("zip", "98101");
+                    .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("mobilePhone", "2065550100").param("zip", "98101");
             if (value != null) {
                 form.param("authorize", value);
             }
@@ -191,7 +197,7 @@ class AuthControllerTest {
         }
         MockMultipartHttpServletRequestBuilder declined = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
                 .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("678-90-1236")))
-                .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("zip", "98101")
+                .param("userId", "ivy").param("password", PASSWORD).param("email", "ivy@example.com").param("mobilePhone", "2065550100").param("zip", "98101")
                 .param("authorize", "false");
         mvc.perform(declined).andExpect(jsonPath("$.detail").value(AuthController.AUTHORIZATION_REQUIRED));
         assertThat(Wiring.USERS.find("ivy")).isEmpty();
@@ -245,8 +251,7 @@ class AuthControllerTest {
     @Test
     void sessionTimesOutAfterFiveIdleMinutes() throws Exception {
         mvc.perform(register("casey", "345-67-8901")).andExpect(status().isCreated());
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"casey\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(OtpTesting.loginRequest(mvc, Wiring.OTP, "casey", PASSWORD))
                 .andReturn().getResponse().getContentAsString();
         String bearer = "Bearer " + JsonPath.read(login, "$.token");
 
@@ -278,8 +283,7 @@ class AuthControllerTest {
     @Test
     void aUserCanLockAndUnlockTheirReport() throws Exception {
         mvc.perform(register("lena", "678-90-1234")).andExpect(status().isCreated());
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"lena\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(OtpTesting.loginRequest(mvc, Wiring.OTP, "lena", PASSWORD))
                 .andReturn().getResponse().getContentAsString();
         String bearer = "Bearer " + JsonPath.read(login, "$.token");
 
@@ -323,8 +327,7 @@ class AuthControllerTest {
         // The token and session are still valid, so the filter lets the call through; the
         // controller's own 401 (AuthErrorHandling) must answer it with the same challenge.
         mvc.perform(register("mona", "789-01-2345")).andExpect(status().isCreated());
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"mona\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(OtpTesting.loginRequest(mvc, Wiring.OTP, "mona", PASSWORD))
                 .andReturn().getResponse().getContentAsString();
         String bearer = "Bearer " + JsonPath.read(login, "$.token");
         Wiring.USERS.byId.remove("mona");
@@ -338,5 +341,148 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("WWW-Authenticate", "Bearer"))
                 .andExpect(jsonPath("$.detail").value(Matchers.containsString("ended")));
+    }
+
+    // ---------------------------------------------------------------- one-time sign-in codes
+
+    /** The password step for {@code userId}; returns the challenge id. */
+    String passwordStep(String userId) throws Exception {
+        String body = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"" + userId + "\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").doesNotExist())
+                .andExpect(jsonPath("$.expiresInSeconds").value(600))
+                .andExpect(jsonPath("$.channels[0].channel").value("EMAIL"))
+                .andExpect(jsonPath("$.channels[0].destination").value(userId.charAt(0) + "***@example.com"))
+                .andExpect(jsonPath("$.channels[1].channel").value("SMS"))
+                .andExpect(jsonPath("$.channels[1].destination").value("***-***-0100"))
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("2065550100").doesNotContain(userId + "@");
+        return JsonPath.read(body, "$.challengeId");
+    }
+
+    org.springframework.test.web.servlet.ResultActions send(String challengeId, String channel) throws Exception {
+        return mvc.perform(post("/api/v1/auth/login/otp").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"challengeId\":\"" + challengeId + "\",\"channel\":\"" + channel + "\"}"));
+    }
+
+    org.springframework.test.web.servlet.ResultActions verifyCode(String challengeId, String code) throws Exception {
+        return mvc.perform(post("/api/v1/auth/login/verify").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"challengeId\":\"" + challengeId + "\",\"code\":\"" + code + "\"}"));
+    }
+
+    @Test
+    void thePasswordAloneGivesNoTokenAndTheTextedCodeDoes() throws Exception {
+        mvc.perform(register("olive", "890-12-3456")).andExpect(status().isCreated());
+        assertThat(Wiring.USERS.find("olive").orElseThrow().mobilePhone()).isEqualTo("+12065550100");
+        String challenge = passwordStep("olive");
+
+        // No token: the score API is still closed.
+        send(challenge, "sms")
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.channel").value("SMS"))
+                .andExpect(jsonPath("$.destination").value("***-***-0100"))
+                .andExpect(jsonPath("$.codeExpiresInSeconds").value(300))
+                .andExpect(jsonPath("$.resendAfterSeconds").value(30));
+        assertThat(Wiring.OTP.last().destination()).isEqualTo("+12065550100");
+
+        String login = verifyCode(challenge, Wiring.OTP.lastCode())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.userId").value("olive"))
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andReturn().getResponse().getContentAsString();
+        mvc.perform(get("/api/v1/auth/session").header("Authorization", "Bearer " + JsonPath.read(login, "$.token")))
+                .andExpect(status().isOk());
+        // The code works once.
+        verifyCode(challenge, Wiring.OTP.lastCode())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.restart").value(true));
+    }
+
+    @Test
+    void wrongCodesSayHowManyTriesAreLeft() throws Exception {
+        mvc.perform(register("piper", "456-12-3456")).andExpect(status().isCreated());
+        String challenge = passwordStep("piper");
+        send(challenge, "EMAIL").andExpect(status().isAccepted());
+        String wrong = Wiring.OTP.lastCode().equals("000000") ? "111111" : "000000";
+
+        verifyCode(challenge, wrong)
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", "Bearer"))
+                .andExpect(jsonPath("$.detail").value(OtpLoginService.WRONG_CODE))
+                .andExpect(jsonPath("$.restart").value(false))
+                .andExpect(jsonPath("$.attemptsLeft").value(4))
+                .andExpect(jsonPath("$.token").doesNotExist());
+        verifyCode(challenge, "12ab")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Enter the 6-digit code."));
+    }
+
+    @Test
+    void resendsTooSoonGet429WithRetryAfter() throws Exception {
+        mvc.perform(register("quinn", "012-34-5678")).andExpect(status().isCreated());
+        String challenge = passwordStep("quinn");
+        send(challenge, "EMAIL").andExpect(status().isAccepted());
+
+        send(challenge, "SMS")
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "30"))
+                .andExpect(jsonPath("$.retryAfterSeconds").value(30))
+                .andExpect(jsonPath("$.restart").value(false));
+    }
+
+    @Test
+    void badChannelsUnknownChallengesAndProviderOutagesAreReported() throws Exception {
+        mvc.perform(register("rhea", "123-45-6780")).andExpect(status().isCreated());
+        String challenge = passwordStep("rhea");
+
+        send(challenge, "carrier-pigeon")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Choose email or text message."));
+        send("not-a-challenge", "EMAIL")
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.restart").value(true));
+        verifyCode(challenge, "123456")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Choose where to send your code first."));
+        mvc.perform(post("/api/v1/auth/login/otp").contentType(MediaType.APPLICATION_JSON).content("{\"channel\":\"EMAIL\"}"))
+                .andExpect(status().isBadRequest());
+
+        Wiring.OTP.failure = OtpLoginServiceTest.rejected(com.creditagent.web.auth.otp.OtpChannel.EMAIL);
+        try {
+            send(challenge, "EMAIL")
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.detail").value(Matchers.containsString("could not send your code")))
+                    .andExpect(jsonPath("$.retryAfterSeconds").doesNotExist())
+                    .andExpect(header().doesNotExist("Retry-After"));
+            // Refused, so given back: the other channel works at once. Then a failure that may have
+            // delivered counts, and says when to ask again.
+            Wiring.OTP.failure = OtpLoginServiceTest.uncertain(com.creditagent.web.auth.otp.OtpChannel.SMS);
+            send(challenge, "SMS")
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(jsonPath("$.detail").value(Matchers.containsString("could not confirm")))
+                    .andExpect(jsonPath("$.retryAfterSeconds").value(30))
+                    .andExpect(header().string("Retry-After", "30"))
+                    .andExpect(content().string(Matchers.not(Matchers.containsString("5000"))));
+        } finally {
+            Wiring.OTP.failure = null;
+        }
+    }
+
+    @Test
+    void registrationNeedsAValidMobileNumber() throws Exception {
+        mvc.perform(register("sage", "234-56-7801").param("mobilePhone", ""))
+                .andExpect(status().isBadRequest());
+        mvc.perform(register("sage", "234-56-7801").param("mobilePhone", "555-0100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(Matchers.containsString("mobile number")));
+        MockMultipartHttpServletRequestBuilder noPhone = (MockMultipartHttpServletRequestBuilder) multipart("/api/v1/auth/register")
+                .file(new MockMultipartFile("ssnCard", "card.png", MediaType.IMAGE_PNG_VALUE, FakeIdentityVerifier.card("234-56-7801")))
+                .param("userId", "sage").param("password", PASSWORD).param("email", "sage@example.com")
+                .param("zip", "98101").param("authorize", "true");
+        mvc.perform(noPhone).andExpect(status().isBadRequest());
+        assertThat(Wiring.USERS.find("sage")).isEmpty();
     }
 }

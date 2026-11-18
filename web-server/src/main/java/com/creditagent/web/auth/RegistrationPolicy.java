@@ -17,7 +17,7 @@ public final class RegistrationPolicy {
      * The version of the terms of use, privacy notice and FCRA authorisation (static/terms.html,
      * static/privacy.html) a new account accepts. Change it whenever those texts change materially.
      */
-    public static final String CONSENT_VERSION = "2026-11-14";
+    public static final String CONSENT_VERSION = "2026-11-18";
 
     public static final int MIN_PASSWORD_LENGTH = 12;
     public static final int MAX_PASSWORD_LENGTH = 64;
@@ -25,7 +25,10 @@ public final class RegistrationPolicy {
     static final int MAX_PASSWORD_BYTES = 72;
 
     private static final Pattern USER_ID = Pattern.compile("^[a-z0-9][a-z0-9._-]{2,31}$");
-    /** E.164: a plus sign, a country code and up to 15 digits in all. */
+    /** E.164: a plus sign, a country code (never starting with 0) and 8 to 15 digits in all. */
+    private static final Pattern E164 = Pattern.compile("^\\+[1-9]\\d{7,14}$");
+    /** Separators people type in phone numbers, removed before the number is checked. */
+    private static final Pattern PHONE_SEPARATORS = Pattern.compile("[\\s().-]");
 
     /** A short list of the most common passwords that pass the length rule. */
     private static final Set<String> COMMON = Set.of(
@@ -87,5 +90,23 @@ public final class RegistrationPolicy {
             throw new InvalidRegistrationException("Enter your 5-digit ZIP code.");
         }
         return value.substring(0, 5);
+    }
+
+    /**
+     * A mobile number, stored in E.164 form. A number without a country code is read as a US number
+     * (10 digits, or 11 starting with 1); others must start with {@code +} and their country code.
+     */
+    public static String normaliseMobilePhone(String phone) {
+        String value = phone == null ? "" : PHONE_SEPARATORS.matcher(phone.strip()).replaceAll("");
+        if (value.matches("\\d{10}")) {
+            value = "+1" + value;
+        } else if (value.matches("1\\d{10}")) {
+            value = "+" + value;
+        }
+        if (!E164.matcher(value).matches() || value.startsWith("+1") && value.length() != 12) {
+            throw new InvalidRegistrationException(
+                    "Enter your mobile number: 10 digits for a US number, or + and the country code for others.");
+        }
+        return value;
     }
 }

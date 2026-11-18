@@ -127,6 +127,87 @@ public final class InMemoryRepositories {
         }
     }
 
+    /** Same contract as {@link DynamoDbOtpChallengeRepository}, every conditional write atomic. */
+    public static class OtpChallenges implements OtpChallengeRepository {
+        public final Map<String, OtpChallenge> byId = new ConcurrentHashMap<>();
+        public final Map<String, Integer> userSends = new ConcurrentHashMap<>();
+
+        @Override
+        public void create(OtpChallenge challenge) {
+            byId.put(challenge.challengeId(), challenge);
+        }
+
+        @Override
+        public Optional<OtpChallenge> find(String challengeId) {
+            return Optional.ofNullable(byId.get(challengeId));
+        }
+
+        @Override
+        public synchronized boolean recordSend(String challengeId, com.creditagent.web.auth.otp.OtpChannel channel,
+                String codeHash, Instant now, Instant codeExpiresAt, Instant notSentSince, int maxSends) {
+            OtpChallenge c = byId.get(challengeId);
+            if (c == null || c.isExpired(now) || c.sends() >= maxSends
+                    || c.lastSentAt() != null && c.lastSentAt().isAfter(notSentSince)) {
+                return false;
+            }
+            byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(), channel,
+                    codeHash, codeExpiresAt, now, c.sends() + 1, c.attempts()));
+            return true;
+        }
+
+        @Override
+        public synchronized boolean recordAttempt(String challengeId, int maxAttempts) {
+            OtpChallenge c = byId.get(challengeId);
+            if (c == null || c.attempts() >= maxAttempts) {
+                return false;
+            }
+            byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(), c.channel(),
+                    c.codeHash(), c.codeExpiresAt(), c.lastSentAt(), c.sends(), c.attempts() + 1));
+            return true;
+        }
+
+        @Override
+        public synchronized boolean consume(String challengeId, String codeHash) {
+            OtpChallenge c = byId.get(challengeId);
+            if (c == null || !codeHash.equals(c.codeHash())) {
+                return false;
+            }
+            byId.remove(challengeId);
+            return true;
+        }
+
+        @Override
+        public void delete(String challengeId) {
+            byId.remove(challengeId);
+        }
+
+        @Override
+        public synchronized void releaseSend(String challengeId, String codeHash) {
+            OtpChallenge c = byId.get(challengeId);
+            if (c != null && codeHash.equals(c.codeHash()) && c.sends() > 0) {
+                byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(), null,
+                        null, null, null, c.sends() - 1, c.attempts()));
+            }
+        }
+
+        @Override
+        public synchronized void releaseUserSend(String userId, Instant now) {
+            userSends.computeIfPresent(userId + "#" + now.truncatedTo(java.time.temporal.ChronoUnit.HOURS),
+                    (k, n) -> n > 0 ? n - 1 : 0);
+        }
+
+        @Override
+        public synchronized boolean reserveUserSend(String userId, Instant now, int maxPerHour) {
+            String key = userId + "#" + now.truncatedTo(java.time.temporal.ChronoUnit.HOURS);
+            int sent = userSends.getOrDefault(key, 0);
+            if (sent >= maxPerHour) {
+                return false;
+            }
+            userSends.put(key, sent + 1);
+            return true;
+        }
+    }
+
     public static final class MutableClock extends Clock {
         Instant now;
 

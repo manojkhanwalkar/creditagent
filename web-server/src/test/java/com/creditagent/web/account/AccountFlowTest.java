@@ -102,13 +102,12 @@ class AccountFlowTest {
     @BeforeEach
     void registerUsers() {
         if (Wiring.USERS.find("ada").isEmpty()) {
-            auth.register("ada", PASSWORD, "ada@example.com", "98101", FakeIdentityVerifier.card("123-45-6789"));
+            auth.register("ada", PASSWORD, "ada@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("123-45-6789"));
         }
     }
 
     String bearer(String user) throws Exception {
-        String body = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + user + "\",\"password\":\"" + PASSWORD + "\"}"))
+        String body = mvc.perform(com.creditagent.web.auth.OtpTesting.loginRequest(mvc, com.creditagent.web.auth.AuthControllerConfig.OTP, user, PASSWORD))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         return "Bearer " + JsonPath.read(body, "$.token");
     }
@@ -125,6 +124,7 @@ class AccountFlowTest {
                 .andExpect(header().string("Cache-Control", "no-store"))
                 .andExpect(jsonPath("$.account.userId").value("ada"))
                 .andExpect(jsonPath("$.account.ssnMasked").value("***-**-6789"))
+                .andExpect(jsonPath("$.account.mobilePhone").value("+12065550100"))
                 .andExpect(jsonPath("$.account.passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.creditReport.reportId").value("r-1"));
     }
@@ -150,7 +150,7 @@ class AccountFlowTest {
 
     @Test
     void deletionNeedsThePasswordAndSsnAndEndsTheSession() throws Exception {
-        auth.register("bea", PASSWORD, "bea@example.com", "98101", FakeIdentityVerifier.card("234-56-7890"));
+        auth.register("bea", PASSWORD, "bea@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("234-56-7890"));
         String bearer = bearer("bea");
         mvc.perform(post("/api/v1/account/delete").header("Authorization", bearer).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"password\":\"not the password at all\",\"ssn\":\"234-56-7890\"}"))
@@ -169,14 +169,13 @@ class AccountFlowTest {
                 .andExpect(status().isNoContent());
         assertThat(Wiring.USERS.find("bea")).isEmpty();
         mvc.perform(get("/api/v1/auth/session").header("Authorization", bearer)).andExpect(status().isUnauthorized());
-        mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"bea\",\"password\":\"" + PASSWORD + "\"}"))
+        mvc.perform(com.creditagent.web.auth.OtpTesting.loginRequest(mvc, com.creditagent.web.auth.AuthControllerConfig.OTP, "bea", PASSWORD))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void anExportForADeletedAccountWithALiveTokenIs401() throws Exception {
-        auth.register("cal", PASSWORD, "cal@example.com", "98101", FakeIdentityVerifier.card("345-67-8901"));
+        auth.register("cal", PASSWORD, "cal@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("345-67-8901"));
         String bearer = bearer("cal");
         Wiring.USERS.byId.remove("cal"); // removed underneath an open session
         mvc.perform(post("/api/v1/account/export").header("Authorization", bearer)
@@ -186,7 +185,7 @@ class AccountFlowTest {
 
     @Test
     void aUsersTableFailureIs503WithTheTryAgainMessage() throws Exception {
-        auth.register("dee", PASSWORD, "dee@example.com", "98101", FakeIdentityVerifier.card("456-78-9013"));
+        auth.register("dee", PASSWORD, "dee@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("456-78-9013"));
         String bearer = bearer("dee");
         given(source.findReport(any())).willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("dynamo down"));
         mvc.perform(post("/api/v1/account/export").header("Authorization", bearer)

@@ -85,14 +85,13 @@ class AlertsFlowTest {
     @BeforeEach
     void registerUsers() {
         if (Wiring.USERS.find("ada").isEmpty()) {
-            auth.register("ada", PASSWORD, "Ada@Example.com", "98101", FakeIdentityVerifier.card("123-45-6789"));
-            auth.register("bob", PASSWORD, "bob@example.com", "98101", FakeIdentityVerifier.card("234-56-7890"));
+            auth.register("ada", PASSWORD, "Ada@Example.com", "+12065550100", "98101", FakeIdentityVerifier.card("123-45-6789"));
+            auth.register("bob", PASSWORD, "bob@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("234-56-7890"));
         }
     }
 
     String login(String user) throws Exception {
-        return mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + user + "\",\"password\":\"" + PASSWORD + "\"}"))
+        return mvc.perform(com.creditagent.web.auth.OtpTesting.loginRequest(mvc, com.creditagent.web.auth.AuthControllerConfig.OTP, user, PASSWORD))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
     }

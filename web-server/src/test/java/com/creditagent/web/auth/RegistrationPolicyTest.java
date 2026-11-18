@@ -62,4 +62,18 @@ class RegistrationPolicyTest {
                     .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
         }
     }
+
+    @Test
+    void mobileNumbersAreStoredInE164() {
+        assertThat(RegistrationPolicy.normaliseMobilePhone("(206) 555-0100")).isEqualTo("+12065550100");
+        assertThat(RegistrationPolicy.normaliseMobilePhone("206.555.0100")).isEqualTo("+12065550100");
+        assertThat(RegistrationPolicy.normaliseMobilePhone("1 206 555 0100")).isEqualTo("+12065550100");
+        assertThat(RegistrationPolicy.normaliseMobilePhone(" +1 206-555-0100 ")).isEqualTo("+12065550100");
+        assertThat(RegistrationPolicy.normaliseMobilePhone("+44 7700 900123")).isEqualTo("+447700900123");
+        for (String bad : new String[] {null, "", "555-0100", "+0 206 555 0100", "+1 206 555 01000", "+1206555010",
+                "206-555-010x", "+1234567890123456", "12065550100999"}) {
+            assertThatThrownBy(() -> RegistrationPolicy.normaliseMobilePhone(bad))
+                    .as(bad).isInstanceOf(InvalidRegistrationException.class).hasMessageContaining("mobile number");
+        }
+    }
 }

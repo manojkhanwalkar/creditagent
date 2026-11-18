@@ -49,6 +49,8 @@ final class AuthorizePage {
                 "script-src 'self'",
                 "style-src 'self'",
                 "img-src 'self'",
+                // The sign-in and code steps call this server's JSON endpoints.
+                "connect-src 'self'",
                 "base-uri 'none'",
                 "form-action 'self' " + origin(redirectUri),
                 "frame-ancestors 'none'");

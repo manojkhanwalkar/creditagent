@@ -27,7 +27,7 @@ class AuthServiceTest {
             Duration.ofMinutes(5), clock);
 
     String register() {
-        return auth.register("Avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(AVERY_SSN));
+        return auth.register("Avery", PASSWORD, "avery@example.com", "+12065550100", null, FakeIdentityVerifier.card(AVERY_SSN));
     }
 
     @Test
@@ -50,7 +50,7 @@ class AuthServiceTest {
     void anEmailCanOnlyBelongToOneAccount() {
         register();
         String email = users.find("avery").orElseThrow().email().toUpperCase(java.util.Locale.ROOT);
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", email, FakeIdentityVerifier.card("234567890")))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", email, "+12065550100", null, FakeIdentityVerifier.card("234567890")))
                 .isInstanceOf(AuthExceptions.EmailAlreadyRegisteredException.class);
         assertThat(users.find("blake")).isEmpty();
     }
@@ -58,7 +58,7 @@ class AuthServiceTest {
     @Test
     void anSsnCanOnlyBelongToOneAccount() {
         register();
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", FakeIdentityVerifier.card("123456789")))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null, FakeIdentityVerifier.card("123456789")))
                 .isInstanceOf(AuthExceptions.SsnAlreadyRegisteredException.class);
         assertThat(users.find("blake")).isEmpty();
     }
@@ -74,17 +74,17 @@ class AuthServiceTest {
 
     @Test
     void registrationNeedsACardPhoto() {
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", null))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null, null))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class)
                 .hasMessageContaining("Social Security card");
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", new byte[0]))
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null, new byte[0]))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
         assertThat(kyc.calls).hasValue(0);
     }
 
     @Test
     void aBlurryPhotoIsRejectedAndTheUserCanRetry() {
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com",
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null,
                         FakeIdentityVerifier.blurry()))
                 .isInstanceOf(DocumentRejectedException.class)
                 .hasMessageContaining("blurry")
@@ -92,20 +92,20 @@ class AuthServiceTest {
                 .isEqualTo(DocumentRejectedException.IMAGE_BLURRY);
         assertThat(users.find("blake")).isEmpty();
 
-        assertThat(auth.register("blake", "another long passphrase", "b@example.com",
+        assertThat(auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null,
                 FakeIdentityVerifier.card("234-56-7890"))).isEqualTo("blake");
     }
 
     @Test
     void cheapChecksRunBeforeTheKycCall() {
         register();
-        assertThatThrownBy(() -> auth.register("blake", "Password1234", "b@example.com",
+        assertThatThrownBy(() -> auth.register("blake", "Password1234", "b@example.com", "+12065550100", null,
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
-        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "not-an-email",
+        assertThatThrownBy(() -> auth.register("blake", "another long passphrase", "not-an-email", "+12065550100", null,
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(AuthExceptions.InvalidRegistrationException.class);
-        assertThatThrownBy(() -> auth.register("avery", "another long passphrase", "a@example.com",
+        assertThatThrownBy(() -> auth.register("avery", "another long passphrase", "a@example.com", "+12065550100", null,
                         FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(UserAlreadyExistsException.class);
         assertThat(kyc.calls).hasValue(1); // only the first, successful registration
@@ -114,7 +114,7 @@ class AuthServiceTest {
     @Test
     void usersMayOnlyLookUpTheirOwnSsn() {
         register();
-        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        AuthenticatedUser avery = auth.authenticate(TestLogins.login(auth, "avery", PASSWORD).token());
         assertThat(avery.ssnMasked()).isEqualTo("***-**-6789");
         auth.requireOwnSsn(avery, com.creditagent.common.Ssn.parse("123456789"));
         assertThatThrownBy(() -> auth.requireOwnSsn(avery, com.creditagent.common.Ssn.parse("234-56-7890")))
@@ -131,14 +131,14 @@ class AuthServiceTest {
     @Test
     void duplicateUserIdFailsRegardlessOfCase() {
         register();
-        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", FakeIdentityVerifier.card("234-56-7890")))
+        assertThatThrownBy(() -> auth.register("AVERY", "another long passphrase", "a@example.com", "+12065550100", null, FakeIdentityVerifier.card("234-56-7890")))
                 .isInstanceOf(UserAlreadyExistsException.class);
     }
 
     @Test
     void loginIssuesATokenThatAuthenticates() {
         register();
-        AuthService.LoginResult login = auth.login("avery", PASSWORD);
+        AuthService.LoginResult login = TestLogins.login(auth, "avery", PASSWORD);
         assertThat(login.idleTimeout()).isEqualTo(Duration.ofMinutes(5));
         assertThat(auth.authenticate(login.token()).userId()).isEqualTo("avery");
         assertThat(sessions.byId).hasSize(1);
@@ -147,9 +147,9 @@ class AuthServiceTest {
     @Test
     void wrongPasswordAndUnknownUserGetTheSameAnswer() {
         register();
-        assertThatThrownBy(() -> auth.login("avery", "wrong password here"))
+        assertThatThrownBy(() -> TestLogins.login(auth, "avery", "wrong password here"))
                 .isInstanceOf(UnauthenticatedException.class).hasMessage(AuthService.BAD_CREDENTIALS);
-        assertThatThrownBy(() -> auth.login("nobody", PASSWORD))
+        assertThatThrownBy(() -> TestLogins.login(auth, "nobody", PASSWORD))
                 .isInstanceOf(UnauthenticatedException.class).hasMessage(AuthService.BAD_CREDENTIALS);
         assertThat(sessions.byId).isEmpty();
     }
@@ -157,7 +157,7 @@ class AuthServiceTest {
     @Test
     void sessionEndsAfterFiveIdleMinutes() {
         register();
-        String token = auth.login("avery", PASSWORD).token();
+        String token = TestLogins.login(auth, "avery", PASSWORD).token();
         clock.advance(Duration.ofMinutes(5));
         assertThatThrownBy(() -> auth.authenticate(token))
                 .isInstanceOf(UnauthenticatedException.class).hasMessageContaining("timed out");
@@ -167,7 +167,7 @@ class AuthServiceTest {
     @Test
     void activityKeepsTheSessionAlive() {
         register();
-        String token = auth.login("avery", PASSWORD).token();
+        String token = TestLogins.login(auth, "avery", PASSWORD).token();
         for (int i = 0; i < 6; i++) {
             clock.advance(Duration.ofMinutes(4));
             auth.authenticate(token);
@@ -178,7 +178,7 @@ class AuthServiceTest {
     @Test
     void frequentRequestsDoNotRewriteTheSessionEveryTime() {
         register();
-        String token = auth.login("avery", PASSWORD).token();
+        String token = TestLogins.login(auth, "avery", PASSWORD).token();
         Session before = sessions.byId.values().iterator().next();
         clock.advance(Duration.ofSeconds(10));
         auth.authenticate(token);
@@ -194,8 +194,8 @@ class AuthServiceTest {
                 users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock),
                 Duration.ofSeconds(20), clock);
-        quick.register("quinn", PASSWORD, "q@example.com", FakeIdentityVerifier.card("345-67-8901"));
-        String token = quick.login("quinn", PASSWORD).token();
+        quick.register("quinn", PASSWORD, "q@example.com", "+12065550100", null, FakeIdentityVerifier.card("345-67-8901"));
+        String token = TestLogins.login(quick, "quinn", PASSWORD).token();
         clock.advance(Duration.ofSeconds(12));
         quick.authenticate(token);
         clock.advance(Duration.ofSeconds(16));
@@ -205,7 +205,7 @@ class AuthServiceTest {
     @Test
     void aRequestInFlightDuringLogoutDoesNotBringTheSessionBack() {
         register();
-        String token = auth.login("avery", PASSWORD).token();
+        String token = TestLogins.login(auth, "avery", PASSWORD).token();
         // The request has read the session; logout deletes it before the request records activity.
         InMemoryRepositories.Sessions racing = new InMemoryRepositories.Sessions() {
             @Override
@@ -231,13 +231,13 @@ class AuthServiceTest {
     @Test
     void loginIgnoresCaseAndSpaces() {
         register();
-        assertThat(auth.login("  AVERY ", PASSWORD).userId()).isEqualTo("avery");
+        assertThat(TestLogins.login(auth, "  AVERY ", PASSWORD).userId()).isEqualTo("avery");
     }
 
     @Test
     void logoutEndsTheSession() {
         register();
-        String token = auth.login("avery", PASSWORD).token();
+        String token = TestLogins.login(auth, "avery", PASSWORD).token();
         auth.logout(auth.authenticate(token));
         assertThatThrownBy(() -> auth.authenticate(token))
                 .isInstanceOf(UnauthenticatedException.class).hasMessageContaining("ended");
@@ -246,9 +246,9 @@ class AuthServiceTest {
     @Test
     void sweeperRemovesOnlyExpiredSessions() {
         register();
-        auth.login("avery", PASSWORD);
+        TestLogins.login(auth, "avery", PASSWORD);
         clock.advance(Duration.ofMinutes(3));
-        auth.login("avery", PASSWORD);
+        TestLogins.login(auth, "avery", PASSWORD);
         clock.advance(Duration.ofMinutes(3));
         assertThat(auth.cleanUpExpiredSessions()).isEqualTo(1);
         assertThat(sessions.byId).hasSize(1);
@@ -257,8 +257,8 @@ class AuthServiceTest {
     @Test
     void aTokenForAnotherUsersSessionIsRejected() {
         register();
-        auth.register("blake", "another long passphrase", "b@example.com", FakeIdentityVerifier.card("234-56-7890"));
-        String averySession = sessions.byId.isEmpty() ? auth.login("avery", PASSWORD).token() : null;
+        auth.register("blake", "another long passphrase", "b@example.com", "+12065550100", null, FakeIdentityVerifier.card("234-56-7890"));
+        String averySession = sessions.byId.isEmpty() ? TestLogins.login(auth, "avery", PASSWORD).token() : null;
         String sessionId = sessions.byId.keySet().iterator().next();
         String forged = new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock)
                 .issue("blake", sessionId);
@@ -269,7 +269,7 @@ class AuthServiceTest {
     @Test
     void aNewUsersReportStartsUnlockedAndCanBeLockedAndUnlocked() {
         register();
-        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        AuthenticatedUser avery = auth.authenticate(TestLogins.login(auth, "avery", PASSWORD).token());
         assertThat(auth.reportStatus(avery)).isEqualTo(ReportStatus.UNLOCKED);
 
         assertThat(auth.setReportStatus(avery, ReportStatus.LOCKED)).isEqualTo(ReportStatus.LOCKED);
@@ -283,7 +283,7 @@ class AuthServiceTest {
     @Test
     void aDeletedUserCannotChangeTheirStatus() {
         register();
-        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        AuthenticatedUser avery = auth.authenticate(TestLogins.login(auth, "avery", PASSWORD).token());
         users.byId.remove("avery");
         assertThatThrownBy(() -> auth.setReportStatus(avery, ReportStatus.LOCKED)).isInstanceOf(UnauthenticatedException.class);
         assertThatThrownBy(() -> auth.reportStatus(avery)).isInstanceOf(UnauthenticatedException.class);
@@ -305,7 +305,7 @@ class AuthServiceTest {
         com.creditagent.common.Ssn averySsn = com.creditagent.common.Ssn.parse(AVERY_SSN);
         assertThat(auth.isReportLocked(averySsn)).isFalse();
 
-        AuthenticatedUser avery = auth.authenticate(auth.login("avery", PASSWORD).token());
+        AuthenticatedUser avery = auth.authenticate(TestLogins.login(auth, "avery", PASSWORD).token());
         auth.setReportStatus(avery, ReportStatus.LOCKED);
         assertThat(auth.isReportLocked(averySsn)).isTrue();
 
@@ -318,12 +318,12 @@ class AuthServiceTest {
         com.creditagent.common.AuditLog audit = org.mockito.Mockito.mock(com.creditagent.common.AuditLog.class);
         AuthService audited = new AuthService(users, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock), Duration.ofMinutes(5), clock, audit);
-        audited.register("Avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(AVERY_SSN));
-        audited.login("avery", PASSWORD);
+        audited.register("Avery", PASSWORD, "avery@example.com", "+12065550100", null, FakeIdentityVerifier.card(AVERY_SSN));
+        TestLogins.login(audited, "avery", PASSWORD);
         assertThat(users.find("avery").orElseThrow().lastLoginAt()).isEqualTo(clock.instant());
         assertThat(users.find("avery").orElseThrow().lastActiveAt()).isEqualTo(clock.instant());
 
-        AuthenticatedUser user = audited.authenticate(audited.login("avery", PASSWORD).token());
+        AuthenticatedUser user = audited.authenticate(TestLogins.login(audited, "avery", PASSWORD).token());
         audited.setReportStatus(user, ReportStatus.LOCKED);
         org.mockito.Mockito.verify(audit).record(com.creditagent.common.AuditLog.Event.REPORT_LOCK_CHANGED, "user:avery",
                 "user:avery", "OK", java.util.Map.of("status", "LOCKED"));
@@ -353,7 +353,7 @@ class AuthServiceTest {
         vanishing.byId.putAll(users.byId);
         AuthService racing = new AuthService(vanishing, sessions, new BCryptPasswordEncoder(4), HASHER, kyc,
                 new JwtService(TestSecrets.of("jwt"), "credit-agent", Duration.ofHours(1), clock), Duration.ofMinutes(5), clock);
-        assertThat(racing.login("avery", PASSWORD).userId()).isEqualTo("avery");
+        assertThat(TestLogins.login(racing, "avery", PASSWORD).userId()).isEqualTo("avery");
     }
 
     @Test

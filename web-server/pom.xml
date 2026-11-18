@@ -54,6 +54,27 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- One-time sign-in codes: SES (email) and SNS (SMS). Sync clients only, like DynamoDB. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sesv2</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sns</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <!-- Password hashing (BCrypt) without the rest of Spring Security -->
         <dependency>
             <groupId>org.springframework.security</groupId>

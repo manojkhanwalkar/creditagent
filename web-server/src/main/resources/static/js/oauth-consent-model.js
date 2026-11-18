@@ -56,3 +56,25 @@ export function consentModel(search) {
     signInFailed: params.get('retry') === '1',
   };
 }
+
+/**
+ * The JSON body that approves the connector once the code has been sent: the authorization request as
+ * the page received it, the SSN typed in step 1, the challenge and the code.
+ * @param {[string, string][]} hidden the request fields from `consentModel`
+ */
+export function approveBody(hidden, ssn, challengeId, code) {
+  const body = Object.fromEntries(hidden);
+  body.ssn = String(ssn || '').trim();
+  body.challengeId = challengeId;
+  body.code = code;
+  return body;
+}
+
+/**
+ * Where the approve answer sends the browser: only a string the server returned that parses as an
+ * http(s) URL; anything else stays on the page.
+ */
+export function approvedRedirect(answer) {
+  const target = answer && typeof answer.redirect === 'string' ? answer.redirect : null;
+  return target && originOf(target) ? target : null;
+}

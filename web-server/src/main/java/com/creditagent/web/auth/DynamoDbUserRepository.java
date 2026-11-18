@@ -36,6 +36,8 @@ public class DynamoDbUserRepository implements UserRepository {
     static final String CONSENT_VERSION = "consentVersion";
     static final String CONSENTED_AT = "consentedAt";
     static final String LAST_LOGIN_AT = "lastLoginAt";
+    /** The E.164 mobile number sign-in codes are texted to. Not {@link #LEGACY_PHONE}, which is removed. */
+    static final String MOBILE_PHONE = "mobilePhone";
     /** Stored by accounts made before the phone number stopped being collected; removed by the retention job. */
     static final String LEGACY_PHONE = "phone";
     private static final String CONDITIONAL_CHECK_FAILED = "ConditionalCheckFailed";
@@ -63,6 +65,9 @@ public class DynamoDbUserRepository implements UserRepository {
         item.put(REPORT_STATUS, s(user.reportStatus().name()));
         if (user.zip() != null) {
             item.put(ZIP, s(user.zip()));
+        }
+        if (user.mobilePhone() != null) {
+            item.put(MOBILE_PHONE, s(user.mobilePhone()));
         }
         if (user.consentVersion() != null) {
             item.put(CONSENT_VERSION, s(user.consentVersion()));
@@ -127,7 +132,8 @@ public class DynamoDbUserRepository implements UserRepository {
                 instant(item, LAST_SCORE_AT),
                 text(item, CONSENT_VERSION),
                 instant(item, CONSENTED_AT),
-                instant(item, LAST_LOGIN_AT)));
+                instant(item, LAST_LOGIN_AT),
+                text(item, MOBILE_PHONE)));
     }
 
     /** Reads the {@code ssn#<hash>} claim, then its owner. Two consistent reads. */

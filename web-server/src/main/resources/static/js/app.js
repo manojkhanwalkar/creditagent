@@ -1,7 +1,7 @@
 import { bandFor, looksLikeSsn, ringDash, scoreDescription } from './score-ring.js';
 import {
-  authHeaders, checkDeletion, checkRegistration, createSession, idleWarningDelayMs, lockView, nextTab,
-  registrationFailure, ssnHint,
+  authHeaders, checkDeletion, checkOtpCode, checkRegistration, codeSentMessage, createSession, resendWaitMessage, idleWarningDelayMs,
+  lockView, nextTab, otpChoices, otpFailure, registrationFailure, ssnHint,
 } from './auth.js';
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
@@ -11,6 +11,29 @@ const RADIUS = 80;
 const session = createSession(window.sessionStorage);
 
 const $ = (id) => document.getElementById(id);
+
+// The login between its two steps: the challenge id from the password step (in memory only, never
+// stored), the timer that re-enables "Send code", and whether the login follows a registration.
+let otpChallenge = null;
+let otpResendTimer = null;
+let loginAfterRegistration = false;
+/** The last "we sent a code" line, kept when the resend wait ends. */
+let sentMessage = '';
+
+/** Leaves the code step, if it is showing, and forgets its challenge. */
+function resetCodeStep() {
+  otpChallenge = null;
+  sentMessage = '';
+  clearTimeout(otpResendTimer);
+  const form = $('otp-form');
+  form.reset();
+  form.hidden = true;
+  $('otp-status').textContent = '';
+  $('otp-error').hidden = true;
+  const send = $('otp-send');
+  send.disabled = false;
+  send.textContent = 'Send code';
+}
 
 const account = $('account');
 const accountUser = $('account-user');
@@ -46,6 +69,7 @@ function showSignedIn(userId, ssnMasked, offers, alerts) {
 
 function showSignedOut(message) {
   session.clear();
+  resetCodeStep();
   account.hidden = true;
   authWidget.hidden = false;
   scoreWidget.hidden = true;
@@ -221,6 +245,7 @@ const loginForm = $('login-form');
 const registerForm = $('register-form');
 
 function selectTab(register) {
+  resetCodeStep();
   tabLogin.setAttribute('aria-selected', String(!register));
   tabRegister.setAttribute('aria-selected', String(register));
   // Roving tabindex: only the selected tab is in the Tab order; arrows move between tabs.
@@ -243,14 +268,63 @@ tabs.forEach((tab, index) => tab.addEventListener('keydown', (event) => {
 }));
 selectTab(false);
 
-// ---------- login ----------
+// ---------- login: password, then a one-time code ----------
 
+const otpForm = $('otp-form');
+const otpSend = $('otp-send');
+
+/** Step 1: the password. On success the code step replaces the form; no session exists yet. */
 async function logIn(userId, password, errorElement) {
   const { response, data } = await api('/api/v1/auth/login', { body: { userId, password } });
   if (!response.ok) {
     showFormError(errorElement, messageFor(response.status, data));
     return false;
   }
+  showCodeStep(data);
+  return true;
+}
+
+function showCodeStep(challenge) {
+  selectTab(false);
+  otpChallenge = challenge.challengeId;
+  const choices = otpChoices(challenge.channels);
+  $('otp-email-destination').textContent = choices.email || 'your email address';
+  $('otp-sms-destination').textContent = choices.sms || '';
+  $('otp-sms-choice').hidden = choices.sms === null;
+  $('otp-email').checked = true;
+  loginForm.hidden = true;
+  otpForm.hidden = false;
+  $('auth-title').textContent = 'Confirm sign-in';
+  $('otp-title').focus();
+}
+
+/** Back to the password, e.g. when the sign-in expired or used up its tries. */
+function showPasswordStep(message) {
+  loginAfterRegistration = false;
+  selectTab(false);
+  showFormError($('login-error'), message || '');
+  // The user id is still filled in: go straight to the password.
+  $($('login-user').value ? 'login-password' : 'login-user').focus();
+}
+
+/** Keeps "Send code" disabled for `seconds` (the server's resend wait). */
+function holdSend(seconds) {
+  clearTimeout(otpResendTimer);
+  otpSend.disabled = seconds > 0;
+  if (seconds > 0) {
+    otpResendTimer = setTimeout(() => {
+      otpSend.disabled = false;
+      $('otp-status').textContent = [sentMessage, resendWaitMessage(0)].filter(Boolean).join(' ');
+    }, seconds * 1000);
+  }
+}
+
+/** Step 3 succeeded: the answer carries the token, offers and alerts, as login did before. */
+function finishLogin(data) {
+  const afterRegistration = loginAfterRegistration;
+  resetCodeStep();
+  loginForm.reset();
+  loginAfterRegistration = false;
   session.save(data.token, data.userId, data.ssnMasked);
   if (data.idleTimeoutSeconds) {
     idleTimeoutSeconds = data.idleTimeoutSeconds;
@@ -258,7 +332,7 @@ async function logIn(userId, password, errorElement) {
   }
   // The login answer carries the offers matched to the user's last score and ZIP code.
   showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts);
-  return true;
+  if (afterRegistration) waitForFirstOffers();
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -269,7 +343,8 @@ loginForm.addEventListener('submit', async (event) => {
   button.disabled = true;
   try {
     if (await logIn($('login-user').value.trim(), $('login-password').value, error)) {
-      loginForm.reset();
+      // Keep the user id: if the code step has to start over, only the password is asked again (WCAG 3.3.7).
+      $('login-password').value = '';
     }
   } catch {
     showFormError(error, 'Could not reach the server. Check your connection and try again.');
@@ -277,6 +352,71 @@ loginForm.addEventListener('submit', async (event) => {
     button.disabled = false;
   }
 });
+
+// Step 2: send (or resend) a code to the chosen channel.
+otpSend.addEventListener('click', async () => {
+  const error = $('otp-error');
+  showFormError(error, '');
+  const channel = $('otp-sms').checked ? 'SMS' : 'EMAIL';
+  otpSend.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/auth/login/otp', { body: { challengeId: otpChallenge, channel } });
+    if (!response.ok) {
+      const failure = otpFailure(response.status, data);
+      if (failure.restart) {
+        showPasswordStep(failure.message);
+        return;
+      }
+      showFormError(error, failure.message);
+      holdSend(failure.retryAfterSeconds);
+      if (failure.retryAfterSeconds > 0) $('otp-status').textContent = resendWaitMessage(failure.retryAfterSeconds);
+      $('otp-code').focus(); // the button just pressed is disabled: keep focus on a usable control
+      return;
+    }
+    sentMessage = codeSentMessage(data);
+    $('otp-status').textContent = sentMessage;
+    otpSend.textContent = 'Send a new code';
+    holdSend(Number(data.resendAfterSeconds) || 0);
+    $('otp-code').focus();
+  } catch {
+    showFormError(error, 'Could not reach the server. Check your connection and try again.');
+    otpSend.disabled = false;
+  }
+});
+
+// Step 3: the code.
+otpForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const error = $('otp-error');
+  const { code, error: problem } = checkOtpCode($('otp-code').value);
+  showFormError(error, problem || '');
+  if (problem) {
+    $('otp-code').focus();
+    return;
+  }
+  const button = $('otp-submit');
+  button.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/auth/login/verify', { body: { challengeId: otpChallenge, code } });
+    if (!response.ok) {
+      const failure = otpFailure(response.status, data);
+      if (failure.restart) {
+        showPasswordStep(failure.message);
+        return;
+      }
+      showFormError(error, failure.message);
+      $('otp-code').select();
+      return;
+    }
+    finishLogin(data);
+  } catch {
+    showFormError(error, 'Could not reach the server. Check your connection and try again.');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('otp-cancel').addEventListener('click', () => showPasswordStep(''));
 
 // ---------- registration ----------
 
@@ -288,6 +428,7 @@ registerForm.addEventListener('submit', async (event) => {
     password: $('reg-password').value,
     confirm: $('reg-confirm').value,
     email: $('reg-email').value.trim(),
+    mobilePhone: $('reg-phone').value.trim(),
     authorize: $('reg-authorize').checked,
     zip: $('reg-zip').value.trim(),
     ssnCard: $('reg-ssn-card').files[0] || null,
@@ -307,6 +448,7 @@ registerForm.addEventListener('submit', async (event) => {
     body.append('userId', form.userId);
     body.append('password', form.password);
     body.append('email', form.email);
+    body.append('mobilePhone', form.mobilePhone);
     body.append('authorize', 'true'); // checkRegistration refused the form without it
     body.append('zip', form.zip);
     body.append('ssnCard', form.ssnCard, form.ssnCard.name);
@@ -329,10 +471,12 @@ registerForm.addEventListener('submit', async (event) => {
       }
       return;
     }
+    // The new account signs in like any other: password (already known), then a code.
+    loginAfterRegistration = true;
     if (await logIn(form.userId, form.password, error)) {
       registerForm.reset();
-      selectTab(false);
-      waitForFirstOffers();
+    } else {
+      loginAfterRegistration = false;
     }
   } catch {
     showFormError(error, 'Could not reach the server. Check your connection and try again.');

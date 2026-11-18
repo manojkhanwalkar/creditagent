@@ -101,10 +101,9 @@ class ChatFlowTest {
     @BeforeEach
     void signIn() throws Exception {
         if (Wiring.USERS.find("avery").isEmpty()) {
-            auth.register("avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(SSN));
+            auth.register("avery", PASSWORD, "avery@example.com", "+12065550100", null, FakeIdentityVerifier.card(SSN));
         }
-        String login = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"avery\",\"password\":\"" + PASSWORD + "\"}"))
+        String login = mvc.perform(com.creditagent.web.auth.OtpTesting.loginRequest(mvc, com.creditagent.web.auth.AuthControllerConfig.OTP, "avery", PASSWORD))
                 .andReturn().getResponse().getContentAsString();
         bearer = "Bearer " + JsonPath.read(login, "$.token");
         given(reports.findReport(Ssn.parse(SSN))).willReturn(Optional.of(REPORT));

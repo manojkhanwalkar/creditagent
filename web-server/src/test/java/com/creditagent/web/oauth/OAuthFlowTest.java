@@ -14,6 +14,10 @@ import com.creditagent.web.auth.AuthService;
 import com.creditagent.web.auth.FakeIdentityVerifier;
 import com.creditagent.web.auth.InMemoryRepositories;
 import com.creditagent.web.auth.JwtService;
+import com.creditagent.web.auth.OtpLoginService;
+import com.creditagent.web.auth.OtpTesting;
+import com.creditagent.web.auth.RecordingOtpSender;
+import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.SsnHasher;
 import com.creditagent.web.auth.TestSecrets;
 import com.jayway.jsonpath.JsonPath;
@@ -73,6 +77,13 @@ class OAuthFlowTest {
                 new InMemoryRepositories.MutableClock(Instant.parse("2026-11-09T12:00:00Z"));
         static final InMemoryRepositories.Users USERS = new InMemoryRepositories.Users();
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
+        static final InMemoryRepositories.OtpChallenges CHALLENGES = new InMemoryRepositories.OtpChallenges();
+        static final RecordingOtpSender OTP = new RecordingOtpSender();
+
+        @Bean
+        OtpLoginService otpLoginService(AuthService auth) {
+            return OtpTesting.service(auth, CHALLENGES, OTP, CLOCK, new com.creditagent.common.AuditLog());
+        }
 
         @Bean
         AuthService authService() {
@@ -97,13 +108,17 @@ class OAuthFlowTest {
     @Autowired
     AuthService auth;
 
+    @Autowired
+    OtpLoginService otp;
+
     @MockitoBean
     com.creditagent.web.CreditScoreService scores;
 
     @BeforeEach
     void registerAvery() {
+        Wiring.CHALLENGES.userSends.clear(); // every test starts with the hourly code allowance
         if (Wiring.USERS.find("avery").isEmpty()) {
-            auth.register("avery", PASSWORD, "avery@example.com", FakeIdentityVerifier.card(SSN));
+            auth.register("avery", PASSWORD, "avery@example.com", "+12065550100", null, FakeIdentityVerifier.card(SSN));
         }
     }
 
@@ -151,6 +166,47 @@ class OAuthFlowTest {
         return withParams(post("/oauth/authorize").contentType(MediaType.APPLICATION_FORM_URLENCODED), form);
     }
 
+    /** Consent step 1 as the page sends it. */
+    org.springframework.test.web.servlet.ResultActions consentSignIn(String userId, String password, String ssn)
+            throws Exception {
+        return mvc.perform(post(OAuthController.SIGN_IN).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":\"" + userId + "\",\"password\":\"" + password + "\",\"ssn\":\"" + ssn + "\"}"));
+    }
+
+    /** Step 1, then a code by email; returns the challenge id. */
+    String challengeWithCode(String ssn) throws Exception {
+        String body = consentSignIn("Avery", PASSWORD, ssn)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channels[0].destination").value("a***@example.com"))
+                .andExpect(jsonPath("$.channels[1].destination").value("***-***-0100"))
+                .andReturn().getResponse().getContentAsString();
+        String challengeId = JsonPath.read(body, "$.challengeId");
+        otp.send(challengeId, OtpChannel.EMAIL); // what the page does through /api/v1/auth/login/otp
+        Wiring.CLOCK.advance(Duration.ofSeconds(31)); // so later tests may resend at once
+        return challengeId;
+    }
+
+    /** Consent step 3 as the page sends it: the request fields, the SSN, the challenge and the code. */
+    org.springframework.test.web.servlet.ResultActions consentApprove(Map<String, String> params, String ssn,
+            String challengeId, String code) throws Exception {
+        Map<String, Object> body = new LinkedHashMap<>(params);
+        body.put("ssn", ssn);
+        body.put("challengeId", challengeId);
+        body.put("code", code);
+        return mvc.perform(post(OAuthController.APPROVE).contentType(MediaType.APPLICATION_JSON)
+                .content(new tools.jackson.databind.json.JsonMapper().writeValueAsString(body)));
+    }
+
+    /** The whole allow flow with the right password, SSN and code; returns the redirect. */
+    String allow(Map<String, String> params) throws Exception {
+        String challengeId = challengeWithCode(SSN);
+        String body = consentApprove(params, SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(body, "$.redirect");
+    }
+
     static Map<String, String> query(String location) {
         Map<String, String> query = new LinkedHashMap<>();
         for (String pair : URI.create(location).getRawQuery().split("&")) {
@@ -161,10 +217,7 @@ class OAuthFlowTest {
     }
 
     String code(String clientId) throws Exception {
-        String location = mvc.perform(signIn(authorizeParams(clientId), PASSWORD, SSN))
-                .andExpect(status().isFound())
-                .andReturn().getResponse().getHeader("Location");
-        return query(location).get("code");
+        return query(allow(authorizeParams(clientId))).get("code");
     }
 
     MockHttpServletRequestBuilder tokenRequest(String clientId, String code, String verifier) {
@@ -218,11 +271,10 @@ class OAuthFlowTest {
                 .andExpect(header().string("Content-Security-Policy",
                         Matchers.containsString("form-action 'self' https://claude.ai")))
                 .andExpect(header().string("Content-Security-Policy", Matchers.containsString("script-src 'self'")))
+                .andExpect(header().string("Content-Security-Policy", Matchers.containsString("connect-src 'self'")))
                 .andExpect(header().string("Cache-Control", "no-store"));
 
-        String location = mvc.perform(signIn(authorizeParams(clientId), PASSWORD, SSN))
-                .andExpect(status().isFound())
-                .andReturn().getResponse().getHeader("Location");
+        String location = allow(authorizeParams(clientId));
         assertThat(location).startsWith(CALLBACK + "?code=");
         Map<String, String> redirect = query(location);
         assertThat(redirect).containsEntry("state", "state-1").containsEntry("iss", ISSUER);
@@ -292,13 +344,109 @@ class OAuthFlowTest {
         params.remove("state");
         params.remove("resource");
         params.remove("scope");
-        String location = mvc.perform(signIn(params, PASSWORD, SSN))
-                .andExpect(status().isFound())
-                .andReturn().getResponse().getHeader("Location");
+        String location = allow(params);
         assertThat(location).startsWith(loopback + "?code=").doesNotContain("state=");
     }
 
     // ------------------------------------------------------------------ sign-in refusals
+
+    @Test
+    void aFormPostCannotAllowWithoutTheCodeEvenWithTheRightPasswordAndSsn() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String location = mvc.perform(signIn(authorizeParams(clientId), PASSWORD, SSN))
+                .andExpect(status().isSeeOther())
+                .andReturn().getResponse().getHeader("Location");
+        assertThat(location).startsWith("/oauth/authorize?").doesNotContain("code=");
+        assertThat(query(location)).containsEntry("retry", "1");
+    }
+
+    @Test
+    void aWrongPasswordOrSsnAtTheFirstStepOpensNoChallenge() throws Exception {
+        int before = Wiring.CHALLENGES.byId.size();
+        for (String[] attempt : new String[][] {{"wrong password", SSN}, {PASSWORD, "234-56-7890"}, {PASSWORD, "not an ssn"}}) {
+            consentSignIn("Avery", attempt[0], attempt[1])
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.detail").value(OAuthController.BAD_SIGN_IN))
+                    .andExpect(jsonPath("$.challengeId").doesNotExist());
+        }
+        consentSignIn("nobody", PASSWORD, SSN).andExpect(status().isUnauthorized());
+        assertThat(Wiring.CHALLENGES.byId).hasSize(before);
+    }
+
+    @Test
+    void aWrongCodeIsRefusedWithTriesLeftAndTheRightOneStillWorks() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String challengeId = challengeWithCode(SSN);
+        String wrong = Wiring.OTP.lastCode().equals("000000") ? "111111" : "000000";
+
+        consentApprove(authorizeParams(clientId), SSN, challengeId, wrong)
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.attemptsLeft").value(4))
+                .andExpect(jsonPath("$.restart").value(false))
+                .andExpect(jsonPath("$.redirect").doesNotExist());
+        String body = consentApprove(authorizeParams(clientId), SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(query(JsonPath.read(body, "$.redirect"))).containsKey("code");
+        // Single use.
+        consentApprove(authorizeParams(clientId), SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.restart").value(true));
+    }
+
+    @Test
+    void approvingNeedsASentCodeAndTheSameSsn() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String body = consentSignIn("Avery", PASSWORD, SSN).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String unsent = JsonPath.read(body, "$.challengeId");
+        consentApprove(authorizeParams(clientId), SSN, unsent, "123456")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Choose where to send your code first."));
+        consentApprove(authorizeParams(clientId), "not an ssn", unsent, "123456")
+                .andExpect(status().isBadRequest());
+
+        // A valid code with someone else's SSN: refused, and the code is used up.
+        String challengeId = challengeWithCode(SSN);
+        consentApprove(authorizeParams(clientId), "234-56-7890", challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.restart").value(true))
+                .andExpect(jsonPath("$.redirect").doesNotExist());
+        consentApprove(authorizeParams(clientId), SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aBadAuthorizationRequestAtApprovalUsesNoCode() throws Exception {
+        String clientId = registerClient("Claude", CALLBACK);
+        String challengeId = challengeWithCode(SSN);
+
+        Map<String, String> unknown = authorizeParams("not-a-client");
+        consentApprove(unknown, SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").isString())
+                .andExpect(jsonPath("$.redirect").doesNotExist());
+        Map<String, String> badScope = authorizeParams(clientId);
+        badScope.put("scope", "everything");
+        String body = consentApprove(badScope, SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(query(JsonPath.read(body, "$.redirect"))).containsEntry("error", "invalid_scope").doesNotContainKey("code");
+        // The code was not used by either: it still allows a good request.
+        assertThat(query(JsonPath.read(consentApprove(authorizeParams(clientId), SSN, challengeId, Wiring.OTP.lastCode())
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(), "$.redirect"))).containsKey("code");
+    }
+
+    @Test
+    void aProviderOutageAtSendIsA503FromTheService() throws Exception {
+        String body = consentSignIn("Avery", PASSWORD, SSN).andReturn().getResponse().getContentAsString();
+        Wiring.OTP.failure = new com.creditagent.web.auth.otp.OtpDeliveryException(OtpChannel.SMS, new RuntimeException("down"));
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> otp.send(JsonPath.read(body, "$.challengeId"), OtpChannel.SMS))
+                    .isInstanceOf(com.creditagent.web.auth.otp.OtpDeliveryException.class);
+        } finally {
+            Wiring.OTP.failure = null;
+        }
+    }
 
     @Test
     void aWrongPasswordOrSsnSendsTheBrowserBackToTheForm() throws Exception {

@@ -1,5 +1,7 @@
 package com.creditagent.web.account;
 
+import com.creditagent.web.auth.TestLogins;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,8 +68,8 @@ class AccountServiceTest {
         };
         accounts = new AccountService(auth, users, sessions, alerts, reports, reportSource, List.of(failing, ended::add),
                 audit, clock);
-        auth.register("ada", PASSWORD, "ada@example.com", "98101", FakeIdentityVerifier.card("123-45-6789"));
-        auth.login("ada", PASSWORD);
+        auth.register("ada", PASSWORD, "ada@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("123-45-6789"));
+        TestLogins.login(auth, "ada", PASSWORD);
         Session session = sessions.byId.values().iterator().next();
         ada = new AuthenticatedUser("ada", session.sessionId(), session.ssnHash(), session.ssnLastFour());
     }
@@ -82,6 +84,7 @@ class AccountServiceTest {
 
         assertThat(export.account().userId()).isEqualTo("ada");
         assertThat(export.account().email()).isEqualTo("ada@example.com");
+        assertThat(export.account().mobilePhone()).isEqualTo("+12065550100");
         assertThat(export.account().ssnMasked()).isEqualTo("***-**-6789");
         assertThat(export.account().lastLoginAt()).isEqualTo(NOW);
         assertThat(export.account().consentVersion()).isNotBlank();
@@ -119,7 +122,7 @@ class AccountServiceTest {
         assertThat(ended).containsExactly(ada); // the failing listener did not stop the next one
         verify(audit).record(AuditLog.Event.ACCOUNT_DELETED, "user:ada", "user:ada", "OK");
         // The same person can open a new account later.
-        auth.register("ada2", PASSWORD, "ada@example.com", "98101", FakeIdentityVerifier.card("123-45-6789"));
+        auth.register("ada2", PASSWORD, "ada@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("123-45-6789"));
     }
 
     @Test
