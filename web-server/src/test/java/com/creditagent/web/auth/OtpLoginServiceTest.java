@@ -373,6 +373,24 @@ class OtpLoginServiceTest {
                 .hasMessageContaining("most codes");
     }
 
+    @Test
+    void anUncertainLastSendDoesNotPromiseAnotherCode() {
+        email.failure = uncertain(OtpChannel.EMAIL);
+        String id = otp.start("avery", PASSWORD).challengeId();
+        for (int i = 1; i <= 3; i++) {
+            int send = i;
+            assertThatThrownBy(() -> otp.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class)
+                    .satisfies(e -> {
+                        OtpDeliveryException failure = (OtpDeliveryException) e;
+                        assertThat(failure.lastSend()).isEqualTo(send == 3);
+                        assertThat(failure.retryAfter()).isEqualTo(send == 3 ? null : Duration.ofSeconds(30));
+                        assertThat(OtpProblems.notSent(failure).getBody().getDetail())
+                                .contains(send == 3 ? "log in again" : "ask for a new one in 30 seconds");
+                    });
+            clock.advance(Duration.ofSeconds(30));
+        }
+    }
+
     /** Delivers the message, then fails as a timed-out call would. */
     static final class OtpSenderThatDeliversThenFails implements com.creditagent.web.auth.otp.OtpSender {
         String code;

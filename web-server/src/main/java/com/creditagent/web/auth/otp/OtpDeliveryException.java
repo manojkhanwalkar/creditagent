@@ -18,21 +18,34 @@ public class OtpDeliveryException extends RuntimeException {
     private final OtpChannel channel;
     private final boolean refused;
     private final transient Duration retryAfter;
+    private final boolean lastSend;
 
     public OtpDeliveryException(OtpChannel channel, Throwable cause) {
-        this(channel, cause, clearlyRefused(cause), null);
+        this(channel, cause, clearlyRefused(cause), null, false);
     }
 
-    private OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused, Duration retryAfter) {
+    private OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused, Duration retryAfter,
+            boolean lastSend) {
         super("Could not send a sign-in code by " + channel, cause);
         this.channel = channel;
         this.refused = refused;
         this.retryAfter = retryAfter;
+        this.lastSend = lastSend;
     }
 
     /** The same failure, saying how long until another code may be asked for (the send still counts). */
     public OtpDeliveryException withRetryAfter(Duration wait) {
-        return new OtpDeliveryException(channel, getCause(), refused, wait);
+        return new OtpDeliveryException(channel, getCause(), refused, wait, false);
+    }
+
+    /** The same failure, for the last send this sign-in allows: no other code may be asked for. */
+    public OtpDeliveryException asLastSend() {
+        return new OtpDeliveryException(channel, getCause(), refused, null, true);
+    }
+
+    /** True when this was the sign-in's last allowed send, so only a new sign-in can send another. */
+    public boolean lastSend() {
+        return lastSend;
     }
 
     /** Error names that mean "slow down" or "over a limit", not "this message is invalid". */

@@ -192,7 +192,7 @@ public class OtpLoginService {
             // A timeout, 5xx or throttling may still have delivered it: the send keeps counting (so the
             // limits hold) and its code stays valid in case it arrives late.
             log.warn("Sign-in code for user {} by {} may not have been delivered", user.userId(), channel);
-            throw e.withRetryAfter(limits.resendCooldown());
+            throw challenge.sends() + 1 >= limits.maxSends() ? e.asLastSend() : e.withRetryAfter(limits.resendCooldown());
         }
         audit.record(AuditLog.Event.LOGIN_CODE_SENT, "user:" + user.userId(), "user:" + user.userId(), "OK",
                 Map.of("channel", channel.name()));

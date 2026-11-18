@@ -21,6 +21,9 @@ public final class OtpProblems {
 
     private static final Logger log = LoggerFactory.getLogger(OtpProblems.class);
 
+    static final String LAST_SEND_UNCONFIRMED = "We could not confirm that your code was sent, and this sign-in"
+            + " cannot send another. If it does not arrive in a few minutes, please log in again.";
+
     static final String NOT_SENT = "We could not send your code just now. Please try again, or choose the other option.";
 
     private OtpProblems() {}
@@ -54,6 +57,10 @@ public final class OtpProblems {
      */
     public static ResponseEntity<ProblemDetail> notSent(OtpDeliveryException e) {
         log.warn("Sign-in code not sent: {}", SafeLogging.describe(e));
+        if (!e.refused() && e.lastSend()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ProblemDetail.forStatusAndDetail(
+                    HttpStatus.SERVICE_UNAVAILABLE, LAST_SEND_UNCONFIRMED));
+        }
         if (e.refused() || e.retryAfter() == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, NOT_SENT));
