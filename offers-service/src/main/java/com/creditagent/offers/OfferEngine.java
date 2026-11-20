@@ -118,11 +118,13 @@ public class OfferEngine {
 
     /** Whether a marketplace product is safe to rank and pass on to people and agents. */
     static boolean valid(CardProduct p) {
-        return p != null && PRODUCT_ID.matcher(p.productId()).matches()
+        return p != null && p.productId() != null && PRODUCT_ID.matcher(p.productId()).matches()
                 && text(p.issuer(), 80) && text(p.name(), 80) && text(p.network(), 20) && text(p.rewardsType(), 20)
                 && text(p.rewardsBonus(), 200) && p.category() != null && p.states() != null && p.fees() != null
                 && p.minScore() >= 300 && p.minScore() <= 850 && p.aprMin() >= 0 && p.aprMax() >= p.aprMin()
-                && p.aprMax() <= 36;
+                && p.aprMax() <= 36
+                // The headline of a balance-transfer card quotes its intro offer.
+                && (p.category() != Category.BALANCE_TRANSFER || p.introBalanceTransfer() != null);
     }
 
     private static boolean text(String value, int max) {

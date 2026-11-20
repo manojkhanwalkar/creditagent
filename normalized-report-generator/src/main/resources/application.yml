@@ -24,3 +24,8 @@ management:
     health:
       probes:
         enabled: true
+
+logging:
+  level:
+    # It logs a rejected request's field values (an SSN, a name): keep them out of the logs.
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: error

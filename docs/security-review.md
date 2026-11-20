@@ -122,7 +122,7 @@ Check the model provider's data-retention terms before enabling it.
 - `alerts-service` is internal: every request needs the service token, bodies are limited to 4 KB, and the email is validated (`@Email`, at most 254 characters). The email travels in the POST body, so it does not reach access logs; `toString` of requests and alerts redacts it, and the monitor logs counts only.
 - The web server only ever looks up the signed-in user's own email; there is no endpoint that takes an email from the browser.
 - The placeholder source contacts nothing. A real provider would send users' emails to a third party: re-review then (data-processing agreement, k-anonymity or hashed look-ups).
-- Open: there is no account deletion yet; when one is added, it must delete the user's alerts too.
+- Account deletion erases the user's alerts (alerts-service `/internal/v1/alerts/erase`).
 
 ### S-21 Card offers (Mitigated)
 - **New personal data at rest:** the users table now holds the ZIP code (asked at registration) and the latest credit score with its time. Both are personal data; they live in the same encrypted-at-rest table as the rest of the account and are never logged. The SSN is still never stored: the first score is computed from the SSN the KYC check read, then dropped.

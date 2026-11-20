@@ -84,7 +84,7 @@ class AlertStoreTest {
         doReturn(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemResponse.builder().unprocessedItems(stuck).build())
                 .when(dynamo).batchWriteItem(any(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest.class));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> alerts.eraseAll("a@example.com"))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(AlertsEraseIncompleteException.class);
         org.mockito.Mockito.verify(dynamo, org.mockito.Mockito.times(3))
                 .batchWriteItem(any(software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest.class));
     }

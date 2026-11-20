@@ -149,6 +149,8 @@ services:
       DYNAMODB_ENDPOINT: http://dynamodb:8000
       DYNAMODB_CREATE_TABLES: "true"
       DARKWEB_PLACEHOLDER_EXPOSED: ${DARKWEB_PLACEHOLDER_EXPOSED:-}
+      # Demo pace; the default is hourly, since every cycle scans the users table.
+      DARKWEB_SCAN_INTERVAL: ${DARKWEB_SCAN_INTERVAL:-60s}
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
     depends_on: [dynamodb, web-server]

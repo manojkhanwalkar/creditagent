@@ -152,6 +152,15 @@ class OfferEngineTest {
         assertThat(OfferEngine.valid(good)).isTrue();
         assertThat(OfferEngine.valid(injected)).isFalse();
         assertThat(OfferEngine.valid(badId)).isFalse();
+        // A product with no id, or a balance-transfer card with no intro offer, is skipped, not a crash.
+        OfferModel.CardProduct noId = new OfferModel.CardProduct(null, "Bank", "Card", "Visa", Category.CASH_BACK, 600,
+                java.util.Set.of(), "cash back", 2, "fine", 0, null, null, 10, 20, 3, 0, null, OfferMarketplace.BANK);
+        OfferModel.CardProduct noIntro = new OfferModel.CardProduct("bt-card", "Bank", "Card", "Visa", Category.BALANCE_TRANSFER,
+                600, java.util.Set.of(), "cash back", 2, "fine", 0, null, null, 10, 20, 3, 0, null, OfferMarketplace.BANK);
+        assertThat(OfferEngine.valid(noId)).isFalse();
+        assertThat(OfferEngine.valid(noIntro)).isFalse();
+        OfferEngine withNulls = new OfferEngine(() -> java.util.Arrays.asList(good, noId, noIntro), Clock.fixed(NOW, ZoneOffset.UTC));
+        assertThat(withNulls.offers(800, null).offers()).extracting(Offer::productName).containsExactly(good.name());
     }
 
     @Test

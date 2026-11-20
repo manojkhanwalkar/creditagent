@@ -10,8 +10,9 @@ spring:
 
 credit:
   monitor:
-    # One scan cycle over every registered user's email at every known location, then this pause.
-    interval: ${DARKWEB_SCAN_INTERVAL:60s}
+    # One scan cycle over every registered user's email at every known location, then this pause. Each
+    # cycle scans the users table: hourly keeps that cheap (compose sets 60s so the demo shows alerts fast).
+    interval: ${DARKWEB_SCAN_INTERVAL:1h}
     initial-delay: ${DARKWEB_SCAN_INITIAL_DELAY:10s}
     # Placeholder "known locations": nothing is contacted. A real source replaces DarkWebSource.
     locations: ${DARKWEB_LOCATIONS:paste-site-alpha,breach-forum-beta,marketplace-gamma}
