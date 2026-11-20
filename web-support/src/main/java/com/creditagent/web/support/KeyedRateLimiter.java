@@ -10,8 +10,10 @@ import java.util.function.LongSupplier;
  * Fixed one-minute windows, one per key (a client IP, a user id): at most {@code limit} requests per
  * key per window. In memory and per instance.
  *
- * <p>Memory is bounded by the number of keys active in the last minute: once more than
- * {@code maxKeys} are tracked, windows that have ended are dropped.
+ * <p>Memory is bounded by {@code maxKeys}: past it, windows that have ended are swept (at most once
+ * a second, so a flood of new keys does not cost a full scan per request), and while the map is
+ * still full of live windows a key it does not track yet is refused. Under a flood from many
+ * addresses, clients already tracked keep their own limit and new ones wait a second.
  */
 public final class KeyedRateLimiter {
 
@@ -21,6 +23,10 @@ public final class KeyedRateLimiter {
     private final int maxKeys;
     private final LongSupplier millis;
     private final Map<String, Window> windows = new ConcurrentHashMap<>();
+    /** When ended windows were last swept; sweeps run at most once per {@link #SWEEP_INTERVAL_MILLIS}. */
+    private volatile long lastSweep = Long.MIN_VALUE / 2; // far past, without overflowing now - lastSweep
+
+    static final long SWEEP_INTERVAL_MILLIS = 1_000;
 
     /**
      * @param limit requests each key may make per minute
@@ -44,8 +50,14 @@ public final class KeyedRateLimiter {
      */
     public long acquire(String key) {
         long now = millis.getAsLong();
-        if (windows.size() > maxKeys) {
-            windows.values().removeIf(w -> now - w.start >= WINDOW_MILLIS);
+        if (windows.size() >= maxKeys) {
+            if (now - lastSweep >= SWEEP_INTERVAL_MILLIS) {
+                lastSweep = now;
+                windows.values().removeIf(w -> now - w.start >= WINDOW_MILLIS);
+            }
+            if (windows.size() >= maxKeys && !windows.containsKey(key)) {
+                return 1; // full of live windows: no room for a new client right now
+            }
         }
         Window window = windows.compute(
                 key, (k, existing) -> existing == null || now - existing.start >= WINDOW_MILLIS ? new Window(now) : existing);
