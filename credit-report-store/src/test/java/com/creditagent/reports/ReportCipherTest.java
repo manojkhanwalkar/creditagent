@@ -70,4 +70,12 @@ class ReportCipherTest {
         assertThat(new ReportCipher(OLD + "\n", List.of()).currentKeyId())
                 .isNotEqualTo(new ReportCipher(OLD, List.of()).currentKeyId());
     }
+
+    @Test
+    void aSecretThatOnlyReachesTheMinimumWithItsNewlineStillStarts() {
+        String thirtyOne = "k".repeat(ReportCipher.MIN_SECRET_BYTES - 1);
+        // 31 characters + newline = 32 bytes: valid before this change, and must stay valid.
+        ReportCipher cipher = new ReportCipher(thirtyOne + "\n", List.of(thirtyOne + "\n"));
+        assertThat(cipher.decrypt(cipher.encrypt(REPORT, "row"), "row")).isEqualTo(REPORT);
+    }
 }

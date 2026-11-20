@@ -11,9 +11,11 @@ import java.util.function.LongSupplier;
  * key per window. In memory and per instance.
  *
  * <p>Memory is bounded by {@code maxKeys}: past it, windows that have ended are swept (at most once
- * a second, so a flood of new keys does not cost a full scan per request), and while the map is
- * still full of live windows a key it does not track yet is refused. Under a flood from many
- * addresses, clients already tracked keep their own limit and new ones wait a second.
+ * a second, so a flood of new keys does not cost a full scan per request). While the map is still
+ * full of live windows, a key it does not track yet is admitted without being tracked: a flood from
+ * many addresses must not lock new, legitimate clients out (of login, say). Per-client limiting is
+ * then off for new clients until windows end; the service-wide inbound limits (token bucket and
+ * in-flight cap) still bound the total load.
  */
 public final class KeyedRateLimiter {
 
@@ -56,7 +58,7 @@ public final class KeyedRateLimiter {
                 windows.values().removeIf(w -> now - w.start >= WINDOW_MILLIS);
             }
             if (windows.size() >= maxKeys && !windows.containsKey(key)) {
-                return 1; // full of live windows: no room for a new client right now
+                return 0; // full of live windows: admit without tracking (fail open, memory bounded)
             }
         }
         Window window = windows.compute(

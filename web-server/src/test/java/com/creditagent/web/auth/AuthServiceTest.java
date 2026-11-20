@@ -388,7 +388,10 @@ class AuthServiceTest {
         auth.revokeReusedGrant("g-late", codeExpiry);
 
         assertThat(auth.activeGrant("g-late", "avery")).isEmpty();
-        assertThat(sessions.byId).doesNotContainKey("g-late");
+        // Overwritten by the tombstone, not deleted: a retried conditional create of the grant still fails.
+        assertThat(sessions.byId.get("g-late").userId()).isEqualTo(AuthService.REVOKED_GRANT_OWNER);
+        assertThat(sessions.create(new Session("g-late", "avery", null, null, clock.instant(), clock.instant(),
+                clock.instant().plusSeconds(3600)))).isFalse();
     }
 
     @Test

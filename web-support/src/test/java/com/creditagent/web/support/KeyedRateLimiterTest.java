@@ -49,18 +49,21 @@ class KeyedRateLimiterTest {
     }
 
     @Test
-    void whileFullOfLiveWindowsNewKeysWaitAndTrackedOnesKeepTheirLimit() {
-        KeyedRateLimiter limiter = new KeyedRateLimiter(5, 2, now::get);
+    void whileFullOfLiveWindowsNewKeysAreAdmittedUntrackedAndTrackedOnesKeepTheirLimit() {
+        KeyedRateLimiter limiter = new KeyedRateLimiter(1, 2, now::get);
         assertThat(limiter.acquire("a")).isZero();
         assertThat(limiter.acquire("b")).isZero();
 
-        assertThat(limiter.acquire("c")).isEqualTo(1);   // no room: refused, not tracked
-        assertThat(limiter.acquire("a")).isZero();       // known clients still admitted
-        assertThat(limiter.trackedKeys()).isEqualTo(2);  // memory stays bounded
+        // A new client during a flood is never locked out: admitted, but not tracked.
+        for (int i = 0; i < 5; i++) {
+            assertThat(limiter.acquire("c")).isZero();
+        }
+        assertThat(limiter.trackedKeys()).isEqualTo(2);    // memory stays bounded
+        assertThat(limiter.acquire("a")).isPositive();      // tracked clients keep their own limit
     }
 
     @Test
-    void aFloodOfNewKeysSweepsAtMostOnceASecond() {
+    void aFloodOfNewKeysSweepsAtMostOnceASecondAndFreesRoomOnceWindowsEnd() {
         KeyedRateLimiter limiter = new KeyedRateLimiter(5, 2, () -> now.get());
         limiter.acquire("a");
         limiter.acquire("b");
@@ -68,14 +71,15 @@ class KeyedRateLimiterTest {
         limiter.acquire("c");                           // sweeps: a and b go, c is tracked
         limiter.acquire("d");
         assertThat(limiter.trackedKeys()).isEqualTo(2);
-        // Full of live windows; within the same second no further sweep frees room.
+        // Full of live windows: a flood of new keys is admitted, none of them tracked.
         for (int i = 0; i < 1_000; i++) {
-            assertThat(limiter.acquire("new-" + i)).isEqualTo(1);
+            assertThat(limiter.acquire("new-" + i)).isZero();
         }
         assertThat(limiter.trackedKeys()).isEqualTo(2);
-        // A second later the sweep runs again (nothing has ended yet, so still no room).
-        now.addAndGet(KeyedRateLimiter.SWEEP_INTERVAL_MILLIS);
-        assertThat(limiter.acquire("later")).isEqualTo(1);
+        // Once c and d have ended (and a second has passed since the last sweep), new keys are tracked again.
+        now.addAndGet(KeyedRateLimiter.WINDOW_MILLIS);
+        limiter.acquire("later");
+        assertThat(limiter.trackedKeys()).isEqualTo(1);
     }
 
     @Test

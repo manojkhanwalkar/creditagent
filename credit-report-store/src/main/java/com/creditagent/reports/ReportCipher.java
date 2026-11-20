@@ -75,11 +75,18 @@ public final class ReportCipher {
      */
     private void addForDecryption(String secret) {
         String stripped = secret.strip();
+        boolean usable = false;
         for (String form : List.of(secret, stripped, stripped + "\n")) {
-            if (!form.isBlank()) {
+            // A form too short to be a key (the stripped form of a secret that only reached the
+            // minimum with its newline) cannot have encrypted anything: skip it, never fail startup.
+            if (!form.isBlank() && form.getBytes(StandardCharsets.UTF_8).length >= MIN_SECRET_BYTES) {
                 Key key = key(form);
                 byId.putIfAbsent(key.id(), key);
+                usable = true;
             }
+        }
+        if (!usable) {
+            key(secret); // a secret with no form long enough is a configuration error: refused as before
         }
     }
 
