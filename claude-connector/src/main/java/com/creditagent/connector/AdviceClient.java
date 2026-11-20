@@ -34,14 +34,18 @@ public class AdviceClient {
     }
 
     private final RestClient restClient;
+    private final String serviceToken;
 
-    public AdviceClient(RestClient restClient) {
+    /** @param serviceToken the internal API token the client agent requires; null = none configured */
+    public AdviceClient(RestClient restClient, String serviceToken) {
         this.restClient = Objects.requireNonNull(restClient);
+        this.serviceToken = serviceToken;
     }
 
     public static AdviceClient create(RestClient.Builder builder, ConnectorProperties properties, RetrySettings retry) {
         return new AdviceClient(
-                HttpClients.restClient(builder, properties.clientAgentUrl(), properties.adviceTimeout(), retry, false));
+                HttpClients.restClient(builder, properties.clientAgentUrl(), properties.adviceTimeout(), retry, false),
+                properties.serviceToken());
     }
 
     /**
@@ -49,8 +53,13 @@ public class AdviceClient {
      * @throws ServiceUnavailableException if it could not be reached
      */
     public CreditAdvice adviceFor(Ssn ssn) {
+        if (serviceToken == null) {
+            // The client agent refuses every caller without the token: fail here, without sending the SSN.
+            throw new ServiceUnavailableException("No INTERNAL_API_TOKEN configured for the client agent", null);
+        }
         try {
             CreditAdvice advice = restClient.post().uri(PATH)
+                    .header(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer " + serviceToken)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .body(Map.of("ssn", ssn.digits()))

@@ -27,10 +27,10 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo and `mobilePhone`), `POST /api/v1/auth/login` (password → challenge), `POST /api/v1/auth/login/otp` (send a code), `POST /api/v1/auth/login/verify` (code → JWT), `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
-| `credit-report-generator` | 8083 | `POST /api/v1/reports`; stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
+| `credit-report-generator` | 8083 | `POST /api/v1/reports` (needs the internal token); stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
 | `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
-| `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
+| `client-agent` | 8086 | `POST /api/v1/advice` (needs `Authorization: Bearer <INTERNAL_API_TOKEN>`); calls the agent over A2A |
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
 | `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
 | `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each user whose address was found in the last 24 hours: one email per user, no locations, a suggestion to buy identity protection. SMTP via `MAIL_HOST` (compose: Mailpit at http://localhost:8025); without one it sends nothing |
@@ -68,7 +68,7 @@ Then:
 * open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN. The local stack has no AWS account, so sign-in codes are written to the web server's log instead of being sent (`OTP_DELIVERY=log`): `docker compose logs web-server | grep 'sign-in code'`;
 * get recommendations through the agents:
   ```bash
-  curl -s localhost:8086/api/v1/advice -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
+  curl -s localhost:8086/api/v1/advice -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
   ```
 
 ## Run without Docker

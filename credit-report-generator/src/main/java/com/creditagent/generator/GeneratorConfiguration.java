@@ -27,15 +27,13 @@ class GeneratorConfiguration {
     }
 
     /**
-     * The internal API (erasing a consumer's reports) needs the service token; only the web server holds
-     * it. Ordered before the inbound limits, so callers without it cannot use up the shared bucket. The
-     * older {@code /api/v1/reports} stays as it was (S-14).
+     * Every API needs the service token: erasing a consumer's reports (the web server) and generating
+     * them, which replaces whatever is stored for that SSN (S-14). Ordered before the inbound limits, so
+     * callers without it cannot use up the shared bucket. Health stays open.
      */
     @Bean
     FilterRegistrationBean<ServiceTokenFilter> internalApiTokenFilter(GeneratorProperties properties) {
-        FilterRegistrationBean<ServiceTokenFilter> registration = ServiceTokenFilter.registration(properties.serviceToken());
-        registration.setUrlPatterns(java.util.List.of("/internal/*"));
-        return registration;
+        return ServiceTokenFilter.registration(properties.serviceToken());
     }
 
     @Bean

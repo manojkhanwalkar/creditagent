@@ -13,7 +13,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
 | S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups limited to the user's own SSN; the SSN is read by a KYC check of the user's card photo, but the bundled KYC provider is a dummy |
-| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open; first step: the report-lock check uses a shared internal token (`INTERNAL_API_TOKEN`) |
+| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Partly fixed: the internal token (`INTERNAL_API_TOKEN`) guards the report-lock check, the generator, the client agent and the advisor. Open: NRG, score calculator, A2A agent |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Fixed by S-24: reports are AES-256-GCM encrypted in the `CreditReports` table |
 | S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed; now the `CreditReports` table's key is the SSN's HMAC, and each report is encrypted (S-24) |
@@ -25,7 +25,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-11 | Low | Browser hardening (XSS, clickjacking, caching) | Fixed |
 | S-12 | Low | The MCP tool `get_credit_report` hands full reports to any MCP host, including LLM apps | Accepted, documented |
 | S-13 | Low | Request bodies have no global size limit | Mostly fixed: every untrusted-body endpoint is capped before reading; services also refuse excess load (token bucket, in-flight cap) |
-| S-14 | Low | The generator API can overwrite any report | Open: internal only |
+| S-14 | Low | The generator API can overwrite any report | Fixed (deep review 2026-11-19): needs the internal token |
 | S-15 | Low | CI supply chain (unpinned actions, broad token permissions) | Fixed |
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
@@ -173,8 +173,8 @@ Every endpoint that reads an untrusted body caps it with `RequestSizeLimitFilter
 Every service also refuses excess load before doing any work: a token bucket (429) and an in-flight cap (503), both with `Retry-After` (`credit.inbound.*`, see the architecture's Resilience section).
 **Remaining:** cap request size at the gateway or ingress as well.
 
-### S-14 Generator overwrites reports (Low, open)
-`POST /api/v1/reports` replaces any existing file. It is an internal tool and is not published in compose. Keep it unexposed; once S-2 is in place, give it its own credentials.
+### S-14 Generator overwrites reports (Low, fixed)
+`POST /api/v1/reports` replaces any existing report. Since the 2026-11-19 deep review it needs the internal token, like the erase API; it is not published in compose.
 
 ### S-15 CI supply chain (Fixed)
 - Every action is pinned to a commit SHA, and Dependabot keeps the pins current.

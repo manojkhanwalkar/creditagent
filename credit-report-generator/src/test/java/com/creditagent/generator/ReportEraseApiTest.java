@@ -86,9 +86,14 @@ class ReportEraseApiTest {
     }
 
     @Test
-    void thePublicReportApiDoesNotNeedTheToken() {
-        int status = client.post().uri("/api/v1/reports").contentType(MediaType.APPLICATION_JSON)
+    void generatingReportsNeedsTheTokenToo() {
+        // Generating replaces whatever is stored for the SSN, so it is as guarded as erasing (S-14).
+        int anonymous = client.post().uri("/api/v1/reports").contentType(MediaType.APPLICATION_JSON)
                 .body("{\"ssn\":\"234-56-7890\"}").exchange((req, res) -> res.getStatusCode().value());
-        assertThat(status).isEqualTo(201);
+        assertThat(anonymous).isEqualTo(401);
+        int withToken = client.post().uri("/api/v1/reports").contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + TOKEN)
+                .body("{\"ssn\":\"234-56-7890\"}").exchange((req, res) -> res.getStatusCode().value());
+        assertThat(withToken).isEqualTo(201);
     }
 }

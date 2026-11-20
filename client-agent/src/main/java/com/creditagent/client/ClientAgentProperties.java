@@ -10,12 +10,20 @@ import org.springframework.validation.annotation.Validated;
  * @param timeout longest wait for the agent's answer. Defaults to 90 s: longer than the agent's own
  *     worst case (lock check about 14.5 s + MCP read 20 s + Score Calculator with retries about 17.4 s
  *     + LLM 30 s, about 82 s), so the client never gives up on an answer the agent is still completing.
+ * @param serviceToken the internal API token ({@code INTERNAL_API_TOKEN}) callers (the Claude connector)
+ *     must present. Blank turns the API off (404): advice is for any SSN, so it is never open.
  */
 @Validated
 @ConfigurationProperties("credit.client")
-public record ClientAgentProperties(@NotBlank String intelligenceAgentUrl, Duration timeout) {
+public record ClientAgentProperties(@NotBlank String intelligenceAgentUrl, Duration timeout, String serviceToken) {
 
     public ClientAgentProperties {
         timeout = timeout == null ? Duration.ofSeconds(90) : timeout;
+    }
+
+    @Override
+    public String toString() {
+        return "ClientAgentProperties[intelligenceAgentUrl=" + intelligenceAgentUrl + ", timeout=" + timeout
+                + ", serviceToken=<redacted>]";
     }
 }

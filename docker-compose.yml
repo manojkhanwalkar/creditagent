@@ -26,7 +26,7 @@ services:
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
       CREDIT_SEED_SSNS: ${CREDIT_SEED_SSNS:-}
-      # The erase API (account deletion) needs the shared internal token.
+      # Every API (generate, and erase for account deletion) needs the shared internal token.
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
     depends_on: [dynamodb]
 
@@ -126,6 +126,7 @@ services:
     build: { context: ., args: { MODULE: client-agent } }
     environment:
       INTELLIGENCE_AGENT_URL: http://credit-intelligence-agent:8085
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
     ports:
       - "127.0.0.1:8086:8086"
     depends_on: [credit-intelligence-agent]
