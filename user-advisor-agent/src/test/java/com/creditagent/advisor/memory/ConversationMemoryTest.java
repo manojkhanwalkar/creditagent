@@ -113,12 +113,36 @@ class ConversationMemoryTest {
         assertThat(memory.history("d")).isEmpty();
         assertThat(memory.history("a")).isNotEmpty();
         assertThat(memory.history("e")).isNotEmpty();
-        // The check runs on every write: existing conversations grow too.
+        // The figure only changes after a GC: right after an eviction, writes do not halve again.
         memory.remember("a", turn(2));
+        memory.remember("b", turn(2));
+        assertThat(memory.size()).isEqualTo(3);
+        // Still under pressure once the cooldown is over (existing conversations grow too): halve again.
+        clock.now = clock.now.plus(ConversationMemory.PRESSURE_COOLDOWN);
+        memory.remember("a", turn(3));
         assertThat(memory.size()).isEqualTo(2);
         heap.set(0.1);
+        clock.now = clock.now.plus(ConversationMemory.PRESSURE_COOLDOWN);
         memory.remember("f", turn(1));
         assertThat(memory.size()).isEqualTo(3);
+    }
+
+    @Test
+    void onePressureEpisodeDoesNotEmptyTheStore() {
+        ConversationMemory memory = memory(10, 1000);
+        for (int i = 0; i < 64; i++) {
+            memory.remember("c" + i, turn(1));
+        }
+        heap.set(0.95); // stays high: the after-GC figure has not been refreshed
+        for (int i = 0; i < 20; i++) {
+            memory.remember("c63", turn(i + 2));
+        }
+        assertThat(memory.size()).isEqualTo(32);
+    }
+
+    @Test
+    void theJvmFigureIsAShare() {
+        assertThat(ConversationMemory.jvmHeapUsage()).isBetween(0.0, 1.0);
     }
 
     @Test

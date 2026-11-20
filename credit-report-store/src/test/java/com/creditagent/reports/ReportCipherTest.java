@@ -54,4 +54,20 @@ class ReportCipherTest {
         assertThatThrownBy(() -> new ReportCipher(null, List.of())).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new ReportCipher(NEW, List.of("short"))).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void aKeyWithATrailingNewlineStillDecryptsAfterRotation() {
+        // Written with a key read from a secret file, newline included.
+        ReportCipher.Sealed old = new ReportCipher(OLD + "\n", List.of()).encrypt(REPORT, "row");
+
+        // After rotation the list setting hands the old key back trimmed: it must still be found.
+        assertThat(new ReportCipher(NEW, List.of(OLD)).decrypt(old, "row")).isEqualTo(REPORT);
+        assertThat(new ReportCipher(NEW, List.of(OLD + "\n")).decrypt(old, "row")).isEqualTo(REPORT);
+        // And the other way round: written trimmed, rotated with the newline.
+        ReportCipher.Sealed trimmed = new ReportCipher(OLD, List.of()).encrypt(REPORT, "row");
+        assertThat(new ReportCipher(NEW, List.of(OLD + "\n")).decrypt(trimmed, "row")).isEqualTo(REPORT);
+        // The current key encrypts exactly as given, so existing reports keep their key id.
+        assertThat(new ReportCipher(OLD + "\n", List.of()).currentKeyId())
+                .isNotEqualTo(new ReportCipher(OLD, List.of()).currentKeyId());
+    }
 }

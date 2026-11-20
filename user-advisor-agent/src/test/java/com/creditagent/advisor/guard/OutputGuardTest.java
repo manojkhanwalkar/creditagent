@@ -77,5 +77,7 @@ class OutputGuardTest {
         assertThat(cut).hasSizeLessThanOrEqualTo(200).endsWith("…");
         assertThat(guard.check("<<>>").replaced()).isTrue();
         assertThat(guard.check("​").replaced()).isTrue();
+        // Nothing left is not a prompt leak: evals must not count it as one.
+        assertThat(guard.check("<<>>").problem()).isEqualTo(OutputGuard.Problem.EMPTY);
     }
 }

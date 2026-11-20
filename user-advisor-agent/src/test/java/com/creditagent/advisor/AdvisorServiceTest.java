@@ -69,6 +69,31 @@ class AdvisorServiceTest {
     }
 
     @Test
+    void aFailingModelIsAnsweredAndRecordedNotThrown() {
+        java.util.List<com.creditagent.advisor.eval.EvalRecord> records = new java.util.ArrayList<>();
+        AdvisorService advisor = new AdvisorService(new InputGuard(1000), new OutputGuard(2000),
+                (q, h, r) -> { throw new IllegalStateException("LLM timed out"); }, memory, records::add,
+                java.time.Clock.systemUTC());
+
+        AdvisorService.Reply reply = advisor.chat(ID, "Why is my score low?", TestReports.stretched());
+
+        assertThat(reply.refused()).isTrue();
+        assertThat(reply.reply()).isEqualTo(AdvisorService.MODEL_UNAVAILABLE);
+        assertThat(records).singleElement().satisfies(r -> {
+            assertThat(r.outputVerdict()).isEqualTo("MODEL_ERROR");
+            assertThat(r.modelAnswer()).isNull();
+        });
+        assertThat(memory.history(ID)).isEmpty();
+    }
+
+    @Test
+    void anOverLongQuestionIsLoggedCapped() {
+        assertThat(com.creditagent.advisor.eval.EvalRecord.safe("x".repeat(20_000))).hasSizeLessThanOrEqualTo(4_001);
+        assertThat(com.creditagent.advisor.eval.EvalRecord.safe("\uFDFA".repeat(4_000))).hasSizeLessThanOrEqualTo(4_001);
+        assertThat(com.creditagent.advisor.eval.EvalRecord.safe(null)).isNull();
+    }
+
+    @Test
     void everyTurnIsRecordedForEvalsRedactedAndWithoutTheReport() {
         java.util.List<com.creditagent.advisor.eval.EvalRecord> records = new java.util.ArrayList<>();
         java.time.Clock fixed = java.time.Clock.fixed(java.time.Instant.parse("2026-11-09T12:00:00Z"), java.time.ZoneOffset.UTC);

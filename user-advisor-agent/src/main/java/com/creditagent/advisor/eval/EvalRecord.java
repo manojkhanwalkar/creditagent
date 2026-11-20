@@ -31,9 +31,18 @@ public record EvalRecord(
         String model,
         long latencyMillis) {
 
-    /** Cleaned and redacted, ready for the log; null stays null. */
+    /** Longest text one field keeps: a refused, over-long question needs no more to be evaluated. */
+    static final int MAX_FIELD_CHARS = 4_000;
+
+    /** Cleaned, redacted and capped at {@link #MAX_FIELD_CHARS}, ready for the log; null stays null. */
     public static String safe(String text) {
-        return text == null ? null : PiiRedactor.redact(TextNormalizer.clean(text));
+        if (text == null) {
+            return null;
+        }
+        // Capped before cleaning too: normalisation can expand a character many times (U+FDFA).
+        String bounded = text.length() > MAX_FIELD_CHARS ? text.substring(0, MAX_FIELD_CHARS) : text;
+        String clean = PiiRedactor.redact(TextNormalizer.clean(bounded));
+        return clean.length() > MAX_FIELD_CHARS ? clean.substring(0, MAX_FIELD_CHARS) + "…" : clean;
     }
 
     @Override
