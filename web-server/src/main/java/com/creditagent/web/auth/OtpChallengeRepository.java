@@ -50,10 +50,11 @@ public interface OtpChallengeRepository {
     boolean reserveUserSend(String userId, Instant now, int maxPerHour);
 
     /**
-     * Undoes {@link #recordSend} for a code that was not delivered: removes the code and its send time
-     * and gives back one send, only while {@code codeHash} is still the current code.
+     * Undoes {@link #recordSend} for a code that was not delivered: puts back the code that was current
+     * before ({@code previous}'s channel, hash, expiry and send time, or none) and gives back one send,
+     * only while {@code codeHash} is still the current code. A code the user already holds keeps working.
      */
-    void releaseSend(String challengeId, String codeHash);
+    void releaseSend(String challengeId, String codeHash, OtpChallenge previous);
 
     /** Undoes one {@link #reserveUserSend} in the clock hour of {@code now}; never below zero. */
     void releaseUserSend(String userId, Instant now);

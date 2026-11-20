@@ -182,11 +182,13 @@ public final class InMemoryRepositories {
         }
 
         @Override
-        public synchronized void releaseSend(String challengeId, String codeHash) {
+        public synchronized void releaseSend(String challengeId, String codeHash, OtpChallenge previous) {
             OtpChallenge c = byId.get(challengeId);
             if (c != null && codeHash.equals(c.codeHash()) && c.sends() > 0) {
-                byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(), null,
-                        null, null, null, c.sends() - 1, c.attempts()));
+                boolean had = previous != null && previous.codeHash() != null;
+                byId.put(challengeId, new OtpChallenge(c.challengeId(), c.userId(), c.createdAt(), c.expiresAt(),
+                        had ? previous.channel() : null, had ? previous.codeHash() : null,
+                        had ? previous.codeExpiresAt() : null, had ? previous.lastSentAt() : null, c.sends() - 1, c.attempts()));
             }
         }
 

@@ -175,7 +175,7 @@ public class OtpLoginService {
         }
         // Counted only once this sign-in's own limits passed, so a refused send costs no hourly quota.
         if (!challenges.reserveUserSend(user.userId(), now, limits.maxSendsPerUserPerHour())) {
-            release(challengeId, codeHash, null, now, null);
+            release(challengeId, codeHash, challenge, null, now, null);
             log.warn("User {} reached the hourly sign-in code limit", user.userId());
             throw new TooManyCodesException("Too many sign-in codes were sent to this account. Please try again later.",
                     Duration.between(now, now.truncatedTo(ChronoUnit.HOURS).plus(Duration.ofHours(1))), true);
@@ -186,7 +186,7 @@ public class OtpLoginService {
             if (e.refused()) {
                 // Certainly not delivered: give the send back, so "try again or choose the other option"
                 // works at once.
-                release(challengeId, codeHash, user.userId(), now, e);
+                release(challengeId, codeHash, challenge, user.userId(), now, e);
                 throw e;
             }
             // A timeout, 5xx or throttling may still have delivered it: the send keeps counting (so the
@@ -256,12 +256,13 @@ public class OtpLoginService {
     }
 
     /**
-     * Undoes a recorded send (only while its code is still the current one) and, with {@code userId},
-     * its hourly count. A failure here is logged and attached to {@code cause}; the TTL clears the rest.
+     * Undoes a recorded send (only while its code is still the current one), putting back the code that
+     * was current before it, and, with {@code userId}, its hourly count. A failure here is logged and attached to {@code cause}; the TTL clears the rest.
      */
-    private void release(String challengeId, String codeHash, String userId, Instant now, RuntimeException cause) {
+    private void release(String challengeId, String codeHash, OtpChallenge previous, String userId, Instant now,
+            RuntimeException cause) {
         try {
-            challenges.releaseSend(challengeId, codeHash);
+            challenges.releaseSend(challengeId, codeHash, previous);
             if (userId != null) {
                 challenges.releaseUserSend(userId, now);
             }

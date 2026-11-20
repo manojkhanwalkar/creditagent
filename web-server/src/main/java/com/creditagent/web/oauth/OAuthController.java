@@ -68,8 +68,10 @@ class OAuthController {
         this.otp = otp;
     }
 
-    /** The consent page's first step. Never echoed back; only lengths are bounded. */
-    record SignInRequest(String userId, String password, String ssn) {
+    /** The consent page's first step. Never echoed back; bounded like the login API. */
+    record SignInRequest(@jakarta.validation.constraints.Size(max = 64) String userId,
+            @jakarta.validation.constraints.Size(max = 256) String password,
+            @jakarta.validation.constraints.Size(max = 20) String ssn) {
         @Override
         public String toString() {
             return "SignInRequest[userId=" + userId + ", password=<redacted>, ssn=<redacted>]";
@@ -132,7 +134,7 @@ class OAuthController {
      * code can go (masked). Wrong user id, password or SSN all get the same 401.
      */
     @PostMapping(path = SIGN_IN, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<Map<String, Object>> signIn(@RequestBody SignInRequest request) {
+    ResponseEntity<Map<String, Object>> signIn(@jakarta.validation.Valid @RequestBody SignInRequest request) {
         requireEnabled();
         Ssn ssn;
         try {
@@ -163,6 +165,9 @@ class OAuthController {
     @PostMapping(path = APPROVE, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Map<String, Object>> approve(@RequestBody Map<String, String> body) {
         requireEnabled();
+        if (tooLong(body.get("ssn"), 20) || tooLong(body.get("challengeId"), 64) || tooLong(body.get("code"), 16)) {
+            return ResponseEntity.badRequest().body(Map.of("status", 400, "detail", "A field is too long."));
+        }
         AuthorizationRequest request;
         try {
             request = oauth.authorizationRequest(body);
@@ -186,6 +191,17 @@ class OAuthController {
         }
         return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(Map.of("redirect", oauth.approve(request, owner.get(), ssn).toString()));
+    }
+
+    private static boolean tooLong(String value, int max) {
+        return value != null && value.length() > max;
+    }
+
+    /** The account went away between the steps (deleted meanwhile): a 401, never a 500. */
+    @ExceptionHandler(com.creditagent.web.auth.AuthExceptions.UnauthenticatedException.class)
+    ResponseEntity<Map<String, Object>> unauthenticated(com.creditagent.web.auth.AuthExceptions.UnauthenticatedException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(Map.of("status", 401, "detail", BAD_SIGN_IN, "restart", true));
     }
 
     @ExceptionHandler(InvalidOtpRequestException.class)

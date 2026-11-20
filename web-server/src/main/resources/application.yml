@@ -1,5 +1,9 @@
 server:
   port: ${PORT:8080}
+  tomcat:
+    # Form-encoded bodies (/oauth/token, /oauth/revoke, the consent form) are parsed by Tomcat, not
+    # through RequestSizeLimitFilter's stream, so they are capped here to the same 64 KB.
+    max-http-form-post-size: 64KB
   error:
     include-message: never
     include-stacktrace: never

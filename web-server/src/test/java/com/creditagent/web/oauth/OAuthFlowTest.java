@@ -374,6 +374,24 @@ class OAuthFlowTest {
     }
 
     @Test
+    void oversizedConsentFieldsAreRefusedBeforeAnyCheck() throws Exception {
+        consentSignIn("Avery", PASSWORD, "1".repeat(21)).andExpect(status().isBadRequest());
+        consentSignIn("a".repeat(65), PASSWORD, SSN).andExpect(status().isBadRequest());
+        String clientId = registerClient("Claude", CALLBACK);
+        consentApprove(authorizeParams(clientId), SSN, "c".repeat(65), "123456")
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.detail").value("A field is too long."));
+        consentApprove(authorizeParams(clientId), SSN, "c", "1".repeat(17)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void anAccountGoneBetweenTheStepsIsA401NotA500() {
+        OAuthController controller = new OAuthController(null, auth, otp);
+        var answer = controller.unauthenticated(new com.creditagent.web.auth.AuthExceptions.UnauthenticatedException("gone"));
+        assertThat(answer.getStatusCode().value()).isEqualTo(401);
+        assertThat(answer.getBody()).containsEntry("restart", true).containsEntry("detail", OAuthController.BAD_SIGN_IN);
+    }
+
+    @Test
     void aWrongCodeIsRefusedWithTriesLeftAndTheRightOneStillWorks() throws Exception {
         String clientId = registerClient("Claude", CALLBACK);
         String challengeId = challengeWithCode(SSN);

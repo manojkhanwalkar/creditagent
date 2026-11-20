@@ -178,7 +178,9 @@ public class ConnectorMcpHandler {
         tool.putObject("annotations")
                 .put("title", title)
                 .put("readOnlyHint", readOnly)
-                .put("destructiveHint", false)
+                // The only write tool can unlock the report, removing a fraud protection: hosts should
+                // ask the user before running it, which is what destructiveHint tells them.
+                .put("destructiveHint", !readOnly)
                 .put("idempotentHint", true)
                 .put("openWorldHint", false);
         return tool;

@@ -424,7 +424,7 @@ class OtpLoginServiceTest {
     void aReleaseThatFailsIsAttachedToTheDeliveryError() {
         InMemoryRepositories.OtpChallenges broken = new InMemoryRepositories.OtpChallenges() {
             @Override
-            public synchronized void releaseSend(String challengeId, String codeHash) {
+            public synchronized void releaseSend(String challengeId, String codeHash, OtpChallenge previous) {
                 throw new IllegalStateException("DynamoDB down");
             }
         };
@@ -447,6 +447,33 @@ class OtpLoginServiceTest {
         assertThatThrownBy(() -> strict.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class);
         assertThat(challenges.byId.get(id).sends()).isZero();
         assertThat(challenges.byId.get(id).codeHash()).isNull();
+    }
+
+    @Test
+    void aRefusedResendKeepsTheCodeTheUserAlreadyHas() {
+        String id = otp.start("avery", PASSWORD).challengeId();
+        otp.send(id, OtpChannel.EMAIL);
+        String first = email.lastCode();
+        clock.advance(Duration.ofSeconds(30));
+        sms.failure = rejected(OtpChannel.SMS);
+
+        assertThatThrownBy(() -> otp.send(id, OtpChannel.SMS)).isInstanceOf(OtpDeliveryException.class);
+
+        assertThat(otp.verify(id, first).userId()).isEqualTo("avery");
+    }
+
+    @Test
+    void anHourlyLimitRefusedResendKeepsTheCodeTheUserAlreadyHas() {
+        OtpLoginService strict = service(new OtpLoginService.Limits(
+                Duration.ofMinutes(5), Duration.ofMinutes(10), 5, 3, Duration.ofSeconds(30), 1));
+        String id = strict.start("avery", PASSWORD).challengeId();
+        strict.send(id, OtpChannel.EMAIL);
+        String first = email.lastCode();
+        clock.advance(Duration.ofSeconds(30));
+
+        assertThatThrownBy(() -> strict.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class);
+
+        assertThat(strict.verify(id, first).userId()).isEqualTo("avery");
     }
 
     @Test

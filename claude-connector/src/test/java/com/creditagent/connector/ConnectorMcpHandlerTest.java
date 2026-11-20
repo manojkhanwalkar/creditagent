@@ -58,7 +58,7 @@ class ConnectorMcpHandlerTest {
         for (JsonNode tool : list) {
             boolean write = tool.path("name").asString().equals("set_report_lock");
             assertThat(tool.path("annotations").path("readOnlyHint").booleanValue()).isEqualTo(!write);
-            assertThat(tool.path("annotations").path("destructiveHint").booleanValue()).isFalse();
+            assertThat(tool.path("annotations").path("destructiveHint").booleanValue()).as("hosts confirm writes").isEqualTo(write);
             assertThat(tool.path("inputSchema").path("type").asString()).isEqualTo("object");
         }
     }

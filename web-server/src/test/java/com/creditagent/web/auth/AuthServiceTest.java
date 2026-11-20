@@ -364,4 +364,40 @@ class AuthServiceTest {
         assertThat(users.find("avery").orElseThrow().lastActiveAt()).isEqualTo(clock.instant());
         assertThat(auth.verifyOwner("avery", "wrong password here", com.creditagent.common.Ssn.parse(AVERY_SSN))).isEmpty();
     }
+
+    @Test
+    void aReplayThatWinsTheRaceLeavesTheFirstExchangeWithoutAGrant() {
+        register();
+        com.creditagent.common.Ssn ssn = com.creditagent.common.Ssn.parse(AVERY_SSN);
+        java.time.Instant codeExpiry = clock.instant().plusSeconds(60);
+        // The replay's revocation lands before the first exchange has written its grant.
+        auth.revokeReusedGrant("g-race", codeExpiry);
+
+        assertThat(auth.openGrant("g-race", "avery", ssn, codeExpiry, clock.instant().plusSeconds(3600))).isFalse();
+        assertThat(auth.activeGrant("g-race", "avery")).isEmpty();
+    }
+
+    @Test
+    void aReplayAfterTheGrantWasOpenedRevokesIt() {
+        register();
+        com.creditagent.common.Ssn ssn = com.creditagent.common.Ssn.parse(AVERY_SSN);
+        java.time.Instant codeExpiry = clock.instant().plusSeconds(60);
+        assertThat(auth.openGrant("g-late", "avery", ssn, codeExpiry, clock.instant().plusSeconds(3600))).isTrue();
+        assertThat(auth.activeGrant("g-late", "avery")).isPresent();
+
+        auth.revokeReusedGrant("g-late", codeExpiry);
+
+        assertThat(auth.activeGrant("g-late", "avery")).isEmpty();
+        assertThat(sessions.byId).doesNotContainKey("g-late");
+    }
+
+    @Test
+    void aGrantOfADeletedAccountIsNotActive() {
+        register();
+        com.creditagent.common.Ssn ssn = com.creditagent.common.Ssn.parse(AVERY_SSN);
+        auth.openGrant("g-gone", "avery", ssn, clock.instant().plusSeconds(60), clock.instant().plusSeconds(3600));
+        users.byId.remove("avery"); // deleted while its code was being exchanged
+
+        assertThat(auth.activeGrant("g-gone", "avery")).isEmpty();
+    }
 }

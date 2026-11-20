@@ -288,8 +288,12 @@ public class AuthService {
         if (!sessions.create(new Session(USED_CODE_PREFIX + grantId, userId, ssnHash, lastFour, now, now, codeExpiresAt))) {
             return false;
         }
-        // The id is new (the marker above was), so this never collides; save() keeps it simple.
-        sessions.save(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt));
+        // Conditional too: a replay of this code that lost the marker race may already have written its
+        // revocation tombstone here (revokeReusedGrant). Then this exchange gets no grant either.
+        if (!sessions.create(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt))) {
+            log.warn("Authorization code replayed while its first exchange was opening the grant");
+            return false;
+        }
         audit.record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_OPENED, "user:" + userId, "user:" + userId, "OK");
         return true;
     }
@@ -304,7 +308,24 @@ public class AuthService {
         Instant now = clock.instant();
         return sessions.find(grantId)
                 .filter(s -> s.userId().equals(userId) && !s.isExpired(now))
+                // An account deleted while its code was being exchanged may have left a grant row behind.
+                .filter(s -> users.find(s.userId()).isPresent())
                 .map(s -> new AuthenticatedUser(s.userId(), s.sessionId(), s.ssnHash(), s.ssnLastFour()));
+    }
+
+    /** The user id of a revocation tombstone: no account has it (ids cannot contain {@code #}). */
+    static final String REVOKED_GRANT_OWNER = "revoked#";
+
+    /**
+     * Ends the grant of a reused authorization code (RFC 9700), even if the first exchange has not
+     * written it yet: an inert tombstone row takes the grant's id until the code expires, so that
+     * exchange's conditional create then fails. If the grant is already there, it is deleted.
+     */
+    public void revokeReusedGrant(String grantId, Instant codeExpiresAt) {
+        Instant now = clock.instant();
+        if (!sessions.create(new Session(grantId, REVOKED_GRANT_OWNER, null, null, now, now, codeExpiresAt))) {
+            revokeGrant(grantId);
+        }
     }
 
     /** Ends a connector grant, so its access token stops working at once. */
