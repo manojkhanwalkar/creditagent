@@ -11,10 +11,13 @@ LABEL \
 
 # Apply OS security fixes released after the base image was built (the CI image scan fails on
 # fixable HIGH/CRITICAL findings), then create an unprivileged user; /data is pre-created with
-# the right owner so a fresh named volume inherits it.
+# the right owner so a fresh named volume inherits it. The base image also ships /usr/bin/pebble,
+# a service manager that no package owns (so apt never patches it) and nothing here runs: the
+# entrypoint is java. It is removed rather than left as an unpatchable binary.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/* \
+ && rm -f /usr/bin/pebble \
  && groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
  && mkdir -p /app /data/evals \
