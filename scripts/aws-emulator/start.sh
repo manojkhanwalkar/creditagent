@@ -51,10 +51,11 @@ elif command -v podman >/dev/null; then
   if [[ "$(podman inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]; then
     echo "AWS Emulator is already running on port $PORT"
   else
-    mkdir -p "$HOME/.aws/emulator"
+    # Only this port's folder is shared (and relabelled for SELinux): never the other runs' credentials.
+    mkdir -p -m 700 "$DIR"
     podman rm -f "$CONTAINER" >/dev/null 2>&1 || true
     podman run -d --name "$CONTAINER" --userns=keep-id --memory=2g --memory-swap=2g \
-      -p "127.0.0.1:$PORT:$PORT" -e HOME="$HOME" -v "$HOME/.aws/emulator:$HOME/.aws/emulator:Z" \
+      -p "127.0.0.1:$PORT:$PORT" -e HOME="$HOME" -v "$DIR:$DIR:Z" \
       "$IMAGE" -p "$PORT" -t "$TELEMETRY" >/dev/null
   fi
 else
@@ -62,27 +63,56 @@ else
   exit 1
 fi
 
+# Still starting (true), or already gone (false): a crash or a busy port stops the wait at once.
+running() {
+  if command -v aws-emulator >/dev/null; then
+    ! systemctl --user is-failed --quiet "aws-emulator-$PORT"
+  else
+    [[ "$(podman inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" == "true" ]]
+  fi
+}
+
 for _ in $(seq 30); do
   if [[ -f "$DIR/ca.pem" ]] && curl -sf --cacert "$DIR/ca.pem" "https://127.0.0.1:$PORT/__admin/health" >/dev/null; then
     break
   fi
+  running || break
   sleep 1
 done
-curl -sf --cacert "$DIR/ca.pem" "https://127.0.0.1:$PORT/__admin/health" >/dev/null \
-  || { echo "AWS Emulator did not become healthy; see journalctl --user -u aws-emulator-$PORT or podman logs aws-emulator-$PORT" >&2; exit 1; }
+if ! curl -sf --cacert "$DIR/ca.pem" "https://127.0.0.1:$PORT/__admin/health" >/dev/null 2>&1; then
+  echo "AWS Emulator did not become healthy on port $PORT. Its last log lines:" >&2
+  if command -v aws-emulator >/dev/null; then
+    journalctl --user -u "aws-emulator-$PORT" -n 5 --no-pager -o cat >&2 || true
+  else
+    podman logs --tail 5 "$CONTAINER" >&2 || true
+  fi
+  exit 1
+fi
 
 # Java: the emulator's own truststore.p12 replaces the JVM's trusted certificates, which would break
 # Maven and every other HTTPS call. Build one that holds the JDK's certificates plus the emulator's.
 # The emulator makes a new certificate on every start, so this is rebuilt every time.
-JAVA_BIN="$(readlink -f "$(command -v java)")"
-JDK_HOME="${JAVA_HOME:-$(dirname "$(dirname "$JAVA_BIN")")}"
+JAVA_BIN="$(command -v java || true)"
+JDK_HOME="${JAVA_HOME:-$( [[ -n "$JAVA_BIN" ]] && dirname "$(dirname "$(readlink -f "$JAVA_BIN")")")}"
+CACERTS=""
+for candidate in "$JDK_HOME/lib/security/cacerts" "$JDK_HOME/jre/lib/security/cacerts"; do
+  [[ -f "$candidate" ]] && { CACERTS="$candidate"; break; }
+done
+[[ -n "$CACERTS" ]] || { echo "No JDK found (set JAVA_HOME): cannot build the Java trust store" >&2; exit 1; }
 COMBINED="$DIR/creditagent-truststore.p12"
-rm -f "$COMBINED"
-keytool -importkeystore -noprompt -srckeystore "$JDK_HOME/lib/security/cacerts" -srcstorepass changeit \
-  -destkeystore "$COMBINED" -deststoretype PKCS12 -deststorepass changeit >/dev/null 2>&1
-keytool -importcert -noprompt -alias aws-emulator-$PORT -file "$DIR/ca.pem" \
-  -keystore "$COMBINED" -storetype PKCS12 -storepass changeit >/dev/null
-chmod 600 "$COMBINED"
+# Built aside and moved into place, so a failure never leaves a missing or half-built store.
+NEW="$(mktemp "$DIR/truststore.XXXXXX")"
+rm -f "$NEW"
+if ! keytool -importkeystore -noprompt -srckeystore "$CACERTS" -srcstorepass changeit \
+       -destkeystore "$NEW" -deststoretype PKCS12 -deststorepass changeit >/dev/null 2>&1 \
+   || ! keytool -importcert -noprompt -alias "aws-emulator-$PORT" -file "$DIR/ca.pem" \
+       -keystore "$NEW" -storetype PKCS12 -storepass changeit >/dev/null 2>&1; then
+  rm -f "$NEW"
+  echo "Could not build the Java trust store from $CACERTS" >&2
+  exit 1
+fi
+chmod 600 "$NEW"
+mv -f "$NEW" "$COMBINED"
 
 echo "AWS Emulator is ready at https://127.0.0.1:$PORT"
 echo "In each shell that runs a CreditAgent service:  source scripts/aws-emulator/env.sh"

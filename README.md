@@ -77,7 +77,7 @@ Then:
 
 1. Install it once. On Fedora or Amazon Linux: `sudo dnf install -y https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-x86_64.rpm` (to check AWS's signature first, see [Getting started on Linux](https://docs.aws.amazon.com/emulator/latest/userguide/getting-started-linux.html)). Without it, `start.sh` uses Podman instead: it downloads the package, checks AWS's signature and builds a local image.
 2. Start it: `scripts/aws-emulator/start.sh`. It runs in the background on `https://127.0.0.1:9297` with telemetry off and 2 GiB of memory at most. It writes fresh credentials and a certificate to `~/.aws/emulator/9297/`, and builds a Java trust store that holds both the JDK's certificates and the emulator's.
-3. In each shell that runs a service, run `source scripts/aws-emulator/env.sh`, then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
+3. In each shell that runs a service, run `source scripts/aws-emulator/env.sh` (it adds the trust store to `JAVA_TOOL_OPTIONS`, so every JVM prints "Picked up JAVA_TOOL_OPTIONS" on stderr), then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
    ```bash
    source scripts/aws-emulator/env.sh
    JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) mvn -pl web-server spring-boot:run
