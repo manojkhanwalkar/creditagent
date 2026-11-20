@@ -165,9 +165,7 @@ class OAuthController {
     @PostMapping(path = APPROVE, consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<Map<String, Object>> approve(@RequestBody Map<String, String> body) {
         requireEnabled();
-        if (tooLong(body.get("ssn"), 20) || tooLong(body.get("challengeId"), 64) || tooLong(body.get("code"), 16)) {
-            return ResponseEntity.badRequest().body(Map.of("status", 400, "detail", "A field is too long."));
-        }
+        // The authorization request is always checked first; nothing a caller sends can skip it.
         AuthorizationRequest request;
         try {
             request = oauth.authorizationRequest(body);
@@ -175,6 +173,9 @@ class OAuthController {
             return e.redirect()
                     .map(uri -> ResponseEntity.ok().body(Map.<String, Object>of("redirect", uri.toString())))
                     .orElseGet(() -> ResponseEntity.badRequest().body(Map.of("status", 400, "detail", e.reason().text())));
+        }
+        if (tooLong(body.get("ssn"), 20) || tooLong(body.get("challengeId"), 64) || tooLong(body.get("code"), 16)) {
+            return ResponseEntity.badRequest().body(Map.of("status", 400, "detail", "A field is too long."));
         }
         Ssn ssn;
         try {
