@@ -1,3 +1,5 @@
+# Minor and patch bumps not in a named group arrive as one grouped PR per ecosystem
+# (claude-skills efficiency.md, rule 4); majors stay separate.
 version: 2
 updates:
   - package-ecosystem: maven
@@ -11,18 +13,33 @@ updates:
         patterns: ["dev.langchain4j*"]
       a2a:
         patterns: ["org.a2aproject*"]
+      maven-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    groups:
+      docker-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: /web-server
     schedule:
       interval: monthly
+    groups:
+      npm-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
