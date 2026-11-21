@@ -132,3 +132,9 @@ management:
     health:
       probes:
         enabled: true
+
+logging:
+  level:
+    # It logs a rejected request's field values (an over-long SSN or password on /oauth/sign-in or
+    # /api/v1/auth/login): keep them out of the logs.
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: error
