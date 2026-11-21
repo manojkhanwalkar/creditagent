@@ -177,7 +177,7 @@ class DynamoDbOtpChallengeRepositoryUnitTest {
     @Test
     void releaseSendUndoesOnlyTheCodeItWrote() {
         doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
-        repo.releaseSend(ID, "hash");
+        repo.releaseSend(ID, "hash", null);
         ArgumentCaptor<UpdateItemRequest> sent = ArgumentCaptor.forClass(UpdateItemRequest.class);
         verify(dynamo).updateItem(sent.capture());
         assertThat(sent.getValue().conditionExpression()).isEqualTo("#hash = :hash AND #sends > :zero");
@@ -185,7 +185,25 @@ class DynamoDbOtpChallengeRepositoryUnitTest {
         assertThat(sent.getValue().expressionAttributeValues()).containsEntry(":minus", n(-1));
 
         doThrow(ConditionalCheckFailedException.builder().build()).when(dynamo).updateItem(any(UpdateItemRequest.class));
-        repo.releaseSend(ID, "hash"); // replaced or gone: nothing to undo, no error
+        repo.releaseSend(ID, "hash", null); // replaced or gone: nothing to undo, no error
+    }
+
+    @Test
+    void releaseSendPutsTheEarlierCodeBackWhenThereWasOne() {
+        doReturn(null).when(dynamo).updateItem(any(UpdateItemRequest.class));
+        OtpChallenge previous = new OtpChallenge(ID, "avery", NOW, NOW.plusSeconds(600), OtpChannel.EMAIL, "old",
+                NOW.plusSeconds(300), NOW, 1, 0);
+        repo.releaseSend(ID, "new", previous);
+        ArgumentCaptor<UpdateItemRequest> sent = ArgumentCaptor.forClass(UpdateItemRequest.class);
+        verify(dynamo).updateItem(sent.capture());
+        assertThat(sent.getValue().updateExpression())
+                .isEqualTo("SET #channel = :pc, #hash = :ph, #codeExp = :pe, #last = :pl ADD #sends :minus");
+        assertThat(sent.getValue().conditionExpression()).isEqualTo("#hash = :hash AND #sends > :zero");
+        assertThat(sent.getValue().expressionAttributeValues()).containsEntry(":ph", AttributeValue.fromS("old"))
+                .containsEntry(":hash", AttributeValue.fromS("new"))
+                .containsEntry(":pc", AttributeValue.fromS("EMAIL"))
+                .containsEntry(":pe", n(NOW.plusSeconds(300).toEpochMilli()))
+                .containsEntry(":pl", n(NOW.toEpochMilli()));
     }
 
     @Test

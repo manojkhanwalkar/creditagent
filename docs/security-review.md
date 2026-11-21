@@ -13,7 +13,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | ID | Severity | Finding | Status |
 |----|----------|---------|--------|
 | S-1 | High | No user authentication on the UI or API | Partly fixed: login with JWT and DynamoDB sessions; look-ups limited to the user's own SSN; the SSN is read by a KYC check of the user's card photo, but the bundled KYC provider is a dummy |
-| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Open; first step: the report-lock check uses a shared internal token (`INTERNAL_API_TOKEN`) |
+| S-2 | High | No service-to-service authentication (MCP, score calculator, generator, A2A) | Partly fixed: the internal token (`INTERNAL_API_TOKEN`) guards the report-lock check, the generator, the client agent and the advisor. Open: NRG, score calculator, A2A agent |
 | S-3 | High | SSNs travel between services over plaintext HTTP | Open |
 | S-4 | Medium | Credit files are not encrypted at rest | Fixed by S-24: reports are AES-256-GCM encrypted in the `CreditReports` table |
 | S-5 | Medium | SSN used as the credit file name would leak through directory listings | Fixed; now the `CreditReports` table's key is the SSN's HMAC, and each report is encrypted (S-24) |
@@ -25,7 +25,7 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 | S-11 | Low | Browser hardening (XSS, clickjacking, caching) | Fixed |
 | S-12 | Low | The MCP tool `get_credit_report` hands full reports to any MCP host, including LLM apps | Accepted, documented |
 | S-13 | Low | Request bodies have no global size limit | Mostly fixed: every untrusted-body endpoint is capped before reading; services also refuse excess load (token bucket, in-flight cap) |
-| S-14 | Low | The generator API can overwrite any report | Open: internal only |
+| S-14 | Low | The generator API can overwrite any report | Fixed (deep review 2026-11-19): needs the internal token |
 | S-15 | Low | CI supply chain (unpinned actions, broad token permissions) | Fixed |
 | S-16 | Low | Container runtime privileges | Fixed |
 | S-17 | Info | The HMAC key has no rotation procedure | Open |
@@ -44,10 +44,10 @@ The spec sends an SSN from an **unauthenticated** web page to a chain of service
 ### S-1 User authentication (High, partly fixed)
 Users now register (BCrypt cost 12; 12–64 character passwords checked against a common-password list and the user id) and log in for an HS256 JWT. Every `/api/` call except register and login needs the token, and the token is accepted only while its DynamoDB session exists and was used in the last 5 minutes. Logout deletes the session. Login answers the same message, in about the same time, for a wrong password and an unknown user, and the per-IP rate limit covers login and registration.
 Registration no longer takes a typed SSN. The user uploads a photo of their Social Security card; the web server sends it to the KYC provider, which checks that the photo is sharp and is a card, and returns the SSN it read plus a verification id. A blurred photo is refused (422, `reason: IMAGE_BLURRY`) and the user is asked for a new one. Field checks and the user-id check run first, so a bad form never costs a KYC call. The users table stores only an HMAC-SHA256 of it (key `SSN_HMAC_KEY`) and its last four digits, and a second item, `ssn#<hash>`, written in the same conditional transaction as the user, so one SSN can belong to only one account. Login copies the hash into the session, and `POST /api/v1/credit-score` answers 403 for any SSN whose hash differs, before any report is fetched, so a refusal reveals nothing about the other SSN.
-**Still open before real data:** the bundled `kyc-service` is a dummy. Instead of OCR and document-security checks it reads a label that its own sample cards carry in their PNG metadata, so anyone can forge a "card" for any SSN. Replace it with a real provider (document check with liveness/selfie match, or a bureau identity service) behind the same `IdentityVerifier` interface, and authenticate the call to it (S-2). The sample-card endpoint makes a card for any SSN; it is off by default and only compose turns it on. Registration answers 409 for an SSN already in use, which tells a caller that someone registered it; the rate limit slows but does not stop that. There is no password recovery yet. Login now needs a one-time code as well as the password (S-26). The agent flow (`client-agent` `/api/v1/advice`) is not authenticated and can still ask about any SSN whose owner has not locked their report. The token is kept in `sessionStorage`, so an XSS bug could read it; the strict CSP is the mitigation. Consider OIDC instead of local passwords for production.
+**Still open before real data:** the bundled `kyc-service` is a dummy. Instead of OCR and document-security checks it reads a label that its own sample cards carry in their PNG metadata, so anyone can forge a "card" for any SSN. Replace it with a real provider (document check with liveness/selfie match, or a bureau identity service) behind the same `IdentityVerifier` interface, and authenticate the call to it (S-2). The sample-card endpoint makes a card for any SSN; it is off by default and only compose turns it on. Registration answers 409 for an SSN already in use, which tells a caller that someone registered it; the rate limit slows but does not stop that. There is no password recovery yet. Login now needs a one-time code as well as the password (S-26). The agent flow (`client-agent` `/api/v1/advice`) needs the internal service token since the 2026-11-19 deep review; only the Claude connector holds it. The token is kept in `sessionStorage`, so an XSS bug could read it; the strict CSP is the mitigation. Consider OIDC instead of local passwords for production.
 
-### S-2 No service-to-service authentication (High, open)
-The MCP server, score calculator, generator and A2A agent accept any caller on the network. Compose publishes only 8080 and 8086, and only on localhost, which limits exposure locally.
+### S-2 No service-to-service authentication (High, partly fixed)
+The shared internal token (`INTERNAL_API_TOKEN`) guards the web server's internal API, the report generator, the client agent, the user advisor agent, the alerts service and the MCP server's owner reads (other MCP reads are lock-checked). The normalized report generator, the score calculator and the A2A agent still accept any caller on the network; they hold no stored data, and compose publishes none of them. One token shared by every service is itself a risk: a compromise of any holder (the internet-facing connector included) reaches the MCP owner bypass and token introspection. Per-caller tokens or scopes are the next step.
 **Fix:** use mTLS through a service mesh, or OAuth2 client-credentials tokens. Advertise the scheme in the A2A agent card (`securitySchemes`), pass a bearer token through `StreamableHttpMcpTransport.customHeaders`, and validate it on the MCP server.
 
 ### S-3 Plaintext transport (High, open)
@@ -122,7 +122,7 @@ Check the model provider's data-retention terms before enabling it.
 - `alerts-service` is internal: every request needs the service token, bodies are limited to 4 KB, and the email is validated (`@Email`, at most 254 characters). The email travels in the POST body, so it does not reach access logs; `toString` of requests and alerts redacts it, and the monitor logs counts only.
 - The web server only ever looks up the signed-in user's own email; there is no endpoint that takes an email from the browser.
 - The placeholder source contacts nothing. A real provider would send users' emails to a third party: re-review then (data-processing agreement, k-anonymity or hashed look-ups).
-- Open: there is no account deletion yet; when one is added, it must delete the user's alerts too.
+- Account deletion erases the user's alerts (alerts-service `/internal/v1/alerts/erase`).
 
 ### S-21 Card offers (Mitigated)
 - **New personal data at rest:** the users table now holds the ZIP code (asked at registration) and the latest credit score with its time. Both are personal data; they live in the same encrypted-at-rest table as the rest of the account and are never logged. The SSN is still never stored: the first score is computed from the SSN the KYC check read, then dropped.
@@ -173,8 +173,8 @@ Every endpoint that reads an untrusted body caps it with `RequestSizeLimitFilter
 Every service also refuses excess load before doing any work: a token bucket (429) and an in-flight cap (503), both with `Retry-After` (`credit.inbound.*`, see the architecture's Resilience section).
 **Remaining:** cap request size at the gateway or ingress as well.
 
-### S-14 Generator overwrites reports (Low, open)
-`POST /api/v1/reports` replaces any existing file. It is an internal tool and is not published in compose. Keep it unexposed; once S-2 is in place, give it its own credentials.
+### S-14 Generator overwrites reports (Low, fixed)
+`POST /api/v1/reports` replaces any existing report. Since the 2026-11-19 deep review it needs the internal token, like the erase API; it is not published in compose.
 
 ### S-15 CI supply chain (Fixed)
 - Every action is pinned to a commit SHA, and Dependabot keeps the pins current.

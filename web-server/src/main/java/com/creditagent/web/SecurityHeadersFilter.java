@@ -12,7 +12,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Baseline browser hardening. The UI has no inline script or style, so the CSP can be strict.
- * When authentication is added, replace this with Spring Security's header support.
+ * Authentication is the app's own (JWT sessions, see AuthenticationFilter), not Spring Security, so these headers are set here.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)

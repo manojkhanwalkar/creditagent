@@ -24,7 +24,8 @@ public class OutputGuard {
             + " balances or inquiries.";
 
     /** Why an answer was replaced, for the log (never shown). */
-    public enum Problem { OFFENSIVE, PROTECTED, LEAK, PROMISE }
+    /** {@code EMPTY}: nothing left to show (a blank answer, or one made only of markup). */
+    public enum Problem { OFFENSIVE, PROTECTED, LEAK, PROMISE, EMPTY }
 
     /** The text to show, with the disclaimer, and what was wrong with the original if it was replaced. */
     public record Result(String reply, String disclaimer, Problem problem) {
@@ -65,7 +66,7 @@ public class OutputGuard {
             safe = safe.substring(0, maxChars - 1).strip() + "…";
         }
         if (safe.isEmpty()) {
-            return new Result(REPLACEMENT, DISCLAIMER, Problem.LEAK);
+            return new Result(REPLACEMENT, DISCLAIMER, Problem.EMPTY);
         }
         return new Result(safe, DISCLAIMER, null);
     }

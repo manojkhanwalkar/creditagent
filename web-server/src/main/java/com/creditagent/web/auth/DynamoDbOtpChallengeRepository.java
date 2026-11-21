@@ -155,15 +155,27 @@ public class DynamoDbOtpChallengeRepository implements OtpChallengeRepository {
     }
 
     @Override
-    public void releaseSend(String challengeId, String codeHash) {
+    public void releaseSend(String challengeId, String codeHash, OtpChallenge previous) {
+        Map<String, String> names = new HashMap<>(Map.of("#channel", "channel", "#hash", "codeHash",
+                "#codeExp", "codeExpiresAt", "#last", "lastSentAt", "#sends", "sends"));
+        Map<String, AttributeValue> values = new HashMap<>(Map.of(":hash", s(codeHash), ":minus", n(-1), ":zero", n(0)));
+        String update;
+        if (previous != null && previous.codeHash() != null) {
+            update = "SET #channel = :pc, #hash = :ph, #codeExp = :pe, #last = :pl ADD #sends :minus";
+            values.put(":pc", s(previous.channel().name()));
+            values.put(":ph", s(previous.codeHash()));
+            values.put(":pe", n(previous.codeExpiresAt().toEpochMilli()));
+            values.put(":pl", n(previous.lastSentAt().toEpochMilli()));
+        } else {
+            update = "REMOVE #channel, #hash, #codeExp, #last ADD #sends :minus";
+        }
         try {
             dynamo.updateItem(r -> r.tableName(table)
                     .key(Map.of(KEY, s(key(challengeId))))
-                    .updateExpression("REMOVE #channel, #hash, #codeExp, #last ADD #sends :minus")
+                    .updateExpression(update)
                     .conditionExpression("#hash = :hash AND #sends > :zero")
-                    .expressionAttributeNames(Map.of("#channel", "channel", "#hash", "codeHash",
-                            "#codeExp", "codeExpiresAt", "#last", "lastSentAt", "#sends", "sends"))
-                    .expressionAttributeValues(Map.of(":hash", s(codeHash), ":minus", n(-1), ":zero", n(0))));
+                    .expressionAttributeNames(names)
+                    .expressionAttributeValues(values));
         } catch (ConditionalCheckFailedException changed) {
             // Gone, or another send replaced the code: nothing of ours to undo.
         }

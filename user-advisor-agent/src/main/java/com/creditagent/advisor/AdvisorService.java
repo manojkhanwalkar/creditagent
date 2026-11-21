@@ -32,6 +32,8 @@ public class AdvisorService {
      */
     public record Reply(String reply, String disclaimer, boolean refused) {}
 
+    static final String MODEL_UNAVAILABLE = "I can't answer that just now. Please try again in a moment.";
+
     private final InputGuard input;
     private final OutputGuard output;
     private final AdvisorModel model;
@@ -66,7 +68,18 @@ public class AdvisorService {
             return reply;
         }
         long started = System.nanoTime();
-        String answer = model.answer(verdict.text(), history, report);
+        String answer;
+        try {
+            answer = model.answer(verdict.text(), history, report);
+        } catch (RuntimeException e) {
+            // A failing model is still a turn: recorded, answered with a fixed text, never a 500.
+            long failedAfter = (System.nanoTime() - started) / 1_000_000;
+            log.warn("Advisor model failed: {}", com.creditagent.common.SafeLogging.describe(e));
+            Reply reply = new Reply(MODEL_UNAVAILABLE, OutputGuard.DISCLAIMER, true);
+            evals.record(new EvalRecord(clock.instant(), conversationId, history.size(), verdict.text(),
+                    verdict.smallTalk() ? "SMALL_TALK" : "ALLOWED", null, reply.reply(), "MODEL_ERROR", modelName, failedAfter));
+            return reply;
+        }
         long latencyMillis = (System.nanoTime() - started) / 1_000_000;
         OutputGuard.Result result = output.check(answer);
         evals.record(new EvalRecord(clock.instant(), conversationId, history.size(), verdict.text(),

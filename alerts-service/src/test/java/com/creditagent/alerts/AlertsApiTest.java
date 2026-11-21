@@ -118,8 +118,11 @@ class AlertsApiTest {
 
     @Test
     void anIncompleteOrFailedEraseIs503WithRetryAfterSoTheCallerRetries() {
-        given(alerts.eraseAll("ada@example.com")).willThrow(new IllegalStateException("partial"));
+        given(alerts.eraseAll("ada@example.com")).willThrow(new AlertsEraseIncompleteException("partial", null));
         assertThat(erase("{\"email\":\"ada@example.com\"}", true).status()).isEqualTo(503);
+        // Any other bug is a 500: not a retryable "could not be erased" that callers would repeat.
+        given(alerts.eraseAll("cy@example.com")).willThrow(new IllegalStateException("bug"));
+        assertThat(erase("{\"email\":\"cy@example.com\"}", true).status()).isEqualTo(500);
         given(alerts.eraseAll("bob@example.com")).willThrow(software.amazon.awssdk.core.exception.SdkClientException.create("down"));
         assertThat(erase("{\"email\":\"bob@example.com\"}", true).status()).isEqualTo(503);
     }

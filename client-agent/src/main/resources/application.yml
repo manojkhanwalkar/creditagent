@@ -12,6 +12,8 @@ credit:
   client:
     intelligence-agent-url: ${INTELLIGENCE_AGENT_URL:http://localhost:8085}
     timeout: ${INTELLIGENCE_AGENT_TIMEOUT:90s}
+    # Shared token callers (the Claude connector) must send as Bearer. Empty = the advice API is off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
 
 management:
   endpoints:

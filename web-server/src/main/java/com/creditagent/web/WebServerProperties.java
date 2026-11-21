@@ -14,7 +14,8 @@ import org.springframework.validation.annotation.Validated;
  * @param mcpTimeout longest wait for one MCP look-up, reconnects and retries included. Longer than {@code timeout} on purpose: one read
  *     includes the MCP server's own retries of NRG (up to 3 × 5 s plus the waits, about 17.4 s), and giving up
  *     sooner would abandon reads the server is still completing. Defaults to 20 s.
- * @param rateLimitPerMinute max score look-ups per client IP per minute (SSN enumeration guard)
+ * @param rateLimitPerMinute requests per client IP per minute, across every /api call and the OAuth
+ *     sign-in form (slows password guessing and SSN enumeration)
  */
 @Validated
 @ConfigurationProperties("credit.web")

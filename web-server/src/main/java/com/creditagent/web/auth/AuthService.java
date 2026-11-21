@@ -288,8 +288,12 @@ public class AuthService {
         if (!sessions.create(new Session(USED_CODE_PREFIX + grantId, userId, ssnHash, lastFour, now, now, codeExpiresAt))) {
             return false;
         }
-        // The id is new (the marker above was), so this never collides; save() keeps it simple.
-        sessions.save(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt));
+        // Conditional too: a replay of this code that lost the marker race may already have written its
+        // revocation tombstone here (revokeReusedGrant). Then this exchange gets no grant either.
+        if (!sessions.create(new Session(grantId, userId, ssnHash, lastFour, now, now, expiresAt))) {
+            log.warn("Authorization code replayed while its first exchange was opening the grant");
+            return false;
+        }
         audit.record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_OPENED, "user:" + userId, "user:" + userId, "OK");
         return true;
     }
@@ -304,7 +308,27 @@ public class AuthService {
         Instant now = clock.instant();
         return sessions.find(grantId)
                 .filter(s -> s.userId().equals(userId) && !s.isExpired(now))
+                // An account deleted while its code was being exchanged may have left a grant row behind.
+                .filter(s -> users.find(s.userId()).isPresent())
                 .map(s -> new AuthenticatedUser(s.userId(), s.sessionId(), s.ssnHash(), s.ssnLastFour()));
+    }
+
+    /** The user id of a revocation tombstone: no account has it (ids cannot contain {@code #}). */
+    static final String REVOKED_GRANT_OWNER = "revoked#";
+
+    /**
+     * Ends the grant of a reused authorization code (RFC 9700), even if the first exchange has not
+     * written it yet: an inert tombstone row is written over the grant's id (unconditionally, never a
+     * delete) and stays until the code expires. A grant already there is replaced by it, and the first
+     * exchange's conditional create, or an SDK retry of it, then finds the tombstone and fails.
+     */
+    public void revokeReusedGrant(String grantId, Instant codeExpiresAt) {
+        Instant now = clock.instant();
+        Optional<String> owner = sessions.find(grantId).map(Session::userId).filter(u -> !REVOKED_GRANT_OWNER.equals(u));
+        sessions.save(new Session(grantId, REVOKED_GRANT_OWNER, null, null, now, now, codeExpiresAt));
+        owner.ifPresent(user -> audit.record(com.creditagent.common.AuditLog.Event.CONNECTOR_GRANT_REVOKED,
+                "user:" + user, "user:" + user, "OK"));
+        log.info("Connector grant revoked: its authorization code was used twice");
     }
 
     /** Ends a connector grant, so its access token stops working at once. */

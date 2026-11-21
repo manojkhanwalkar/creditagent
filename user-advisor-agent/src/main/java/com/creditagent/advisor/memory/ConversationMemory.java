@@ -24,6 +24,8 @@ import java.util.function.DoubleSupplier;
  *       recently used (LRU).
  *   <li><b>Memory pressure:</b> when live heap use passes {@code pressureThreshold} at any write, the
  *       least recently used half is dropped. A forgotten conversation only costs the user their context.
+ *       The figure only changes after a collection, so after an eviction the check pauses for
+ *       {@link #PRESSURE_COOLDOWN}: one episode halves the store once, not on every write until empty.
  *   <li><b>Size:</b> each turn's question and answer are already capped by the guardrails
  *       ({@code max-prompt-chars}, {@code max-reply-chars}), so a conversation holds at most
  *       {@code maxTurns} × their sum.
@@ -53,6 +55,14 @@ public class ConversationMemory {
     private final Clock clock;
     /** Access-ordered: iteration starts at the least recently used. */
     private final LinkedHashMap<String, Conversation> conversations = new LinkedHashMap<>(16, 0.75f, true);
+    /** When memory pressure last dropped conversations; null if it never did. */
+    private Instant lastRelief;
+
+    /** How long the pressure check waits after an eviction, so a collection can update the figure. */
+    static final Duration PRESSURE_COOLDOWN = Duration.ofSeconds(10);
+
+    /** The old generation's pool, looked up once; null where the collector reports none. */
+    private static final java.lang.management.MemoryPoolMXBean OLD_GEN = oldGeneration();
 
     /**
      * @param heapUsage share of the maximum heap in use, 0 to 1
@@ -73,15 +83,22 @@ public class ConversationMemory {
      * reports no such figure.
      */
     public static double jvmHeapUsage() {
-        for (java.lang.management.MemoryPoolMXBean pool : java.lang.management.ManagementFactory.getMemoryPoolMXBeans()) {
-            java.lang.management.MemoryUsage afterGc = pool.getCollectionUsage();
-            if (pool.getType() == java.lang.management.MemoryType.HEAP && afterGc != null && afterGc.getMax() > 0
-                    && (pool.getName().contains("Old") || pool.getName().contains("Tenured"))) {
-                return (double) afterGc.getUsed() / afterGc.getMax();
-            }
+        java.lang.management.MemoryUsage afterGc = OLD_GEN == null ? null : OLD_GEN.getCollectionUsage();
+        if (afterGc != null && afterGc.getMax() > 0) {
+            return (double) afterGc.getUsed() / afterGc.getMax();
         }
         Runtime runtime = Runtime.getRuntime();
         return (double) (runtime.totalMemory() - runtime.freeMemory()) / runtime.maxMemory();
+    }
+
+    private static java.lang.management.MemoryPoolMXBean oldGeneration() {
+        for (java.lang.management.MemoryPoolMXBean pool : java.lang.management.ManagementFactory.getMemoryPoolMXBeans()) {
+            if (pool.getType() == java.lang.management.MemoryType.HEAP && pool.getCollectionUsage() != null
+                    && (pool.getName().contains("Old") || pool.getName().contains("Tenured"))) {
+                return pool;
+            }
+        }
+        return null;
     }
 
     /** The conversation so far, oldest first; empty if there is none or it has expired. */
@@ -152,9 +169,14 @@ public class ConversationMemory {
     }
 
     private void relieveMemoryPressure() {
+        Instant now = clock.instant();
+        if (lastRelief != null && now.isBefore(lastRelief.plus(PRESSURE_COOLDOWN))) {
+            return;
+        }
         if (heapUsage.getAsDouble() < pressureThreshold) {
             return;
         }
+        lastRelief = now;
         sweep();
         int drop = conversations.size() / 2;
         Iterator<Map.Entry<String, Conversation>> lru = conversations.entrySet().iterator();

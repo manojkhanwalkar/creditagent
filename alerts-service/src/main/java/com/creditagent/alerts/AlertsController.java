@@ -87,8 +87,8 @@ class AlertsController {
     }
 
     /** An erase that could not delete everything: 503 with Retry-After, so the caller retries the whole erase. */
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<ProblemDetail> incomplete(IllegalStateException e) {
+    @ExceptionHandler(AlertsEraseIncompleteException.class)
+    ResponseEntity<ProblemDetail> incomplete(AlertsEraseIncompleteException e) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "1")
                 .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, "Alerts could not be erased."));
     }

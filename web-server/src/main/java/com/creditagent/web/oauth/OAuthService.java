@@ -348,7 +348,7 @@ public class OAuthService {
         Instant expires = clock.instant().plus(properties.accessTokenTtl());
         if (!auth.openGrant(code.grantId(), code.userId(), ssn, code.expiresAt(), expires)) {
             // A code used twice may have been stolen: end the grant the first use opened (RFC 9700).
-            auth.revokeGrant(code.grantId());
+            auth.revokeReusedGrant(code.grantId(), code.expiresAt());
             log.warn("Authorization code reused; its grant was revoked");
             throw new OAuthException(400, "invalid_grant", "The code has already been used");
         }

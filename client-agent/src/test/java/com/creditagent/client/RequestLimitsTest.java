@@ -15,8 +15,11 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 
 /** On a real server: MockMvc does not apply filter registrations. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "credit.client.intelligence-agent-url=http://agent.invalid")
+        properties = {"credit.client.intelligence-agent-url=http://agent.invalid",
+            "credit.client.service-token=" + RequestLimitsTest.TOKEN})
 class RequestLimitsTest {
+
+    static final String TOKEN = "client-agent-test-token-0123456789abcdef";
 
     @LocalServerPort
     int port;
@@ -30,10 +33,39 @@ class RequestLimitsTest {
         HttpResponse<String> response = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/advice"))
                         .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer " + TOKEN)
                         .POST(HttpRequest.BodyPublishers.ofString(huge))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(413);
+    }
+
+    HttpResponse<String> advice(String authorization) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/advice"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"ssn\":\"123-45-6789\"}"));
+        if (authorization != null) {
+            request.header("Authorization", authorization);
+        }
+        return HttpClient.newHttpClient().send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void thePropertiesNeverPrintTheToken() {
+        assertThat(properties.toString()).doesNotContain(TOKEN).contains("serviceToken=<redacted>");
+    }
+
+    @Test
+    void adviceNeedsTheInternalToken() throws Exception {
+        assertThat(advice(null).statusCode()).isEqualTo(401);
+        assertThat(advice("Bearer wrong-token-wrong-token-wrong-token").statusCode()).isEqualTo(401);
+        // With the token the request reaches the controller (the agent is unreachable here: not 401).
+        assertThat(advice("Bearer " + TOKEN).statusCode()).isNotIn(401, 404);
+        // Health stays open for probes.
+        HttpResponse<String> health = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/actuator/health")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(health.statusCode()).isNotIn(401, 404);
     }
 
     @Test

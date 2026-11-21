@@ -114,9 +114,18 @@ class DownstreamClientsTest {
     }
 
     @Test
+    void adviceIsNeverAskedForWithoutTheServiceToken() {
+        AdviceClient advice = new AdviceClient(builder.build(), null);
+        assertThatThrownBy(() -> advice.adviceFor(SSN)).isInstanceOf(ServiceUnavailableException.class);
+        server.verify(); // nothing was sent
+    }
+
+    @Test
     void adviceIsReadOrItsRefusalReasonPassedOn() {
-        AdviceClient advice = new AdviceClient(builder.build());
+        AdviceClient advice = new AdviceClient(builder.build(), SERVICE_TOKEN);
         server.expect(requestTo("http://web" + AdviceClient.PATH))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header(
+                        HttpHeaders.AUTHORIZATION, "Bearer " + SERVICE_TOKEN))
                 .andExpect(jsonPath("$.ssn").value("123456789"))
                 .andRespond(withSuccess("{\"ssnMasked\":\"***-**-6789\",\"score\":700,\"band\":\"ORANGE\",\"summary\":\"s\","
                         + "\"recommendations\":[],\"source\":\"rules\"}", MediaType.APPLICATION_JSON));

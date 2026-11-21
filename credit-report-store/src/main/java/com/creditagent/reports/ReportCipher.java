@@ -59,11 +59,34 @@ public final class ReportCipher {
     public ReportCipher(String currentSecret, List<String> previousSecrets) {
         this.current = key(currentSecret);
         byId.put(current.id(), current);
+        addForDecryption(currentSecret);
         for (String secret : previousSecrets == null ? List.<String>of() : previousSecrets) {
             if (secret != null && !secret.isBlank()) {
-                Key key = key(secret.strip());
-                byId.putIfAbsent(key.id(), key);
+                addForDecryption(secret);
             }
+        }
+    }
+
+    /**
+     * Registers a secret for decryption as given, stripped, and stripped with a trailing newline. A key
+     * read from a secret file often ends in a newline that a list setting later trims, so after a
+     * rotation the old key arrives in a different form than the one reports were written with; key
+     * ids are derived from the bytes, so every form must be known or those reports become unreadable.
+     */
+    private void addForDecryption(String secret) {
+        String stripped = secret.strip();
+        boolean usable = false;
+        for (String form : List.of(secret, stripped, stripped + "\n")) {
+            // A form too short to be a key (the stripped form of a secret that only reached the
+            // minimum with its newline) cannot have encrypted anything: skip it, never fail startup.
+            if (!form.isBlank() && form.getBytes(StandardCharsets.UTF_8).length >= MIN_SECRET_BYTES) {
+                Key key = key(form);
+                byId.putIfAbsent(key.id(), key);
+                usable = true;
+            }
+        }
+        if (!usable) {
+            key(secret); // a secret with no form long enough is a configuration error: refused as before
         }
     }
 

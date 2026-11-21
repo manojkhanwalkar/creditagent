@@ -68,6 +68,19 @@ public class RequestSizeLimitFilter extends OncePerRequestFilter {
             }
             return stream;
         }
+
+        private java.io.BufferedReader reader;
+
+        /** Through the same limited stream: the container's own reader would read the body unbounded. */
+        @Override
+        public java.io.BufferedReader getReader() throws IOException {
+            if (reader == null) {
+                String encoding = getCharacterEncoding();
+                reader = new java.io.BufferedReader(new java.io.InputStreamReader(getInputStream(),
+                        encoding == null ? java.nio.charset.StandardCharsets.UTF_8 : java.nio.charset.Charset.forName(encoding)));
+            }
+            return reader;
+        }
     }
 
     private static final class LimitedInputStream extends ServletInputStream {

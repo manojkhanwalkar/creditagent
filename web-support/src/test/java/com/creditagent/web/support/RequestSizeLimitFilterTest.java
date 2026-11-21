@@ -63,4 +63,31 @@ class RequestSizeLimitFilterTest {
     void refusesANonPositiveLimit() {
         assertThatThrownBy(() -> new RequestSizeLimitFilter(0)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void theReaderIsCutOffToo() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/scores") {
+            @Override
+            public long getContentLengthLong() {
+                return -1; // chunked
+            }
+        };
+        request.setContent("x".repeat(50).getBytes());
+        AtomicReference<HttpServletRequest> seen = new AtomicReference<>();
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> seen.set((HttpServletRequest) req));
+
+        assertThat(seen.get().getReader()).isSameAs(seen.get().getReader());
+        assertThatThrownBy(() -> seen.get().getReader().lines().count())
+                .hasRootCauseInstanceOf(IOException.class).hasRootCauseMessage("Request body exceeds 10 bytes");
+    }
+
+    @Test
+    void theReaderReadsBodiesWithinTheLimitInTheirEncoding() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/scores");
+        request.setCharacterEncoding("ISO-8859-1");
+        request.setContent(new byte[] {(byte) 0xE9});
+        AtomicReference<String> body = new AtomicReference<>();
+        filter.doFilter(request, new MockHttpServletResponse(), (req, res) -> body.set(req.getReader().readLine()));
+        assertThat(body.get()).isEqualTo("\u00e9");
+    }
 }

@@ -106,7 +106,7 @@ public class DynamoDbAlertRepository implements AlertRepository {
                 for (int attempt = 0; !pending.isEmpty(); attempt++) {
                     if (attempt == 3) {
                         // Not all deleted: fail so the caller retries the whole (idempotent) erase.
-                        throw new IllegalStateException("Alerts could not all be deleted");
+                        throw new AlertsEraseIncompleteException("Alerts could not all be deleted", null);
                     }
                     if (attempt > 0) {
                         backOff(attempt); // unprocessed items mean throttling: wait (full jitter) before resending
@@ -128,7 +128,7 @@ public class DynamoDbAlertRepository implements AlertRepository {
             Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextLong((50L << (attempt - 1)) + 1));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while erasing alerts", e);
+            throw new AlertsEraseIncompleteException("Interrupted while erasing alerts", e);
         }
     }
 

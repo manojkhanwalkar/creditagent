@@ -27,10 +27,10 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `web-server` | 8080 | UI, `GET /api/v1/offers` (the user's card offers; also returned by login), `GET /api/v1/alerts` (dark-web alerts for the user's email; also returned by login),  `POST /api/v1/chat` (`{ssn, message}`, needs the JWT; own SSN only), `POST /api/v1/auth/register` (multipart, with the `ssnCard` photo and `mobilePhone`), `POST /api/v1/auth/login` (password → challenge), `POST /api/v1/auth/login/otp` (send a code), `POST /api/v1/auth/login/verify` (code → JWT), `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`, `GET`/`PUT /api/v1/credit-report/status` (lock or unlock the user's own report; a locked report is refused to third parties), internal `POST /internal/v1/report-locks/lookup` (needs `INTERNAL_API_TOKEN`), and `POST /api/v1/credit-score` (needs `Authorization: Bearer <jwt>`; only the user's own SSN) |
 | `score-calculator` | 8081 | `POST /api/v1/scores` (FICO-style five-factor scorecard, 300–850) |
 | `credit-report-mcp-server` | 8082 | MCP at `/mcp`; resource `credit-report://ssn/{ssn}`, tool `get_credit_report`. Reads all three bureau reports and returns NRG's merged report |
-| `credit-report-generator` | 8083 | `POST /api/v1/reports`; stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
+| `credit-report-generator` | 8083 | `POST /api/v1/reports` (needs the internal token); stores one report per bureau, each in that bureau's format, in the `CreditReports` DynamoDB table (encrypted) |
 | `normalized-report-generator` | 8084 | NRG: `POST /api/v1/normalized-reports`; merges the three bureau reports into one |
 | `credit-intelligence-agent` | 8085 | A2A agent; card at `/.well-known/agent-card.json` |
-| `client-agent` | 8086 | `POST /api/v1/advice`; calls the agent over A2A |
+| `client-agent` | 8086 | `POST /api/v1/advice` (needs `Authorization: Bearer <INTERNAL_API_TOKEN>`); calls the agent over A2A |
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
 | `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
 | `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each user whose address was found in the last 24 hours: one email per user, no locations, a suggestion to buy identity protection. SMTP via `MAIL_HOST` (compose: Mailpit at http://localhost:8025); without one it sends nothing |
@@ -68,7 +68,7 @@ Then:
 * open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN. The local stack has no AWS account, so sign-in codes are written to the web server's log instead of being sent (`OTP_DELIVERY=log`): `docker compose logs web-server | grep 'sign-in code'`;
 * get recommendations through the agents:
   ```bash
-  curl -s localhost:8086/api/v1/advice -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
+  curl -s localhost:8086/api/v1/advice -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
   ```
 
 ## Run with AWS Emulator
@@ -148,7 +148,7 @@ The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP
 | Part | What it does |
 |---|---|
 | `Alerts` table | DynamoDB, key `email` (lower-cased) + `location`, attribute `timestamp` (when it was first found). One row per email and location: finding the same exposure again changes nothing |
-| `dark-web-monitor` | Runs continuously. Each cycle (`DARKWEB_SCAN_INTERVAL`, 1 minute after the previous one ends) it reads registered users' emails from the users table a page at a time (at most `DARKWEB_MAX_EMAILS_PER_CYCLE` rows a cycle; the next cycle carries on where this one stopped), checks each against every location in `DARKWEB_LOCATIONS`, and writes what it finds to `Alerts`. Only registered users' emails are watched, and an email belongs to at most one account (registration refuses a second one, in any letter case), so no account can see another account's alerts |
+| `dark-web-monitor` | Runs continuously. Each cycle (`DARKWEB_SCAN_INTERVAL` after the previous one ends: 1 hour by default, 1 minute in compose) it reads registered users' emails from the users table a page at a time (at most `DARKWEB_MAX_EMAILS_PER_CYCLE` rows a cycle; the next cycle carries on where this one stopped), checks each against every location in `DARKWEB_LOCATIONS`, and writes what it finds to `Alerts`. Only registered users' emails are watched, and an email belongs to at most one account (registration refuses a second one, in any letter case), so no account can see another account's alerts |
 | Placeholder source | Nothing on the dark web is contacted. Emails in `DARKWEB_PLACEHOLDER_EXPOSED` are always "found"; nothing else is, unless `DARKWEB_PLACEHOLDER_RATE` is set (demos only): then a fixed hash of email and location marks that share of pairs as exposed, the same every time (0.02 at 3 locations is about 6% of users). Replace the `DarkWebSource` bean to plug in a real breach-data provider |
 | `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
 | Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s) for the answer (after a quick read of the account). If a record exists, the page shows a banner: the user's information was found on the dark web, with the locations and dates, and a suggestion to buy identity protection. If the service is down or slow, login still works and the page asks `GET /api/v1/alerts` (retried) at once, then again after 5 and 30 seconds |
@@ -272,7 +272,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `NOTIFIER_CRON`, `NOTIFIER_LOOKBACK`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `7d`, `10000`, `10` |
 | `NOTIFIER_FROM`, `NOTIFIER_APP_URL` | notifier | `alerts@creditagent.local`, empty (compose: `http://localhost:8080`) |
 | `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier | empty = no email sent (and no alert marked), `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the notifier refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
-| `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1m`, `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
+| `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1h` (compose: `60s`), `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
 | `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
 | `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
