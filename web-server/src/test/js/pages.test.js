@@ -75,3 +75,10 @@ test('ID Protection at registration is optional, never pre-ticked, and its widge
   assert.match(index, /<p id="subscribe-error" class="error" role="alert" hidden>/);
   assert.match(index, /<p id="alerts-upsell" hidden><a href="#subscriptions-widget">/);
 });
+
+test('the terms state the prorated refund and the privacy notice keeps purchase records one year after deletion', () => {
+  const terms = page('terms.html');
+  const privacy = page('privacy.html');
+  assert.match(terms, /refund the unused rest of your subscription, counted from the\s+day you ask/);
+  assert.match(privacy, /subscriptions bought, with the payment reference\) are kept for one year after you delete your account/);
+});
