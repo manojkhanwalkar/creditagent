@@ -34,6 +34,7 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
 | `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
 | `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each ID Protection subscriber whose address was found in the last 24 hours: one email per user, no locations. SMTP via `MAIL_HOST` (compose: Mailpit at http://localhost:8025); without one it sends nothing |
+| `notification-service` | 8094 | Internal only (service token): `POST /internal/v1/notifications` sends one templated email (SES or SMTP) or SMS (SNS), once per `Idempotency-Key`. Takes no traffic yet; see [Notifications](#notifications) |
 | `alerts-service` | 8092 | Internal only (service token): `POST /internal/v1/alerts/lookup` (`{email}`) answers whether the `Alerts` table holds a record for that email, and where it was found |
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
@@ -167,6 +168,41 @@ ID Protection is a paid, one-year subscription: subscribers see where and when t
 | Payments | `PAYMENTS_PROVIDER`: `none` (default: listed, not buyable), `test` (every payment succeeds, nothing charged; refused unless DynamoDB is local; compose and the emulator script set it). A real provider (Stripe Checkout) comes next: it answers with a redirect to its hosted page, so card data never reaches CreditAgent |
 | Data rights | The export lists the latest term per product (a renewal replaces the earlier one; the audit log keeps every payment); account deletion erases them, and the audit record names the products and payments erased; the retention job never purges an account with an active term |
 
+## Notifications
+
+`notification-service` (port 8094) will send every sign-in code and dark-web alert, so provider clients, templates and credentials live in one place. It takes no traffic yet: web-server and alert-notifier still send their own messages, and switch to it behind `NOTIFICATIONS_MODE` in the next steps (N3 remote clients, N4 cut-over). The contract is [`notification-service-v1.yaml`](notification-service/src/main/resources/static/openapi/notification-service-v1.yaml).
+
+`POST /internal/v1/notifications`, with `Authorization: Bearer <INTERNAL_API_TOKEN>` and `Idempotency-Key` (1 to 128 printable characters), body `{channel: EMAIL|SMS, to, template, params}`:
+
+| Template | Channels | Params |
+|---|---|---|
+| `OTP_SIGN_IN` | EMAIL, SMS | `code` (6 digits), `validSeconds` (1 to 86400; the text says "5 minutes" or "90 seconds", exactly) |
+| `DARK_WEB_ALERT` | EMAIL | `count` (places found), `firstSeen` (ISO date), optional `appUrl` (http or https). The same subject and text as the notifier's email today |
+
+| Answer | When |
+|---|---|
+| `202 {id, status: "SENT"}` | Sent; a repeat of the same key and body answers the same `id` without sending again |
+| `400` ProblemDetail | Unknown channel, template or field; missing or extra params; a code that is not 6 digits; a malformed email or E.164 number; SMS for `DARK_WEB_ALERT`; a field over its limit; no `Idempotency-Key` |
+| `409` | The key was used for a different body (compared by a keyed SHA-256 hash of the canonical request) |
+| `422 {refused: true}` | The provider clearly refused the message (a 4xx that is not throttling, or an SMTP relay that rejected the recipient). Not delivered; the key is free again |
+| `503` + `Retry-After` | Outcome unknown (timeout, 5xx, throttling: it may still arrive), a send with this key in progress, or DynamoDB unavailable. The key is free again (unless in progress) |
+| `401`, `404`, `413`, `429` | No or wrong token; no token configured; body over 8 KiB; over the inbound rate limit |
+
+**Data.** DynamoDB `credit-agent-notifications`, key `idempotencyKey` (an HMAC of the caller's key: sign-in keys carry the challenge id), with the request hash, channel, template, masked destination (`a***@example.com`, `+1******0100`), status, provider message id, `createdAt`, and a 30-day TTL on `expiresAt`. The code, the full address or number, and the message text are never stored or logged. Only accepted sends are remembered.
+
+**Delivery guarantee.** The key is reserved with a conditional put (PENDING, with a 60 s lease), then the provider is called, then the record becomes SENT; a failed send deletes the reservation so a retry can send. So a key sends at most once, except in one window: if the service stops after the provider accepted the message but before the SENT update, the record stays PENDING and, once the lease runs out, the same request sends again (at-least-once there). A different request never takes over a key.
+
+**Providers.** `NOTIFICATIONS_EMAIL=ses|smtp|log` and `NOTIFICATIONS_SMS=sns|log`. SES v2 and SNS Publish (transactional, straight to the number) are bounded by `NOTIFICATIONS_PROVIDER_TIMEOUT` with the SDK's standard retries (one layer); SMTP uses the mail timeouts and refuses STARTTLS off for any relay but localhost or `mailpit`. `log` sends nothing and writes the template and masked destination (never the code); it is refused unless `DYNAMODB_ENDPOINT` is local. Inbound limits come from `web-support` (429/503 with `Retry-After`), and shutdown is graceful (`NOTIFICATIONS_SHUTDOWN_TIMEOUT`, 20 s). In AWS the service's role needs `ses:SendEmail`, `sns:Publish` and `dynamodb:PutItem`, `UpdateItem`, `DeleteItem`, `GetItem` on its table.
+
+Run it alone: `INTERNAL_API_TOKEN=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local mvn -pl notification-service spring-boot:run`, then
+
+```bash
+curl -i localhost:8094/internal/v1/notifications -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H 'Idempotency-Key: demo-1' \
+  -H 'Content-Type: application/json' -d '{"channel":"SMS","to":"+15555550100","template":"OTP_SIGN_IN","params":{"code":"123456","validSeconds":"300"}}'
+```
+
+In compose it sends email to Mailpit (http://localhost:8025) and logs texts.
+
 ## Chat
 
 Signed-in users see **Ask about your report**. They enter their SSN once per sign-in; the page keeps it in memory, never in storage. Each question goes to `POST /api/v1/chat`. The web server checks that the SSN is the user's own, fetches the report, and sends both to `user-advisor-agent`.
@@ -253,7 +289,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service, alerts service, generator (erase API) | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service, alerts service, notification service, generator (erase API) | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
 | `REPORTS_URL`, `ACCOUNT_ERASE_TIMEOUT` | web server | `http://localhost:8083` (the report generator, which erases a deleted account's stored reports), `5s` a try |
 | `ACCOUNT_RETENTION`, `ACCOUNT_RETENTION_MAX_PER_RUN`, `ACCOUNT_RETENTION_CRON` | web server | `730d`, `1000`, `0 15 4 * * *` (UTC): accounts with no login for that long are deleted with their data |
 | `CREDIT_REPORT_RETENTION`, `CREDIT_REPORT_PURGE_MAX`, `CREDIT_REPORT_RETENTION_CRON` | generator | `730d`, `10000`, `0 30 3 * * *` (UTC): stored reports not refreshed for that long are deleted |
@@ -283,10 +319,15 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `PAYMENTS_PROVIDER`, `ID_PROTECTION_PRICE_CENTS`, `SUBSCRIPTIONS_CURRENCY` | web server | `none` (`test` for local development only), `2999` (a placeholder until pricing is decided), `USD` |
 | `NOTIFIER_CRON`, `NOTIFIER_LOOKBACK`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `7d`, `10000`, `10` |
 | `NOTIFIER_FROM`, `NOTIFIER_APP_URL` | notifier | `alerts@creditagent.local`, empty (compose: `http://localhost:8080`) |
-| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier | empty = no email sent (and no alert marked), `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the notifier refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier, notification service (`smtp`) | empty = no email sent (and no alert marked), `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the notifier refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
 | `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1h` (compose: `60s`), `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
 | `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
 | `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |
+| `NOTIFICATIONS_EMAIL`, `NOTIFICATIONS_SMS` | notification service | `ses`, `sns`; `smtp` (with the `MAIL_*` settings) for email; `log` for local development only (compose: `smtp` and `log`) |
+| `NOTIFICATIONS_EMAIL_FROM`, `NOTIFICATIONS_SES_CONFIGURATION_SET`, `NOTIFICATIONS_SES_ENDPOINT` | notification service | `CreditAgent <no-reply@creditagent.example>`, none, AWS |
+| `NOTIFICATIONS_SMS_ORIGINATION_NUMBER`, `NOTIFICATIONS_SMS_SENDER_ID`, `NOTIFICATIONS_SNS_ENDPOINT` | notification service | account default, none, AWS |
+| `NOTIFICATIONS_PROVIDER_TIMEOUT`, `NOTIFICATIONS_DYNAMODB_TIMEOUT`, `NOTIFICATIONS_LEASE` | notification service | `4s`, `2s`, `60s` (a send in progress holds its key this long; must exceed the two timeouts together) |
+| `NOTIFICATIONS_TABLE`, `NOTIFICATIONS_RETENTION`, `NOTIFICATIONS_SHUTDOWN_TIMEOUT` | notification service | `credit-agent-notifications`, `30d` (TTL of an accepted key), `20s` |
 | `ADVISOR_URL`, `ADVISOR_TIMEOUT` | web server | `http://localhost:8089`, `15s` |
 | `ADVISOR_MEMORY_TTL`, `ADVISOR_MAX_CONVERSATIONS`, `ADVISOR_MAX_TURNS`, `ADVISOR_MEMORY_PRESSURE` | advisor agent | `5m`, `10000`, `20`, `0.85` |
 | `ADVISOR_MAX_PROMPT_CHARS`, `ADVISOR_MAX_REPLY_CHARS` | advisor agent | `1000`, `2000` |
