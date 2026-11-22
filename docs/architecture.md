@@ -27,6 +27,8 @@ flowchart LR
     AT[(Alerts table<br/>email + location → timestamp)]
     ALS[alerts-service :8092<br/>internal look-up]
     AN[alert-notifier :8093<br/>daily at 08:00 UTC]
+    NS[notification-service :8094<br/>templated email + SMS<br/>idempotent · no traffic yet]
+    NT[(credit-agent-notifications<br/>idempotency key → status, masked to)]
     ST[(Subscriptions table<br/>user / email# + product → term)]
     MAIL([SMTP relay<br/>Mailpit locally])
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
@@ -74,6 +76,9 @@ flowchart LR
     CC -- "C3 · report (resources/read)" --> M
     CC -- "C4 · score" --> SC
     CC -- "C5 · advice (POST /api/v1/advice)" --> CA
+    WS -. "planned (extraction step 3) · sign-in codes" .-> NS
+    AN -. "planned (extraction step 3) · alert emails" .-> NS
+    NS -- "reserve key, then SENT" --> NT
 ```
 
 ## Modules
@@ -96,6 +101,7 @@ flowchart LR
 | `dark-web-monitor` | Scheduled job: checks registered users' emails against known dark-web locations and records exposures in the `Alerts` table (placeholder source) | Spring Boot `@Scheduled`, AWS SDK DynamoDB |
 | `alerts-service` | Internal look-up: does the `Alerts` table hold a record for this email? | Spring Boot, AWS SDK DynamoDB |
 | `alert-notifier` | Daily job: emails each ID Protection subscriber whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring Mail (SMTP), AWS SDK DynamoDB |
+| `notification-service` | Internal API: sends one templated email (SES or SMTP) or SMS (SNS) per idempotency key; owns the templates. No callers yet (N3 adds them behind `NOTIFICATIONS_MODE`) | Spring Boot, AWS SDK SES v2, SNS, DynamoDB, Spring Mail |
 | `alerts-store` | The `Alerts` table: record type, repository, table creation | AWS SDK DynamoDB |
 | `subscription-store` | The Subscriptions table: products, terms, conditional activation, look-up by email | AWS SDK DynamoDB |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
