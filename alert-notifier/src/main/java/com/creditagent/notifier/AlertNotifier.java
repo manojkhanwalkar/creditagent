@@ -35,16 +35,17 @@ public class AlertNotifier {
 
     /**
      * What one run did. {@code skipped}: no mail relay is configured, so nothing was read or claimed.
-     * {@code notSubscribed}: users not emailed because they have no ID Protection.
+     * {@code notSubscribed}: users not emailed because they have no ID Protection. {@code unknown}: users
+     * left for the next run because whether they subscribe could not be read.
      */
-    public record Run(int alerts, int emailsSent, int emailsFailed, boolean skipped, int notSubscribed) {
+    public record Run(int alerts, int emailsSent, int emailsFailed, boolean skipped, int notSubscribed, int unknown) {
 
         public Run(int alerts, int emailsSent, int emailsFailed) {
-            this(alerts, emailsSent, emailsFailed, false, 0);
+            this(alerts, emailsSent, emailsFailed, false, 0, 0);
         }
 
         public Run(int alerts, int emailsSent, int emailsFailed, boolean skipped) {
-            this(alerts, emailsSent, emailsFailed, skipped, 0);
+            this(alerts, emailsSent, emailsFailed, skipped, 0, 0);
         }
     }
 
@@ -86,8 +87,9 @@ public class AlertNotifier {
                 return;
             }
             // Counts only: no addresses in logs.
-            log.info("Alert emails: {} new alerts, {} emails sent, {} failed, {} users without ID Protection", run.alerts(),
-                    run.emailsSent(), run.emailsFailed(), run.notSubscribed());
+            log.info("Alert emails: {} new alerts, {} emails sent, {} failed, {} users without ID Protection, {} left for"
+                    + " the next run (subscription unknown)", run.alerts(), run.emailsSent(), run.emailsFailed(),
+                    run.notSubscribed(), run.unknown());
         } catch (RuntimeException e) {
             log.warn("Alert email run failed; the next one runs on schedule: {}", e.getClass().getSimpleName());
         }
@@ -107,10 +109,19 @@ public class AlertNotifier {
         int sent = 0;
         int failed = 0;
         int notSubscribed = 0;
+        int unknown = 0;
         for (Map.Entry<String, List<Alert>> user : byEmail.entrySet()) {
+            boolean subscribed;
+            try {
+                subscribed = subscribers.idProtection(user.getKey(), now);
+            } catch (RuntimeException e) {
+                // Nothing claimed: the next run asks again.
+                unknown++;
+                log.warn("Whether a user has ID Protection could not be read: {}", e.getClass().getSimpleName());
+                continue;
+            }
             List<Alert> claimed = new ArrayList<>();
             try {
-                boolean subscribed = subscribers.idProtection(user.getKey(), now);
                 for (Alert alert : user.getValue()) {
                     if (alerts.claimNotification(alert, now)) {
                         claimed.add(alert);
@@ -136,7 +147,7 @@ public class AlertNotifier {
                 log.warn("An alert email could not be sent: {}", e.getClass().getSimpleName());
             }
         }
-        return new Run(found.size(), sent, failed, false, notSubscribed);
+        return new Run(found.size(), sent, failed, false, notSubscribed, unknown);
     }
 
     /** Best effort: a claim that cannot be released stays, and that alert is not emailed (at most once). */

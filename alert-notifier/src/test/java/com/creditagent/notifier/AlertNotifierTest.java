@@ -248,10 +248,10 @@ class AlertNotifierTest {
         alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
         alerts.record(new Alert("free@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
 
-        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(2, 1, 0, false, 1));
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(2, 1, 0, false, 1, 0));
         assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com");
         // Claimed, so the next run does not read them again.
-        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(0, 0, 0, false, 0));
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(0, 0, 0, false, 0, 0));
     }
 
     @Test
@@ -261,9 +261,9 @@ class AlertNotifierTest {
                 Clock.fixed(RUN, ZoneOffset.UTC), pauses::add, (email, now) -> {
                     throw new IllegalStateException("subscriptions table down");
                 });
-        assertThat(unsure.run()).isEqualTo(new AlertNotifier.Run(1, 0, 1, false, 0));
+        assertThat(unsure.run()).isEqualTo(new AlertNotifier.Run(1, 0, 0, false, 0, 1));
         assertThat(sent).isEmpty();
 
-        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(1, 1, 0, false, 0));
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(1, 1, 0, false, 0, 0));
     }
 }

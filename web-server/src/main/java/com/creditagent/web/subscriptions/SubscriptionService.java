@@ -213,25 +213,53 @@ public class SubscriptionService implements AccountSubscriptions {
         Instant now = clock.instant();
         Instant end = now.atZone(ZoneOffset.UTC).plusYears(1).toInstant();
         Subscription term = new Subscription(account.userId(), product, now, end, paymentReference);
-        boolean started = store.activate(term, account.email());
+        Map<String, String> detail = Map.of("product", product.name(), "paymentReference", paymentReference,
+                "expiresAt", end.toString());
+        boolean started;
+        try {
+            started = store.activate(term, account.email());
+        } catch (RuntimeException e) {
+            // The payment was taken but no term was stored: record it, so it can be refunded or applied.
+            audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, "user:" + account.userId(), "user:" + account.userId(),
+                    "FAILED", detail);
+            log.warn("Payment {} for {} was taken but its term could not be stored: {}", paymentReference, product,
+                    SafeLogging.describe(e));
+            throw e;
+        }
+        if (!started) {
+            // The same payment confirmed twice (a repeated webhook) bought the term that is active: not a refund.
+            Optional<Subscription> same = store.findAll(account.userId()).stream()
+                    .filter(s -> s.product() == product && paymentReference.equals(s.paymentReference())).findFirst();
+            if (same.isPresent()) {
+                return same;
+            }
+        }
         audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, "user:" + account.userId(), "user:" + account.userId(),
-                started ? "OK" : "ALREADY_ACTIVE",
-                Map.of("product", product.name(), "paymentReference", paymentReference, "expiresAt", end.toString()));
+                started ? "OK" : "ALREADY_ACTIVE", detail);
         if (!started) {
             log.warn("Payment {} for {} started nothing: already subscribed; refund it", paymentReference, product);
         }
         return started ? Optional.of(term) : Optional.empty();
     }
 
-    /** Every term the user has held, for a data export. @throws RuntimeException if the table cannot be read */
+    /**
+     * The latest term per product (a renewal replaces the earlier one; the audit log keeps every payment),
+     * for a data export. @throws RuntimeException if the table cannot be read
+     */
     public List<Subscription> forExport(String userId) {
         return store.findAll(userId);
     }
 
     /** Deletes the user's subscription records (account deletion). @throws RuntimeException if DynamoDB fails */
     public void erase(String userId, String email) {
+        List<Subscription> held = store.findAll(userId);
         store.eraseAll(userId, email);
-        audit.record(AuditLog.Event.SUBSCRIPTIONS_ERASED, "user:" + userId, "user:" + userId, "OK");
+        // What was erased stays in the audit log: the products and the payments that bought them.
+        Map<String, String> detail = new java.util.LinkedHashMap<>();
+        for (Subscription s : held) {
+            detail.put(s.product().name(), s.paymentReference() + " until " + s.expiresAt());
+        }
+        audit.record(AuditLog.Event.SUBSCRIPTIONS_ERASED, "user:" + userId, "user:" + userId, "OK", detail);
     }
 
     private long price(Product product) {

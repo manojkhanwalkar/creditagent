@@ -26,8 +26,10 @@ public class AlertsService implements LoginAlerts {
     static final String FOUND = "Your information was found on the dark web. Someone may try to use it to open"
             + " accounts or get into yours. Change the passwords you use with this email, and watch your credit"
             + " report for accounts you did not open.";
-    static final String FOUND_LOCKED = "Something connected to your email was found on the dark web. Subscribe to"
-            + " ID Protection to see where and when, and to get an email whenever it happens again.";
+    static final String FOUND_LOCKED = "Something connected to your email was found on the dark web. Change the"
+            + " passwords you use with this email, and watch your credit report for accounts you did not open. Where"
+            + " and when it was found is listed in your data download; subscribe to ID Protection to see it here and"
+            + " get an email each time it happens.";
     static final int MAX_FINDINGS = 20;
 
     public enum Status { OK, UNAVAILABLE }

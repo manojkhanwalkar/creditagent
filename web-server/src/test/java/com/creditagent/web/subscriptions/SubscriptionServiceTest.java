@@ -132,6 +132,30 @@ class SubscriptionServiceTest {
     }
 
     @Test
+    void aPaymentWhoseTermCannotBeStoredIsStillAuditedForARefund() {
+        SubscriptionRepository failing = mock(SubscriptionRepository.class);
+        given(failing.findAll("ada")).willReturn(List.of());
+        given(failing.activate(any(), anyString())).willThrow(SdkClientException.create("timeout"));
+        assertThatThrownBy(() -> service(PaymentGateway.test(), failing).subscribe("ada", Product.ID_PROTECTION))
+                .isInstanceOf(SdkClientException.class);
+        ArgumentCaptor<Map<String, ?>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"), eq("FAILED"), detail.capture());
+        assertThat(detail.getValue().get("paymentReference").toString()).startsWith("test_");
+    }
+
+    @Test
+    void theSamePaymentConfirmedTwiceIsTheActiveTermNotARefund() {
+        SubscriptionService subscriptions = service(PaymentGateway.test());
+        Subscription first = subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_1").orElseThrow();
+        assertThat(subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_1")).contains(first);
+        assertThat(subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_2")).isEmpty();
+        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
+                eq("OK"), any(Map.class));
+        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
+                eq("ALREADY_ACTIVE"), any(Map.class));
+    }
+
+    @Test
     void loginAndRegistrationNeverFail() {
         SubscriptionRepository down = mock(SubscriptionRepository.class);
         given(down.findAll(anyString())).willThrow(SdkClientException.create("down"));
@@ -157,7 +181,9 @@ class SubscriptionServiceTest {
         subscriptions.erase("ada", "ada@example.com");
         assertThat(subscriptions.forExport("ada")).isEmpty();
         assertThat(store.activeForEmail("ada@example.com", Product.ID_PROTECTION, NOW)).isFalse();
-        verify(audit).record(AuditLog.Event.SUBSCRIPTIONS_ERASED, "user:ada", "user:ada", "OK");
+        ArgumentCaptor<Map<String, ?>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTIONS_ERASED), eq("user:ada"), eq("user:ada"), eq("OK"), detail.capture());
+        assertThat(detail.getValue().get("ID_PROTECTION").toString()).startsWith("test_").contains("until 2027-11-21");
     }
 
     @Test

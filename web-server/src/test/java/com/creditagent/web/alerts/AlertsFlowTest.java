@@ -121,7 +121,8 @@ class AlertsFlowTest {
         assertThat((Boolean) JsonPath.read(body, "$.alerts.exposed")).isTrue();
         assertThat((Boolean) JsonPath.read(body, "$.alerts.locked")).isTrue();
         assertThat((List<?>) JsonPath.read(body, "$.alerts.findings")).isEmpty();
-        assertThat((String) JsonPath.read(body, "$.alerts.message")).contains("Subscribe to ID Protection");
+        assertThat((String) JsonPath.read(body, "$.alerts.message")).contains("subscribe to ID Protection")
+                .contains("Change the passwords").contains("data download");
         assertThat(body).doesNotContain("breach-forum-beta");
 
         String bearer = "Bearer " + JsonPath.read(body, "$.token");

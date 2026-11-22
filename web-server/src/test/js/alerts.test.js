@@ -39,6 +39,8 @@ test('a free user is told something was found, without details, and offered ID P
   assert.equal(view.show, true);
   assert.equal(view.locked, true);
   assert.deepEqual(view.findings, []);
-  assert.match(view.message, /Subscribe to ID Protection/);
+  assert.match(view.message, /subscribe to ID Protection/);
+  assert.match(view.message, /Change the passwords/);
+  assert.match(view.message, /data download/);
   assert.equal(alertsView({ status: 'OK', exposed: true, locked: true, message: 'Server says.' }).message, 'Server says.');
 });

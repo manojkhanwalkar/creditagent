@@ -46,6 +46,9 @@ const chatWidget = $('chat-widget');
 const offersWidget = $('offers-widget');
 const dataWidget = $('data-widget');
 const subscriptionsWidget = $('subscriptions-widget');
+const subscribeButton = $('subscribe-button');
+// Bumped on every sign-out and login answer, so a subscriptions answer for an earlier session is ignored.
+let subscriptionsGeneration = 0;
 
 // ---------- signed-in / signed-out view ----------
 
@@ -69,7 +72,12 @@ function showSignedIn(userId, ssnMasked, offers, alerts, subscriptions) {
   // Login waits 1.5 s at most: if the alerts service did not answer in time, ask again.
   if (alertsChecked(alerts)) renderAlerts(alerts); else loadAlerts();
   // Free users are offered ID Protection at every login.
-  if (subscriptions?.status === 'OK') renderSubscriptions(subscriptions); else loadSubscriptions();
+  if (subscriptions?.status === 'OK') {
+    subscriptionsGeneration++; // a load still on its way is older than this answer
+    renderSubscriptions(subscriptions);
+  } else {
+    loadSubscriptions();
+  }
 }
 
 function showSignedOut(message) {
@@ -84,6 +92,11 @@ function showSignedOut(message) {
   dataWidget.hidden = true;
   subscriptionsWidget.hidden = true;
   $('alerts-banner').hidden = true;
+  // An answer still on its way for this user must not reach the next one.
+  subscriptionsGeneration++;
+  $('subscriptions-status').textContent = '';
+  subscribeButton.hidden = true;
+  showFormError($('subscribe-error'), '');
   resetDataWidget();
   cancelIdleWarning();
   renderAlerts(null);
@@ -664,8 +677,6 @@ async function loadAlerts(attempt = 0) {
 
 // ---------- ID Protection subscription ----------
 
-const subscribeButton = $('subscribe-button');
-let subscriptionsGeneration = 0;
 
 function renderSubscriptions(data) {
   const view = subscriptionsView(data);
@@ -705,6 +716,8 @@ subscribeButton.addEventListener('click', async () => {
     if (result.refresh) {
       showNotice(result.message);
       await loadSubscriptions();
+      // The button is gone now: keep keyboard focus in the panel, not at the top of the page (WCAG 2.4.3).
+      if (subscribeButton.hidden) subscriptionsWidget.focus();
       loadAlerts(); // the details are unlocked now
     } else {
       showFormError(error, result.message);

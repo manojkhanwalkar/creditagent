@@ -6,8 +6,8 @@ export const MAX_FINDINGS = 20;
 const DEFAULT_MESSAGE = 'Your information was found on the dark web. Change the passwords you use with this'
   + ' email, and watch your credit report for accounts you did not open.';
 
-const LOCKED_MESSAGE = 'Something connected to your email was found on the dark web. Subscribe to ID Protection'
-  + ' to see where and when.';
+const LOCKED_MESSAGE = 'Something connected to your email was found on the dark web. Change the passwords you use'
+  + ' with this email. Where and when is listed in your data download; subscribe to ID Protection to see it here.';
 
 function readableLocation(location) {
   return String(location ?? 'an unnamed location').replace(/[-_]+/g, ' ');

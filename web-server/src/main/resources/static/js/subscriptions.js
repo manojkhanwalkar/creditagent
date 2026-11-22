@@ -95,6 +95,10 @@ export function subscribeResult(httpStatus, data) {
 export function registrationNotice(outcome) {
   if (!outcome || typeof outcome !== 'object') return null;
   if (outcome.outcome === 'ACTIVE' || outcome.outcome === 'ALREADY_ACTIVE') return 'Your ID Protection is active.';
+  // A provider with a payment page: nothing is bought until the user pays there, from the ID Protection panel.
+  if (outcome.outcome === 'CHECKOUT') {
+    return 'Your account is ready. ID Protection starts once you pay: use the button in the ID Protection panel.';
+  }
   if (typeof outcome.message === 'string' && outcome.message.trim()) return outcome.message;
   return null;
 }

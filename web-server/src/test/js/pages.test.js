@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 
 const page = (name) => readFileSync(new URL(`../../main/resources/static/${name}`, import.meta.url), 'utf8');
 const index = page('index.html');
+const app = page('js/app.js');
 
 test('registration asks for the FCRA authorisation, links the terms and privacy notice, and a mobile number', () => {
   assert.match(index, /<input id="reg-authorize" name="authorize" type="checkbox" required/);
@@ -66,7 +67,9 @@ test('ID Protection at registration is optional, never pre-ticked, and its widge
   assert.match(index, /<input id="reg-id-protection" name="idProtection" type="checkbox">/);
   assert.doesNotMatch(index, /id="reg-id-protection"[^>]*(checked|required)/);
   assert.match(index, /<label for="reg-id-protection"/);
-  assert.match(index, /<section class="widget" id="subscriptions-widget" aria-labelledby="subscriptions-title"/);
+  // tabindex="-1": focus moves to the panel when the subscribe button goes away (WCAG 2.4.3).
+  assert.match(index, /<section class="widget" id="subscriptions-widget" aria-labelledby="subscriptions-title" tabindex="-1"/);
+  assert.match(app, /if \(subscribeButton\.hidden\) subscriptionsWidget\.focus\(\);/);
   assert.match(index, /<p id="subscriptions-status" role="status">/);
   assert.match(index, /<button type="button" id="subscribe-button"/);
   assert.match(index, /<p id="subscribe-error" class="error" role="alert" hidden>/);

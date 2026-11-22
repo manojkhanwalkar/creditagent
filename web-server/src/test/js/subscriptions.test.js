@@ -69,6 +69,7 @@ test('each subscribe answer has its message', () => {
 test('a new user is told what happened to the ID Protection they asked for', () => {
   assert.equal(registrationNotice({ outcome: 'ACTIVE' }), 'Your ID Protection is active.');
   assert.equal(registrationNotice({ outcome: null, message: 'Could not start.' }), 'Could not start.');
+  assert.match(registrationNotice({ outcome: 'CHECKOUT', checkoutUrl: 'https://pay.example/1' }), /starts once you pay/);
   assert.equal(registrationNotice({ outcome: null, message: ' ' }), null);
   assert.equal(registrationNotice(null), null);
 });
