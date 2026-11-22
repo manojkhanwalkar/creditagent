@@ -13,13 +13,13 @@ import org.junit.jupiter.params.provider.Arguments;
 /** The templates' wording (identical to what web-server and alert-notifier send today) and every param check. */
 class TemplateTest {
 
-    /** web-server's OtpSender.text(code, 5 minutes, false), copied verbatim. */
+    /** The former web-server OtpSender.text(code, 5 minutes, false) (removed in N4), copied verbatim. */
     static final String TODAY_OTP_EMAIL = "Your CreditAgent sign-in code is 042917.\n\n"
             + "It expires in 5 minutes. Never share it: CreditAgent will never ask you for it.\n\n"
             + "If you did not just try to sign in, someone else knows your password. Change it, and do not"
             + " enter this code anywhere.\n";
 
-    /** web-server's OtpSender.text(code, 5 minutes, true), copied verbatim. */
+    /** The former web-server OtpSender.text(code, 5 minutes, true) (removed in N4), copied verbatim. */
     static final String TODAY_OTP_SMS =
             "042917 is your CreditAgent sign-in code. It expires in 5 minutes. Never share it; we will never ask for it.";
 

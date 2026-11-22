@@ -78,14 +78,15 @@ Then:
 
 1. Install it once. On Fedora or Amazon Linux: `sudo dnf install -y https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-x86_64.rpm` (to check AWS's signature first, see [Getting started on Linux](https://docs.aws.amazon.com/emulator/latest/userguide/getting-started-linux.html)). Without it, `start.sh` uses Podman instead: it downloads the package, checks AWS's signature and builds a local image.
 2. Start it: `scripts/aws-emulator/start.sh`. It runs in the background on `https://127.0.0.1:9297` with telemetry off and 2 GiB of memory at most. It writes fresh credentials and a certificate to `~/.aws/emulator/9297/`, and builds a Java trust store that holds both the JDK's certificates and the emulator's.
-3. In each shell that runs a service, run `source scripts/aws-emulator/env.sh` (it adds the trust store to `JAVA_TOOL_OPTIONS`, so every JVM prints "Picked up JAVA_TOOL_OPTIONS" on stderr), then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
+3. Once, before opening the service shells, make the shared service token: `openssl rand -hex 32 > ~/.creditagent-internal-token` (every service must use the same value).
+4. In each shell that runs a service, run `source scripts/aws-emulator/env.sh` (it adds the trust store to `JAVA_TOOL_OPTIONS`, so every JVM prints "Picked up JAVA_TOOL_OPTIONS" on stderr), then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
    ```bash
    source scripts/aws-emulator/env.sh
-   export INTERNAL_API_TOKEN=$(openssl rand -hex 32)   # the same value in every shell
+   export INTERNAL_API_TOKEN=$(cat ~/.creditagent-internal-token)   # the same value in every shell
    mvn -pl notification-service spring-boot:run        # sends the sign-in codes (logged here)
    JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) mvn -pl web-server spring-boot:run
    ```
-4. Stop it with `scripts/aws-emulator/stop.sh`. Everything it held is in memory, so restarting gives empty tables. Each start makes new credentials and a new certificate, so restart the services after it.
+5. Stop it with `scripts/aws-emulator/stop.sh`. Everything it held is in memory, so restarting gives empty tables. Each start makes new credentials and a new certificate, so restart the services after it.
 
 `notification-service` logs messages instead of sending them (`NOTIFICATIONS_EMAIL=log`, `NOTIFICATIONS_SMS=log`), and `env.sh` sets `NOTIFICATIONS_SMS_LOG_CODES=true`, so **sign in by text** and read the code with `grep 'local sign-in only'` in its log (emails are logged without the code). Start `notification-service` with the other services. Emulator 1.0.531 keeps SES in its sandbox: a sender can never be verified locally, so every email is refused. It also doesn't implement SNS `Publish` to a phone number yet (it answers `501 NotImplemented`). The SES and SNS calls are covered by unit tests with mocked clients.
 
