@@ -180,7 +180,7 @@ public class OtpLoginService {
         try {
             // Keyed by this challenge's send count after this send: stable for one send, new for the next.
             notifications.send(new Notification(channel, destination, NotificationGateway.Template.OTP_SIGN_IN,
-                    Map.of("code", code, "validMinutes", String.valueOf(limits.codeTtl().toMinutes())),
+                    Map.of("code", code, "validSeconds", String.valueOf(limits.codeTtl().toSeconds())),
                     "otp:" + challengeId + ":" + (challenge.sends() + 1)));
         } catch (OtpDeliveryException e) {
             if (e.refused()) {

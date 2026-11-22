@@ -1,0 +1,153 @@
+openapi: 3.1.0
+info:
+  title: CreditAgent notification-service
+  version: 1.0.0
+  description: |
+    Internal only. Sends one templated email or text message, at most once per Idempotency-Key while
+    the key is remembered (30 days). The service owns the wording: callers name a template and give its
+    params, never free text. No answer echoes the destination or a param value.
+servers:
+  - url: http://notification-service:8094
+security:
+  - serviceToken: []
+paths:
+  /internal/v1/notifications:
+    post:
+      operationId: sendNotification
+      summary: Send one templated notification
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >
+            1 to 128 printable ASCII characters without spaces. Every key that was sent or may have been
+            delivered is remembered: a repeat with the same body answers 202 with the original id and
+            sends nothing. Only after a 422 (clearly refused, not delivered) may the same key send again.
+            After a 503 whose outcome is unknown the key is kept as UNCERTAIN: retrying it does not re-send,
+            so a caller that wants a new attempt must use a new key. Sign-in codes use
+            otp:<challengeId>:<send number>.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[\x21-\x7e]{1,128}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendRequest'
+            examples:
+              otp:
+                value: {channel: SMS, to: "+15555550100", template: OTP_SIGN_IN, params: {code: "042917", validSeconds: "300"}}
+              alert:
+                value: {channel: EMAIL, to: ada@example.com, template: DARK_WEB_ALERT,
+                        params: {count: "2", firstSeen: "2026-11-09", appUrl: "https://app.creditagent.example"}}
+      responses:
+        '202':
+          description: >
+            Sent (status SENT), or a repeat of this key and body: the original id, with SENT, or UNCERTAIN
+            when the first attempt's outcome was never known (it may or may not have arrived). Nothing is sent
+            again either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendResponse'
+        '400':
+          description: >
+            Invalid request: a missing or malformed Idempotency-Key, an unknown channel, template or field,
+            missing or extra params, a code that is not 6 digits, a malformed email or E.164 number, an SMS
+            for an email-only template, or a field over its size limit
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '401':
+          description: Missing or wrong service token
+        '404':
+          description: The service has no token configured, so the API is off
+        '409':
+          description: The Idempotency-Key was already used for a different request
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '413':
+          description: Body over 8 KiB
+        '422':
+          description: >
+            The provider clearly refused the message (a 4xx that is not throttling, or an SMTP relay that
+            rejected the recipient). It was not delivered; the key is free to use again.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Refused'}
+        '429':
+          description: Over the inbound rate limit
+          headers:
+            Retry-After: {$ref: '#/components/headers/RetryAfter'}
+        '503':
+          description: >
+            Outcome unknown (a provider timeout, 5xx or throttling: the message may still arrive; the key is
+            kept as UNCERTAIN and will not send again, so a new attempt needs a new key), a send with this
+            key still in progress (retry the same key after Retry-After), the store unavailable before
+            anything was sent, or the service over its concurrency cap.
+          headers:
+            Retry-After: {$ref: '#/components/headers/RetryAfter'}
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+      description: The shared INTERNAL_API_TOKEN
+  headers:
+    RetryAfter:
+      description: Seconds to wait before retrying
+      schema: {type: integer, minimum: 1}
+  schemas:
+    SendRequest:
+      type: object
+      additionalProperties: false
+      required: [channel, to, template, params]
+      properties:
+        channel:
+          type: string
+          enum: [EMAIL, SMS]
+        to:
+          type: string
+          maxLength: 254
+          description: An email address (EMAIL) or an E.164 number such as +15555550100 (SMS)
+        template:
+          type: string
+          enum: [OTP_SIGN_IN, DARK_WEB_ALERT]
+          description: >
+            OTP_SIGN_IN (EMAIL or SMS) takes code (6 digits) and validSeconds (1 to 86400).
+            DARK_WEB_ALERT (EMAIL only) takes count (1 to 100000), firstSeen (ISO date) and optional
+            appUrl (an http or https address).
+        params:
+          type: object
+          maxProperties: 8
+          propertyNames: {maxLength: 32}
+          additionalProperties:
+            type: string
+            maxLength: 512
+    SendResponse:
+      type: object
+      required: [id, status]
+      properties:
+        id: {type: string, description: This service's id for the send}
+        status: {type: string, enum: [SENT, UNCERTAIN]}
+    Problem:
+      type: object
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+    Refused:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [refused]
+          properties:
+            refused: {type: boolean, const: true}

@@ -39,6 +39,17 @@ credit:
     # Only ID Protection subscribers are emailed; read-only (dynamodb:GetItem).
     subscriptions-table: ${SUBSCRIPTIONS_TABLE:credit-agent-subscriptions}
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
+  # How alert emails are sent. local = the SMTP relay above (spring.mail, MAIL_HOST). remote = the
+  # notification-service's DARK_WEB_ALERT template (POST /internal/v1/notifications with INTERNAL_API_TOKEN).
+  notifications:
+    mode: ${NOTIFICATIONS_MODE:local}
+    url: ${NOTIFICATIONS_URL:http://localhost:8094}
+    # Longest one call may take; above the service's own worst case (about 8 s). Not retried: a failed
+    # send releases its claims and the next run tries again.
+    timeout: ${NOTIFICATIONS_TIMEOUT:15s}
+  internal:
+    # The shared service token the notification-service expects (remote mode only).
+    token: ${INTERNAL_API_TOKEN:}
 
 management:
   health:

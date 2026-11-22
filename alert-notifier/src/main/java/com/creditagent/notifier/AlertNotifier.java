@@ -138,7 +138,7 @@ public class AlertNotifier {
                     release(claimed, now);
                     break;
                 }
-                email.send(user.getKey(), AlertEmail.SUBJECT, AlertEmail.body(claimed, properties.appUrl()));
+                email.sendAlert(user.getKey(), claimed, now, properties.appUrl());
                 sent++;
             } catch (RuntimeException e) {
                 // A failed claim (DynamoDB) or send: give this user's claims back and go on with the next.

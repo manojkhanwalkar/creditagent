@@ -130,6 +130,18 @@ credit:
       max-sends: ${OTP_MAX_SENDS:3}
       resend-cooldown: ${OTP_RESEND_COOLDOWN:30s}
       max-sends-per-user-per-hour: ${OTP_MAX_SENDS_PER_USER_PER_HOUR:10}
+  # How sign-in codes are sent. local = SES and SNS from this process (the credit.auth.otp settings
+  # above). remote = through the notification-service (POST /internal/v1/notifications with
+  # INTERNAL_API_TOKEN); SES and SNS are then not built and the OTP_* send settings are unused.
+  notifications:
+    mode: ${NOTIFICATIONS_MODE:local}
+    # https unless localhost or a compose service name (no dot): codes and the token never go in clear text.
+    url: ${NOTIFICATIONS_URL:http://localhost:8094}
+    # Longest one call may take; above the service's own worst case (about 8 s). Only a failed connect
+    # is retried (same Idempotency-Key); never a timeout or a 5xx.
+    timeout: ${NOTIFICATIONS_TIMEOUT:10s}
+    # Longest a connect may take: short, so an unreachable service fails fast (3 tries: about 14.5 s worst case).
+    connect-timeout: ${NOTIFICATIONS_CONNECT_TIMEOUT:2s}
 
 management:
   endpoints:

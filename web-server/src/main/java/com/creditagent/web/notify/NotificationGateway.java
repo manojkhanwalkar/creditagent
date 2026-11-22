@@ -4,7 +4,11 @@ import com.creditagent.web.auth.otp.OtpChannel;
 import java.util.Map;
 import java.util.Objects;
 
-/** Sends one templated message: the seam for the coming notification-service (docs/adr/0001). */
+/**
+ * Sends one templated message: in this process ({@link LocalNotificationGateway}) or through the
+ * notification-service ({@link RemoteNotificationGateway}), chosen by {@code NOTIFICATIONS_MODE}
+ * (docs/adr/0001).
+ */
 public interface NotificationGateway {
 
     /** @throws com.creditagent.web.auth.otp.OtpDeliveryException if the provider did not accept it */
@@ -12,7 +16,7 @@ public interface NotificationGateway {
 
     /** What a message says; the sender renders its text from the params. */
     enum Template {
-        /** A sign-in code. Params: {@code code}, {@code validMinutes}. */
+        /** A sign-in code. Params: {@code code} (6 digits), {@code validSeconds} (how long it works). */
         OTP_SIGN_IN,
         /** A dark-web exposure alert. Declared for the service contract; web-server does not send it. */
         DARK_WEB_ALERT

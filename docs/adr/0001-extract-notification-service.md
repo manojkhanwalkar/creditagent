@@ -15,6 +15,20 @@ Branch by abstraction, one PR per step: **N1** a `NotificationGateway` seam in w
 remote clients in web-server and alert-notifier behind `NOTIFICATIONS_MODE` (`local` default); **N4**
 cut-over and removal of the old senders.
 
+**Status:** N1 merged (#40); N2 merged (#41); **N3 done**: `RemoteNotificationGateway` (web-server) and
+`RemoteEmailSender` (alert-notifier) call the service when `NOTIFICATIONS_MODE=remote`; the default and
+compose stay `local`. To flip a deployment, set `NOTIFICATIONS_MODE=remote`, `NOTIFICATIONS_URL` (the
+service, e.g. `http://notification-service:8094`) and the shared `INTERNAL_API_TOKEN` on web-server and
+alert-notifier, with the service running; set it back to `local` to roll back. Answers map as: 202 (`SENT`
+or `UNCERTAIN`) sent; 422 refused (the sign-in send is given back; the alert claims are released); 429,
+5xx, a timeout or a failed connect unknown (the code stays valid and the send counts; the claims are
+released and a later duplicate is accepted); 400, 401, 404, 409 a caller bug (500). web-server retries
+only a failed connect, with the same key and `credit.retry` backoff and jitter, never a timeout or a 5xx, so
+the service stays the one retry layer. Connects time out after `NOTIFICATIONS_CONNECT_TIMEOUT` (2 s) and answers
+after `NOTIFICATIONS_TIMEOUT` (10 s), so a sign-in waits at most about 14.5 s (two failed connects, the
+backoff, one full try). `NOTIFICATIONS_URL` must be https unless it names this machine or a compose service. The alert key is `alert:<HMAC of the address>:<run time>`. Sign-in
+codes now carry `validSeconds`, so a TTL that is not whole minutes is exact.
+
 The sign-in key is `otp:<challengeId>:<send number>`. A send the provider clearly refused is given back,
 so the next send reuses its number: the service must remember only keys it accepted or may have delivered.
 
