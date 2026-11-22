@@ -43,6 +43,7 @@ class SendersTest {
 
     static final Message EMAIL = new Message("Your CreditAgent sign-in code", "Your code is 042917.");
     static final Message SMS = new Message(null, "042917 is your CreditAgent sign-in code.");
+    static final java.time.Duration TEN_SECONDS = java.time.Duration.ofSeconds(10);
 
     @Test
     void sesSendsAPlainTextUtf8EmailAndReturnsItsId() {
@@ -130,7 +131,7 @@ class SendersTest {
     @Test
     void smtpSendsAPlainTextUtf8Email() throws Exception {
         JavaMailSender mail = mail();
-        new Senders.Smtp(mail, "alerts@creditagent.local").send("ada@example.com", EMAIL);
+        new Senders.Smtp(mail, "alerts@creditagent.local", TEN_SECONDS).send("ada@example.com", EMAIL);
         ArgumentCaptor<MimeMessage> sent = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mail).send(sent.capture());
         MimeMessage message = sent.getValue();
@@ -169,7 +170,7 @@ class SendersTest {
 
         JavaMailSender mail = mail();
         doThrow(rejected).doThrow(connection).when(mail).send(any(MimeMessage.class));
-        Senders.Smtp smtp = new Senders.Smtp(mail, "alerts@creditagent.local");
+        Senders.Smtp smtp = new Senders.Smtp(mail, "alerts@creditagent.local", TEN_SECONDS);
         assertThatThrownBy(() -> smtp.send("ada@example.com", EMAIL))
                 .satisfies(e -> assertThat(((DeliveryException) e).refused()).isTrue());
         assertThatThrownBy(() -> smtp.send("ada@example.com", EMAIL))
@@ -177,9 +178,55 @@ class SendersTest {
     }
 
     @Test
+    void aSlowRelayIsGivenUpAfterTheTotalTimeoutAsAnUnknownOutcome() {
+        JavaMailSender mail = mail();
+        org.mockito.Mockito.doAnswer(i -> {
+            Thread.sleep(5_000);
+            return null;
+        }).when(mail).send(any(MimeMessage.class));
+        long start = System.nanoTime();
+        assertThatThrownBy(() -> new Senders.Smtp(mail, "alerts@creditagent.local", java.time.Duration.ofMillis(200))
+                .send("ada@example.com", EMAIL))
+                .isInstanceOf(DeliveryException.class)
+                .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class)
+                .satisfies(e -> assertThat(((DeliveryException) e).refused()).isFalse());
+        assertThat(java.time.Duration.ofNanos(System.nanoTime() - start)).isLessThan(java.time.Duration.ofSeconds(2));
+    }
+
+    @Test
+    void anUnexpectedSmtpFailureOrAnInterruptIsUnknown() throws Exception {
+        JavaMailSender mail = mail();
+        doThrow(new IllegalStateException("bug")).when(mail).send(any(MimeMessage.class));
+        assertThatThrownBy(() -> new Senders.Smtp(mail, "alerts@creditagent.local", TEN_SECONDS).send("ada@example.com", EMAIL))
+                .isInstanceOf(DeliveryException.class).hasCauseInstanceOf(IllegalStateException.class)
+                .satisfies(e -> assertThat(((DeliveryException) e).refused()).isFalse());
+
+        JavaMailSender slow = mail();
+        org.mockito.Mockito.doAnswer(i -> {
+            Thread.sleep(5_000);
+            return null;
+        }).when(slow).send(any(MimeMessage.class));
+        java.util.concurrent.atomic.AtomicReference<Throwable> thrown = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean stillInterrupted = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread caller = Thread.ofPlatform().start(() -> {
+            try {
+                new Senders.Smtp(slow, "alerts@creditagent.local", TEN_SECONDS).send("ada@example.com", EMAIL);
+            } catch (Throwable t) {
+                thrown.set(t);
+                stillInterrupted.set(Thread.currentThread().isInterrupted());
+            }
+        });
+        Thread.sleep(200);
+        caller.interrupt();
+        caller.join(2_000);
+        assertThat(thrown.get()).isInstanceOf(DeliveryException.class).hasCauseInstanceOf(InterruptedException.class);
+        assertThat(stillInterrupted).isTrue();
+    }
+
+    @Test
     void anEmailThatCannotBeBuiltIsRefused() {
         JavaMailSender mail = mail();
-        assertThatThrownBy(() -> new Senders.Smtp(mail, "not an address <").send("ada@example.com", EMAIL))
+        assertThatThrownBy(() -> new Senders.Smtp(mail, "not an address <", TEN_SECONDS).send("ada@example.com", EMAIL))
                 .isInstanceOf(DeliveryException.class)
                 .satisfies(e -> assertThat(((DeliveryException) e).refused()).isTrue());
     }

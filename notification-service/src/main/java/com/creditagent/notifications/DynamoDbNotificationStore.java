@@ -89,6 +89,19 @@ public final class DynamoDbNotificationStore implements NotificationStore {
     }
 
     @Override
+    public void markUncertain(String key, String id) {
+        try {
+            dynamo.updateItem(r -> r.tableName(table).key(Map.of(KEY, s(key)))
+                    .updateExpression("SET #s = :uncertain")
+                    .conditionExpression("#i = :id")
+                    .expressionAttributeNames(Map.of("#s", STATUS, "#i", ID))
+                    .expressionAttributeValues(Map.of(":uncertain", s(Status.UNCERTAIN.name()), ":id", s(id))));
+        } catch (ConditionalCheckFailedException taken) {
+            // Another request took over this key after our lease ran out; its record stands.
+        }
+    }
+
+    @Override
     public void release(String key, String id) {
         try {
             dynamo.deleteItem(r -> r.tableName(table).key(Map.of(KEY, s(key)))

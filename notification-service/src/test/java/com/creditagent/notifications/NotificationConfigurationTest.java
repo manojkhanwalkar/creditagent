@@ -18,7 +18,7 @@ class NotificationConfigurationTest {
 
     static NotificationProperties props(EmailProvider email, SmsProvider sms, String dynamodbEndpoint) {
         return new NotificationProperties("t".repeat(40), email, sms, null, null, null, null, null, null, null, null, null,
-                dynamodbEndpoint, null, null, null, null);
+                dynamodbEndpoint, null, null, null, null, null, null);
     }
 
     @Test
@@ -75,7 +75,7 @@ class NotificationConfigurationTest {
     @Test
     void propertiesHaveSafeDefaultsAndRefuseALeaseShorterThanASend() {
         NotificationProperties defaults = new NotificationProperties(null, null, null, " ", null, null, " ", null, null, null,
-                null, " ", null, null, null, null, null);
+                null, " ", null, null, null, null, null, null, null);
         assertThat(defaults.email()).isEqualTo(EmailProvider.SES);
         assertThat(defaults.sms()).isEqualTo(SmsProvider.SNS);
         assertThat(defaults.region()).isEqualTo("us-east-1");
@@ -85,16 +85,45 @@ class NotificationConfigurationTest {
         assertThat(defaults.serviceToken()).isEmpty();
         assertThat(defaults.logsAnything()).isFalse();
         assertThat(new NotificationProperties("secret-token-value", null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null).toString()).doesNotContain("secret-token-value");
+                null, null, null, null, null, null, null, null, null).toString()).doesNotContain("secret-token-value");
         assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
-                Duration.ofSeconds(30), null, null, Duration.ofSeconds(30), null, null, Duration.ofSeconds(60)))
+                Duration.ofSeconds(30), null, null, Duration.ofSeconds(30), null, null, Duration.ofSeconds(60), null, null))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
-                Duration.ZERO, null, null, null, null, null, null)).isInstanceOf(IllegalArgumentException.class);
+                Duration.ZERO, null, null, null, null, null, null, null, null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
-                null, null, null, Duration.ZERO, null, null, null)).isInstanceOf(IllegalArgumentException.class);
+                null, null, null, Duration.ZERO, null, null, null, null, null)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, Duration.ZERO, null)).isInstanceOf(IllegalArgumentException.class);
+                null, null, null, null, null, Duration.ZERO, null, null, null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theLeaseAndTheShutdownPhaseMustCoverTheLongestSendSmtpIncluded() {
+        NotificationProperties defaults = props(EmailProvider.SMTP, SmsProvider.SNS, "");
+        assertThat(defaults.smtpTimeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThat(defaults.maxSendTime()).isEqualTo(Duration.ofSeconds(16)); // 3 x 2 s DynamoDB + 10 s SMTP
+        assertThatCode(() -> NotificationConfiguration.requireShutdownCoversASend(Duration.ofSeconds(20), defaults))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> NotificationConfiguration.requireShutdownCoversASend(Duration.ofSeconds(15), defaults))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("NOTIFICATIONS_SHUTDOWN_TIMEOUT");
+        // A long SMTP budget needs a longer lease.
+        assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, Duration.ofSeconds(60), Duration.ofSeconds(55), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("lease");
+        assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, Duration.ZERO, null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theHashKeyIsItsOwnSecretWhenSetElseTheServiceToken() {
+        assertThat(props(EmailProvider.SES, SmsProvider.SNS, "").hashSecret()).isEqualTo("t".repeat(40));
+        NotificationProperties own = new NotificationProperties("t".repeat(40), null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null, null, " " + "h".repeat(32) + " ");
+        assertThat(own.hashSecret()).isEqualTo("h".repeat(32));
+        assertThat(own.toString()).doesNotContain("hhhh");
+        assertThatThrownBy(() -> new NotificationProperties(null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, "too-short"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("NOTIFICATIONS_HASH_KEY");
     }
 
     @Test
@@ -105,7 +134,7 @@ class NotificationConfigurationTest {
         assertThat(overrides.retryMode()).contains(software.amazon.awssdk.core.retry.RetryMode.STANDARD);
         NotificationConfiguration configuration = new NotificationConfiguration();
         NotificationProperties properties = new NotificationProperties(null, null, null, null, "http://localhost:4566",
-                "http://localhost:4566", null, null, null, null, null, null, "http://localhost:8000", null, null, null, null);
+                "http://localhost:4566", null, null, null, null, null, null, "http://localhost:8000", null, null, null, null, null, null);
         try (SesV2Client ses = configuration.sesClient(properties); SnsClient sns = configuration.snsClient(properties);
                 var dynamo = configuration.dynamoDbClient(properties)) {
             assertThat(ses).isNotNull();

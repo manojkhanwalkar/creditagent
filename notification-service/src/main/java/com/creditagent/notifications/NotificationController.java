@@ -46,7 +46,7 @@ class NotificationController {
             @RequestBody SendRequest request) {
         NotificationService.Accepted accepted = service.send(key, request.channel(), request.to(), request.template(),
                 request.params());
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new SendResponse(accepted.id(), "SENT"));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(new SendResponse(accepted.id(), accepted.status().name()));
     }
 
     @ExceptionHandler(InvalidNotificationException.class)
@@ -64,7 +64,10 @@ class NotificationController {
         return unavailable(e.retryAfterSeconds(), e.getMessage());
     }
 
-    /** 422 when the provider clearly refused (a retry with the same key may send); else the outcome is unknown: 503. */
+    /**
+     * 422 when the provider clearly refused (a retry with the same key may send). Otherwise the outcome is
+     * unknown: 503, and the key is kept as UNCERTAIN, so a retry with it answers 202 UNCERTAIN and sends nothing.
+     */
     @ExceptionHandler(DeliveryException.class)
     ResponseEntity<ProblemDetail> delivery(DeliveryException e) {
         if (e.refused()) {
@@ -73,7 +76,7 @@ class NotificationController {
             problem.setProperty("refused", true);
             return ResponseEntity.unprocessableContent().body(problem);
         }
-        return unavailable(1, "The provider did not confirm the message; it may still arrive.");
+        return unavailable(1, "The provider did not confirm the message; it may still arrive. This key will not send again.");
     }
 
     /** The table failed (after the SDK's own retries): nothing was sent. */

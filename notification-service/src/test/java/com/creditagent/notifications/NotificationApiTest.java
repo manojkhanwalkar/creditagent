@@ -59,8 +59,12 @@ class NotificationApiTest extends ApiTestSupport {
     @Test
     void anUnknownOutcomeOrAStoreOutageIs503WithRetryAfter() throws Exception {
         failNext.set(new DeliveryException(Channel.SMS, SdkClientException.create("timeout"), false));
-        post("k-503", OTP_BODY).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "1"))
-                .andExpect(jsonPath("$.refused").doesNotExist());
+        String id = post("k-503", OTP_BODY).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.refused").doesNotExist()).andReturn().getResponse().getContentAsString();
+        assertThat(id).doesNotContain("042917");
+        // The message may have arrived: a retry with the same key is answered, not sent again.
+        post("k-503", OTP_BODY).andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("UNCERTAIN"));
+        assertThat(sent).isEmpty();
         org.mockito.BDDMockito.willThrow(SdkClientException.create("dynamodb down"))
                 .willThrow(new NotificationService.InProgressException(7))
                 .given(service).send(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),

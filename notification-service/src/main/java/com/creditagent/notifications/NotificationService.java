@@ -31,13 +31,15 @@ import software.amazon.awssdk.core.exception.SdkException;
  *   <li>A conditional put reserves the key (PENDING, with a lease). If the key is held: the same
  *       request already SENT answers its original id; a different request is a conflict; a PENDING
  *       one still inside its lease is in progress.
- *   <li>The provider is called; on success the record becomes SENT. On any failure the reservation is
- *       deleted, so the caller can retry with the same key.
+ *   <li>The provider is called; on success the record becomes SENT. If the provider clearly refused,
+ *       the reservation is deleted, so the caller may retry with the same key (it was not delivered).
+ *       If the outcome is unknown (timeout, 5xx, throttling) the record becomes UNCERTAIN and the key is
+ *       never sent again: a repeat answers 202 UNCERTAIN, and a new attempt needs a new key.
  * </ol>
  *
- * <p>A request that stops between the provider call and the SENT update leaves a PENDING record. Once
- * its lease runs out the same request may take it over and send again: at-least-once in that window,
- * at-most-once otherwise.
+ * <p>A request that stops between the provider call and recording its outcome leaves a PENDING record.
+ * Once its lease runs out the same request may take it over and send again: at-least-once in that
+ * window, at-most-once otherwise.
  */
 public class NotificationService {
 
@@ -46,8 +48,12 @@ public class NotificationService {
     static final int MAX_KEY_LENGTH = 128;
     private static final Pattern KEY_CHARS = Pattern.compile("^[\\x21-\\x7e]{1," + MAX_KEY_LENGTH + "}$");
 
-    /** The answer to an accepted send, first time or repeat. */
-    public record Accepted(String id) {}
+    /**
+     * The answer to an accepted send, first time or repeat.
+     *
+     * @param status SENT, or UNCERTAIN for a repeat of a send whose outcome was never known
+     */
+    public record Accepted(String id, Status status) {}
 
     /** The key was used for a different request. */
     public static class KeyReusedException extends RuntimeException {
@@ -133,12 +139,12 @@ public class NotificationService {
         try {
             providerId = senders.get(channel).send(to, message);
         } catch (DeliveryException e) {
-            releaseQuietly(record);
+            settleFailure(record, e.refused());
             log.warn("{} {} to {} {} (id {})", template, channel, record.destination(),
                     e.refused() ? "refused by the provider" : "not confirmed by the provider", record.id());
             throw e;
         } catch (RuntimeException e) {
-            releaseQuietly(record);
+            settleFailure(record, false);
             throw new DeliveryException(channel, e, false);
         }
         try {
@@ -148,7 +154,7 @@ public class NotificationService {
             log.warn("Sent {} (id {}) but could not record it: {}", template, record.id(), e.getClass().getSimpleName());
         }
         log.info("Sent {} {} to {} (id {})", template, channel, record.destination(), record.id());
-        return new Accepted(record.id());
+        return new Accepted(record.id(), Status.SENT);
     }
 
     private Accepted repeat(Notification held, String requestHash, Instant now) {
@@ -156,19 +162,27 @@ public class NotificationService {
                 requestHash.getBytes(StandardCharsets.US_ASCII))) {
             throw new KeyReusedException();
         }
-        if (held.status() == Status.SENT) {
-            return new Accepted(held.id());
+        if (held.status() != Status.PENDING) {
+            return new Accepted(held.id(), held.status());
         }
         long wait = Math.max(1, Duration.between(now, held.leaseUntil()).toSeconds());
         throw new InProgressException(wait);
     }
 
-    private void releaseQuietly(Notification record) {
+    /**
+     * Refused: free the key (not delivered, so the same key may send). Unknown: keep it as UNCERTAIN, so a
+     * retry never sends a second copy of a message that may have arrived.
+     */
+    private void settleFailure(Notification record, boolean refused) {
         try {
-            store.release(record.key(), record.id());
+            if (refused) {
+                store.release(record.key(), record.id());
+            } else {
+                store.markUncertain(record.key(), record.id());
+            }
         } catch (SdkException e) {
             // The PENDING record lapses with its lease; then the same request may send again.
-            log.warn("Could not release id {}: {}", record.id(), e.getClass().getSimpleName());
+            log.warn("Could not record the failure of id {}: {}", record.id(), e.getClass().getSimpleName());
         }
     }
 

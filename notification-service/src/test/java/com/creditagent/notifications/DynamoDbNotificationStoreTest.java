@@ -123,7 +123,15 @@ class DynamoDbNotificationStoreTest {
         delete.getValue().accept(d);
         assertThat(d.build().conditionExpression()).isEqualTo("#i = :id AND #s = :pending");
 
+        store.markUncertain("k", "id-1");
+        verify(dynamo, org.mockito.Mockito.times(2)).updateItem(update.capture());
+        UpdateItemRequest.Builder uncertain = UpdateItemRequest.builder();
+        update.getAllValues().get(2).accept(uncertain);
+        assertThat(uncertain.build().expressionAttributeValues().get(":uncertain").s()).isEqualTo("UNCERTAIN");
+        assertThat(uncertain.build().conditionExpression()).isEqualTo("#i = :id");
+
         when(dynamo.updateItem(any(Consumer.class))).thenThrow(ConditionalCheckFailedException.builder().build());
+        store.markUncertain("k", "id-1");
         when(dynamo.deleteItem(any(Consumer.class))).thenThrow(ConditionalCheckFailedException.builder().build());
         store.markSent("k", "id-1", "p");
         store.release("k", "id-1"); // taken over by another request: nothing of ours to change

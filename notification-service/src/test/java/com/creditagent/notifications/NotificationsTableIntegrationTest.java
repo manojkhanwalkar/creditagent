@@ -85,6 +85,13 @@ class NotificationsTableIntegrationTest {
         assertThat(store.reserve(pending("key-2", "hash-2", "id-2", now), now)).isEmpty();
 
         Instant later = now.plusSeconds(61);
+        // An unknown outcome is kept as UNCERTAIN: never taken over, never released.
+        assertThat(store.reserve(pending("key-3", "hash-3", "id-1", now), now)).isEmpty();
+        store.markUncertain("key-3", "id-1");
+        store.release("key-3", "id-1");
+        assertThat(store.reserve(pending("key-3", "hash-3", "id-2", later), later).orElseThrow().status())
+                .isEqualTo(Status.UNCERTAIN);
+
         assertThat(store.reserve(pending("key-2", "other-hash", "id-3", later), later).orElseThrow().requestHash())
                 .isEqualTo("hash-2");
         assertThat(store.reserve(pending("key-2", "hash-2", "id-4", later), later)).isEmpty();

@@ -27,6 +27,11 @@ class InMemoryNotificationStore implements NotificationStore {
     }
 
     @Override
+    public synchronized void markUncertain(String key, String id) {
+        records.computeIfPresent(key, (k, held) -> held.id().equals(id) ? held.withStatus(Status.UNCERTAIN) : held);
+    }
+
+    @Override
     public synchronized void release(String key, String id) {
         records.computeIfPresent(key, (k, held) -> held.id().equals(id) && held.status() == Status.PENDING ? null : held);
     }

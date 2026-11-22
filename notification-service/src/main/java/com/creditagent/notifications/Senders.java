@@ -114,32 +114,55 @@ final class Senders {
         }
     }
 
-    /** Email through an SMTP relay ({@code spring.mail.*}), with the connection and read timeouts set there. */
+    /**
+     * Email through an SMTP relay ({@code spring.mail.*}). The mail timeouts bound each socket operation,
+     * but a slow relay could chain several; so the whole send runs on a virtual thread and is given up
+     * after {@code timeout} (an unknown outcome), keeping every send inside the lease and the shutdown phase.
+     */
     static final class Smtp implements Sender {
 
         private final JavaMailSender mail;
         private final String from;
+        private final java.time.Duration timeout;
 
-        Smtp(JavaMailSender mail, String from) {
+        Smtp(JavaMailSender mail, String from, java.time.Duration timeout) {
             this.mail = Objects.requireNonNull(mail);
             this.from = Objects.requireNonNull(from);
+            this.timeout = Objects.requireNonNull(timeout);
         }
 
         @Override
         public String send(String to, Message message) {
+            MimeMessage mime;
             try {
-                MimeMessage mime = mail.createMimeMessage();
+                mime = mail.createMimeMessage();
                 MimeMessageHelper helper = new MimeMessageHelper(mime, StandardCharsets.UTF_8.name());
                 helper.setFrom(from);
                 helper.setTo(to);
                 helper.setSubject(message.subject());
                 helper.setText(message.text(), false);
-                mail.send(mime);
-                return mime.getMessageID();
             } catch (MessagingException e) {
                 throw DeliveryException.fromMail(new MailPreparationException("Could not build the email", e));
-            } catch (MailException e) {
-                throw DeliveryException.fromMail(e);
+            }
+            java.util.concurrent.FutureTask<String> task = new java.util.concurrent.FutureTask<>(() -> {
+                mail.send(mime);
+                return mime.getMessageID();
+            });
+            Thread.ofVirtual().name("smtp-send").start(task);
+            try {
+                return task.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                task.cancel(true);
+                throw new DeliveryException(Channel.EMAIL, e, false);
+            } catch (InterruptedException e) {
+                task.cancel(true);
+                Thread.currentThread().interrupt();
+                throw new DeliveryException(Channel.EMAIL, e, false);
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (e.getCause() instanceof MailException failure) {
+                    throw DeliveryException.fromMail(failure);
+                }
+                throw new DeliveryException(Channel.EMAIL, e.getCause(), false);
             }
         }
     }

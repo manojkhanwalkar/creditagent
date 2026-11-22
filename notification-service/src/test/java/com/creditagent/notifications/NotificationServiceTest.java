@@ -84,18 +84,48 @@ class NotificationServiceTest {
     }
 
     @Test
-    void anUnknownOutcomeAlsoFreesTheKeyAndAnyOtherFailureIsUnknown() {
+    void anUnknownOutcomeKeepsTheKeyAsUncertainAndARepeatIsNotSentAgain() {
         NotificationService service = service(store);
         failNext.set(new DeliveryException(Channel.SMS, SdkClientException.create("timeout"), false));
         assertThatThrownBy(() -> service.send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP))
                 .satisfies(e -> assertThat(((DeliveryException) e).refused()).isFalse());
-        assertThat(store.records).isEmpty();
+        assertThat(store.records.values()).singleElement()
+                .satisfies(r -> assertThat(r.status()).isEqualTo(Status.UNCERTAIN));
 
+        // The message may have arrived: the same key and body answer 202 UNCERTAIN and send nothing.
+        var repeat = service.send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
+        assertThat(repeat.status()).isEqualTo(Status.UNCERTAIN);
+        assertThat(repeat.id()).isEqualTo(store.records.values().iterator().next().id());
+        assertThat(sent).isEmpty();
+        // A different body with that key is still a conflict.
+        assertThatThrownBy(() -> service.send("k", Channel.EMAIL, "ada@example.com", Template.OTP_SIGN_IN, OTP))
+                .isInstanceOf(NotificationService.KeyReusedException.class);
+
+        // Any other sender failure is unknown too.
         failNext.set(new IllegalStateException("bug in a sender"));
-        assertThatThrownBy(() -> service.send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP))
+        assertThatThrownBy(() -> service.send("k2", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP))
                 .isInstanceOf(DeliveryException.class)
                 .satisfies(e -> assertThat(((DeliveryException) e).refused()).isFalse());
-        assertThat(store.records).isEmpty();
+        assertThat(service.send("k2", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP).status())
+                .isEqualTo(Status.UNCERTAIN);
+        assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void aSentRepeatSaysSent() {
+        NotificationService service = service(store);
+        assertThat(service.send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP).status()).isEqualTo(Status.SENT);
+        assertThat(service.send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP).status()).isEqualTo(Status.SENT);
+    }
+
+    @Test
+    void theStoredHashesDependOnTheHashSecret() {
+        service(store).send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
+        InMemoryNotificationStore other = new InMemoryNotificationStore();
+        new NotificationService(other, Map.of(Channel.EMAIL, sender, Channel.SMS, sender), "another-hash-key-another-hash-key",
+                clock, Duration.ofSeconds(60), Duration.ofDays(30))
+                .send("k", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
+        assertThat(other.records.keySet()).doesNotContainAnyElementsOf(store.records.keySet());
     }
 
     @Test

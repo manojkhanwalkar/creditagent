@@ -87,10 +87,12 @@ class NotificationConfiguration {
     NotificationService notificationService(NotificationStore store, NotificationProperties properties,
             ObjectProvider<SesV2Client> ses, ObjectProvider<SnsClient> sns, ObjectProvider<JavaMailSender> mail,
             @Value("${spring.mail.host:}") String mailHost,
-            @Value("${spring.mail.properties.mail.smtp.starttls.required:false}") boolean tlsRequired) {
+            @Value("${spring.mail.properties.mail.smtp.starttls.required:false}") boolean tlsRequired,
+            @Value("${spring.lifecycle.timeout-per-shutdown-phase:30s}") java.time.Duration shutdownPhase) {
+        requireShutdownCoversASend(shutdownPhase, properties);
         Map<Channel, Sender> senders = senders(properties, ses.getIfAvailable(), sns.getIfAvailable(),
                 mail.getIfAvailable(), mailHost, tlsRequired);
-        return new NotificationService(store, senders, properties.serviceToken(), Clock.systemUTC(), properties.lease(),
+        return new NotificationService(store, senders, properties.hashSecret(), Clock.systemUTC(), properties.lease(),
                 properties.retention());
     }
 
@@ -109,7 +111,7 @@ class NotificationConfiguration {
                     throw new IllegalStateException("NOTIFICATIONS_EMAIL=smtp needs MAIL_HOST");
                 }
                 requireTlsUnlessLocal(mailHost, tlsRequired);
-                yield new Senders.Smtp(mail, properties.emailFrom());
+                yield new Senders.Smtp(mail, properties.emailFrom(), properties.smtpTimeout());
             }
             case LOG -> new Senders.Logging(Channel.EMAIL);
         });
@@ -118,6 +120,14 @@ class NotificationConfiguration {
             case LOG -> new Senders.Logging(Channel.SMS);
         });
         return senders;
+    }
+
+    /** A graceful stop must let a send in progress finish, or it would be cut off with its outcome unrecorded. */
+    static void requireShutdownCoversASend(java.time.Duration shutdownPhase, NotificationProperties properties) {
+        if (shutdownPhase.compareTo(properties.maxSendTime()) < 0) {
+            throw new IllegalStateException("NOTIFICATIONS_SHUTDOWN_TIMEOUT (" + shutdownPhase + ") must be at least the"
+                    + " longest send (" + properties.maxSendTime() + ")");
+        }
     }
 
     /**

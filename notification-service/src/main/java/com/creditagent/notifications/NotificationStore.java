@@ -6,8 +6,11 @@ import java.util.Optional;
 /** Remembers accepted sends by idempotency key. */
 public interface NotificationStore {
 
-    /** Where a remembered send is. */
-    enum Status { PENDING, SENT }
+    /**
+     * Where a remembered send is: PENDING while it runs, SENT when the provider accepted it, UNCERTAIN
+     * when the provider's answer was lost (a timeout, 5xx or throttling: it may have been delivered).
+     */
+    enum Status { PENDING, SENT, UNCERTAIN }
 
     /**
      * One remembered send. Holds no code, message text or full destination.
@@ -27,6 +30,11 @@ public interface NotificationStore {
             return new Notification(key, requestHash, id, channel, template, destination, Status.SENT, providerId,
                     createdAt, leaseUntil, expiresAt);
         }
+
+        Notification withStatus(Status newStatus) {
+            return new Notification(key, requestHash, id, channel, template, destination, newStatus, providerMessageId,
+                    createdAt, leaseUntil, expiresAt);
+        }
     }
 
     /**
@@ -40,6 +48,12 @@ public interface NotificationStore {
     /** The send went out: SENT, with the provider's id. Only the reservation's own {@code id} is changed. */
     void markSent(String key, String id, String providerMessageId);
 
-    /** The send failed: deletes this reservation (only if it is still {@code id}'s PENDING one), so a retry can send. */
+    /**
+     * The outcome is unknown: UNCERTAIN, so the key is never sent again (the message may have arrived).
+     * Only the reservation's own {@code id} is changed.
+     */
+    void markUncertain(String key, String id);
+
+    /** The provider clearly refused: deletes this reservation (only if it is still {@code id}'s PENDING one), so a retry can send. */
     void release(String key, String id);
 }

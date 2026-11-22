@@ -22,7 +22,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param dynamodbTimeout longest one DynamoDB call may take, retries included
  * @param createTables create the table if missing (local and test only)
  * @param retention how long an accepted key is remembered
- * @param lease how long a send in progress holds its key; longer than the provider timeout
+ * @param lease how long a send in progress holds its key; longer than {@link #maxSendTime()}
+ * @param smtpTimeout longest one SMTP send may take in all (the mail timeouts bound single socket steps)
+ * @param hashKey keys the stored hashes of idempotency keys and requests, at least 32 characters; blank =
+ *     derived from the service token (then rotating the token re-keys every stored hash)
  */
 @ConfigurationProperties("credit.notifications")
 public record NotificationProperties(
@@ -42,7 +45,9 @@ public record NotificationProperties(
         Duration dynamodbTimeout,
         Boolean createTables,
         Duration retention,
-        Duration lease) {
+        Duration lease,
+        Duration smtpTimeout,
+        String hashKey) {
 
     public enum EmailProvider { SES, SMTP, LOG }
 
@@ -60,11 +65,39 @@ public record NotificationProperties(
         createTables = createTables != null && createTables;
         retention = retention == null ? Duration.ofDays(30) : retention;
         lease = lease == null ? Duration.ofSeconds(60) : lease;
+        smtpTimeout = smtpTimeout == null ? Duration.ofSeconds(10) : smtpTimeout;
+        hashKey = hashKey == null ? "" : hashKey.strip();
         if (!providerTimeout.isPositive() || !dynamodbTimeout.isPositive() || !retention.isPositive()
-                || lease.compareTo(providerTimeout.plus(dynamodbTimeout)) <= 0) {
-            throw new IllegalArgumentException("credit.notifications: timeouts and retention must be positive, and the"
-                    + " lease longer than provider-timeout plus dynamodb-timeout");
+                || !smtpTimeout.isPositive()) {
+            throw new IllegalArgumentException("credit.notifications: timeouts and retention must be positive");
         }
+        if (lease.compareTo(maxSendTime(providerTimeout, smtpTimeout, dynamodbTimeout)) <= 0) {
+            throw new IllegalArgumentException("credit.notifications: the lease must be longer than one send can take"
+                    + " (3 x dynamodb-timeout + the longer of provider-timeout and smtp-timeout)");
+        }
+        if (!hashKey.isEmpty() && hashKey.length() < MIN_HASH_KEY_LENGTH) {
+            throw new IllegalArgumentException("NOTIFICATIONS_HASH_KEY must be at least " + MIN_HASH_KEY_LENGTH
+                    + " characters");
+        }
+    }
+
+    static final int MIN_HASH_KEY_LENGTH = 32;
+
+    /**
+     * The longest one request can take: the reserve (a put, and a read if the key is held), the provider
+     * call, and recording the outcome, each DynamoDB call within its timeout.
+     */
+    Duration maxSendTime() {
+        return maxSendTime(providerTimeout, smtpTimeout, dynamodbTimeout);
+    }
+
+    private static Duration maxSendTime(Duration provider, Duration smtp, Duration dynamodb) {
+        return dynamodb.multipliedBy(3).plus(provider.compareTo(smtp) >= 0 ? provider : smtp);
+    }
+
+    /** The secret the stored hashes are keyed with: NOTIFICATIONS_HASH_KEY, else the service token. */
+    String hashSecret() {
+        return hashKey.isEmpty() ? serviceToken : hashKey;
     }
 
     /** True when either channel writes to the log instead of sending. */
@@ -74,7 +107,7 @@ public record NotificationProperties(
 
     @Override
     public String toString() {
-        return "NotificationProperties[serviceToken=<redacted>, email=" + email + ", sms=" + sms + ", region=" + region
+        return "NotificationProperties[serviceToken=<redacted>, hashKey=<redacted>, email=" + email + ", sms=" + sms + ", region=" + region
                 + ", table=" + table + "]";
     }
 }

@@ -10,7 +10,7 @@ spring:
   application:
     name: notification-service
   lifecycle:
-    # Longer than one send (DynamoDB + provider + DynamoDB timeouts), so a stop does not cut one short.
+    # At least one send (3 x DynamoDB timeout + the longer provider timeout; checked at start-up).
     timeout-per-shutdown-phase: ${NOTIFICATIONS_SHUTDOWN_TIMEOUT:20s}
   mvc:
     problemdetails:
@@ -55,6 +55,11 @@ credit:
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
     retention: ${NOTIFICATIONS_RETENTION:30d}
     lease: ${NOTIFICATIONS_LEASE:60s}
+    # One SMTP send in all; given up (an unknown outcome) after this. Counts towards the lease and shutdown.
+    smtp-timeout: ${NOTIFICATIONS_SMTP_TIMEOUT:10s}
+    # Keys the stored hashes (>= 32 chars). Empty = derived from INTERNAL_API_TOKEN, so rotating the token
+    # re-keys them: repeats of keys sent before the rotation are then not recognised.
+    hash-key: ${NOTIFICATIONS_HASH_KEY:}
 
 logging:
   level:
