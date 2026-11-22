@@ -1,4 +1,4 @@
-# ADR 0001: Extract a notification-service (accepted 2026-11-21)
+# ADR 0001: Extract a notification-service (accepted 2026-11-21; done 2026-11-22)
 
 ## Context
 
@@ -15,7 +15,7 @@ Branch by abstraction, one PR per step: **N1** a `NotificationGateway` seam in w
 remote clients in web-server and alert-notifier behind `NOTIFICATIONS_MODE` (`local` default); **N4**
 cut-over and removal of the old senders.
 
-**Status:** N1 merged (#40); N2 merged (#41); **N3 done**: `RemoteNotificationGateway` (web-server) and
+**Status: Accepted and done.** N1 merged (#40); N2 merged (#41); N3 merged (#42); **N4 done** (cut-over, below). N3: `RemoteNotificationGateway` (web-server) and
 `RemoteEmailSender` (alert-notifier) call the service when `NOTIFICATIONS_MODE=remote`; the default and
 compose stay `local`. To flip a deployment, set `NOTIFICATIONS_MODE=remote`, `NOTIFICATIONS_URL` (the
 service, e.g. `http://notification-service:8094`) and the shared `INTERNAL_API_TOKEN` on web-server and
@@ -55,6 +55,30 @@ so the next send reuses its number: the service must remember only keys it accep
   destination is pseudonymised and kept for 30 days; account deletion does not reach it. Codes, full
   addresses and message text are never stored or logged.
 
+### Cut-over and removal (N4)
+
+- **Cut-over.** The notification-service is now the only path: `NOTIFICATIONS_MODE` is gone (it would have
+  defaulted to `remote` and then had nothing else to choose). web-server always uses `RemoteNotificationGateway`
+  (`NotificationGateway` stays as the test seam) and refuses to start without `INTERNAL_API_TOKEN`;
+  alert-notifier always uses `RemoteEmailSender`, or a placeholder that sends and claims nothing while the token
+  is unset (`configured()` means the URL and token are set).
+- **Removed** (the point of no easy return): `LocalNotificationGateway`, `SesEmailOtpSender`,
+  `SnsSmsOtpSender`, `LoggingOtpSender`, `OtpSender`, the SES and SNS clients and `sesv2`/`sns` dependencies
+  in web-server, the `OTP_*` send settings (`OTP_DELIVERY`, `OTP_EMAIL_FROM`, `OTP_SES_*`, `OTP_SMS_*`,
+  `OTP_AWS_REGION`, `OTP_TIMEOUT`), the AWS-specific `OtpDeliveryException.clearlyRefused`; and in
+  alert-notifier the SMTP sender, `AlertEmail`, `spring-boot-starter-mail`, the `MAIL_*` settings, the mail
+  TLS rule and `NOTIFIER_FROM`. The provider settings live only on notification-service.
+- **Local sign-in.** Compose runs the service with `NOTIFICATIONS_EMAIL=smtp` to Mailpit, so emailed codes
+  land at http://localhost:8025. `OTP_DELIVERY=log` is replaced by `NOTIFICATIONS_SMS_LOG_CODES=true` on the
+  service: with `NOTIFICATIONS_SMS=log` it also logs a text's code, refused unless DynamoDB is local. The
+  AWS Emulator `env.sh` sets it (there is no Mailpit there), so sign in by text.
+- **Rollback** is `git revert` of the N4 PR (and redeploying web-server and alert-notifier with their old
+  settings); there is no flag any more. This was accepted without sign-off because CreditAgent is a sample
+  project with no real users.
+- **Availability.** Login now depends on the service at run time: while it is down, `POST
+  /api/v1/auth/login/otp` answers a clear 503 with `Retry-After`, after at most about 14.5 s (connect retries,
+  then one try), and that send counts against the limits. Alert emails wait for the next daily run.
+
 ## Alternatives
 
 - **Stay in the monolith:** least work; provider logic stays duplicated.
@@ -67,4 +91,4 @@ so the next send reuses its number: the service must remember only keys it accep
   retries and the existing 503 + Retry-After answer contain it.
 - Calls reuse the shared `INTERNAL_API_TOKEN`: a known gap (any holder can call any internal API).
 - No broker: synchronous HTTP, so a sign-in learns at once whether its code went.
-- Rollback: `NOTIFICATIONS_MODE=local` until N4's cleanup; after it, revert the N4 PR.
+- Rollback: revert the N4 PR (`NOTIFICATIONS_MODE=local` existed only until N4).

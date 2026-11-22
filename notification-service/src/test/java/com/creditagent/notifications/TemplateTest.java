@@ -23,7 +23,7 @@ class TemplateTest {
     static final String TODAY_OTP_SMS =
             "042917 is your CreditAgent sign-in code. It expires in 5 minutes. Never share it; we will never ask for it.";
 
-    /** alert-notifier's AlertEmail.body for two alerts, first on 2026-11-09, with an app URL, copied verbatim. */
+    /** The text alert-notifier's former AlertEmail.body gave (removed in N4) for two alerts, first on 2026-11-09, with an app URL. */
     static final String TODAY_ALERT = """
             Hello,
 
