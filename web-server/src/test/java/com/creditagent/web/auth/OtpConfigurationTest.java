@@ -120,7 +120,7 @@ class OtpConfigurationTest {
         org.springframework.beans.factory.ObjectProvider<SesV2Client> ses = providerOf(mock(SesV2Client.class));
         org.springframework.beans.factory.ObjectProvider<SnsClient> sns = providerOf(mock(SnsClient.class));
         NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
-                auth(null, false), new NotificationsProperties(null, null, null), ses, sns, org.springframework.web.client.RestClient.builder(),
+                auth(null, false), new NotificationsProperties(null, null, null, null), ses, sns, org.springframework.web.client.RestClient.builder(),
                 com.creditagent.clients.RetrySettings.DEFAULTS, "");
         assertThat(gateway).isInstanceOf(LocalNotificationGateway.class);
         assertThat(config.otpLoginService(authService, new InMemoryRepositories.OtpChallenges(),
@@ -130,11 +130,14 @@ class OtpConfigurationTest {
 
     @Test
     void localIsTheDefaultMode() {
-        NotificationsProperties defaults = new NotificationsProperties(null, null, null);
+        NotificationsProperties defaults = new NotificationsProperties(null, null, null, null);
         assertThat(defaults.mode()).isEqualTo(NotificationsProperties.Mode.LOCAL);
         assertThat(defaults.url()).isEqualTo("http://localhost:8094");
         assertThat(defaults.timeout()).isEqualTo(Duration.ofSeconds(10));
-        assertThatThrownBy(() -> new NotificationsProperties(null, null, Duration.ZERO))
+        assertThat(defaults.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
+        assertThatThrownBy(() -> new NotificationsProperties(null, null, null, Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new NotificationsProperties(null, null, Duration.ZERO, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -142,11 +145,11 @@ class OtpConfigurationTest {
     void remoteModeSendsThroughTheServiceWithoutSesOrSns() {
         NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
                 auth(null, false), new NotificationsProperties(NotificationsProperties.Mode.REMOTE, "http://notification-service:8094",
-                        Duration.ofSeconds(10)), providerOf(null), providerOf(null), org.springframework.web.client.RestClient.builder(),
+                        Duration.ofSeconds(10), null), providerOf(null), providerOf(null), org.springframework.web.client.RestClient.builder(),
                 com.creditagent.clients.RetrySettings.DEFAULTS, TestSecrets.of("internal"));
         assertThat(gateway).isInstanceOf(RemoteNotificationGateway.class);
         assertThatThrownBy(() -> config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null), auth(null, false),
-                new NotificationsProperties(NotificationsProperties.Mode.REMOTE, null, null), providerOf(null), providerOf(null),
+                new NotificationsProperties(NotificationsProperties.Mode.REMOTE, null, null, null), providerOf(null), providerOf(null),
                 org.springframework.web.client.RestClient.builder(), com.creditagent.clients.RetrySettings.DEFAULTS, " ")).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("INTERNAL_API_TOKEN");
     }
@@ -176,6 +179,29 @@ class OtpConfigurationTest {
                     assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(RemoteNotificationGateway.class);
                     assertThat(context).doesNotHaveBean(SesV2Client.class).doesNotHaveBean(SnsClient.class);
                 });
+    }
+
+    @Test
+    void aBlankModeIsLocalForTheSesAndSnsBeansToo() {
+        runner.withPropertyValues("credit.notifications.mode=").run(context -> {
+            assertThat(context).hasNotFailed().hasSingleBean(SesV2Client.class).hasSingleBean(SnsClient.class);
+            assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(LocalNotificationGateway.class);
+        });
+    }
+
+    @Test
+    void theServiceUrlMustBeHttpsUnlessLocal() {
+        for (String ok : new String[] {"http://localhost:8094", "http://127.0.0.1:8094", "http://[::1]:8094",
+                "http://notification-service:8094", "https://notifications.internal.example", "HTTPS://Notify.Example/"}) {
+            assertThat(new NotificationsProperties(null, ok, null, null).url()).isEqualTo(ok);
+        }
+        for (String bad : new String[] {"http://notifications.internal.example", "http://10.0.0.5:8094", "ftp://localhost",
+                "notification-service:8094", "/internal", "http://", "http://exa mple"}) {
+            assertThatThrownBy(() -> new NotificationsProperties(null, bad, null, null)).as(bad)
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("NOTIFICATIONS_URL");
+        }
+        runner.withPropertyValues("credit.notifications.url=http://notify.example.com").run(context ->
+                assertThat(context).hasFailed());
     }
 
     @SuppressWarnings("unchecked")

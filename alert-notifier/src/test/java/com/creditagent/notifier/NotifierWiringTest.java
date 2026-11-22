@@ -87,4 +87,17 @@ class NotifierWiringTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> new NotificationsProperties(null, " ", java.time.Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void theServiceUrlMustBeHttpsUnlessLocal() {
+        for (String ok : new String[] {"http://localhost:8094", "http://127.0.0.1:8094", "http://[::1]:8094",
+                "http://notification-service:8094", "https://notifications.internal.example"}) {
+            assertThat(new NotificationsProperties(null, ok, null).url()).isEqualTo(ok);
+        }
+        for (String bad : new String[] {"http://notifications.internal.example", "http://10.0.0.5:8094", "ftp://localhost",
+                "notification-service:8094", "/internal", "http://", "http://exa mple"}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new NotificationsProperties(null, bad, null)).as(bad)
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("NOTIFICATIONS_URL");
+        }
+    }
 }

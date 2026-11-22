@@ -47,11 +47,15 @@ public final class RemoteNotificationGateway implements NotificationGateway {
         this.token = token;
     }
 
-    /** A client for {@code url} built the shared way, bounded by {@code timeout}, and sent once per try. */
-    public static RemoteNotificationGateway create(RestClient.Builder builder, String url, Duration timeout,
-            RetrySettings retry, String token) {
-        return new RemoteNotificationGateway(HttpClients.restClient(builder, url, timeout, RetrySettings.none(), false),
-                retry, token);
+    /**
+     * A client for {@code url} built the shared way and sent once per try: {@code connectTimeout} (short)
+     * to connect, {@code timeout} for the answer. With the default 2 s, 10 s and 3 tries, the worst case
+     * is about 14.5 s: two connects that time out, the backoff, then a try that runs to its timeout.
+     */
+    public static RemoteNotificationGateway create(RestClient.Builder builder, String url, Duration connectTimeout,
+            Duration timeout, RetrySettings retry, String token) {
+        return new RemoteNotificationGateway(
+                HttpClients.restClient(builder, url, connectTimeout, timeout, RetrySettings.none(), false), retry, token);
     }
 
     @Override

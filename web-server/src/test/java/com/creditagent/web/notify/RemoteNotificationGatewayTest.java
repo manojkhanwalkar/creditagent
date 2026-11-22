@@ -80,7 +80,7 @@ class RemoteNotificationGatewayTest {
     }
 
     RemoteNotificationGateway gateway(Duration timeout, RetrySettings retry) {
-        return RemoteNotificationGateway.create(RestClient.builder(), url(), timeout, retry, TOKEN);
+        return RemoteNotificationGateway.create(RestClient.builder(), url(), Duration.ofSeconds(2), timeout, retry, TOKEN);
     }
 
     RemoteNotificationGateway gateway() {
@@ -122,13 +122,16 @@ class RemoteNotificationGatewayTest {
 
     @Test
     void unknownOutcomesKeepTheCodeValidAndAreNeverRetried() {
-        for (int unknown : new int[] {503, 504, 429, 500, 502}) {
-            received.clear();
-            status = unknown;
-            retryAfter = "1";
-            assertThatThrownBy(() -> gateway().send(CODE)).as("status %d", unknown)
-                    .isInstanceOfSatisfying(OtpDeliveryException.class, e -> assertThat(e.refused()).isFalse());
-            assertThat(received).as("tries for %d", unknown).hasSize(1);
+        // Without Retry-After too: the shared interceptor would retry a 503 or 429 at once if it were on.
+        for (String hint : new String[] {null, "1"}) {
+            for (int unknown : new int[] {503, 504, 429, 500, 502}) {
+                received.clear();
+                status = unknown;
+                retryAfter = hint;
+                assertThatThrownBy(() -> gateway().send(CODE)).as("status %d, Retry-After %s", unknown, hint)
+                        .isInstanceOfSatisfying(OtpDeliveryException.class, e -> assertThat(e.refused()).isFalse());
+                assertThat(received).as("tries for %d, Retry-After %s", unknown, hint).hasSize(1);
+            }
         }
     }
 
@@ -175,7 +178,7 @@ class RemoteNotificationGatewayTest {
             closed = socket.getLocalPort();
         }
         RemoteNotificationGateway down = RemoteNotificationGateway.create(RestClient.builder(), "http://127.0.0.1:" + closed,
-                Duration.ofSeconds(2), RETRY_ONCE, TOKEN);
+                Duration.ofSeconds(2), Duration.ofSeconds(2), RETRY_ONCE, TOKEN);
         assertThatThrownBy(() -> down.send(CODE))
                 .isInstanceOfSatisfying(OtpDeliveryException.class, e -> assertThat(e.refused()).isFalse());
     }
@@ -194,7 +197,7 @@ class RemoteNotificationGatewayTest {
         assertThat(received).isEmpty();
         for (String token : new String[] {null, "", "  "}) {
             assertThatThrownBy(() -> RemoteNotificationGateway.create(RestClient.builder(), url(), Duration.ofSeconds(1),
-                    RETRY_ONCE, token)).isInstanceOf(IllegalStateException.class).hasMessageContaining("INTERNAL_API_TOKEN");
+                    Duration.ofSeconds(1), RETRY_ONCE, token)).isInstanceOf(IllegalStateException.class).hasMessageContaining("INTERNAL_API_TOKEN");
         }
     }
 

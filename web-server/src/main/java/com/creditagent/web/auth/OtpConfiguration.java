@@ -27,7 +27,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Condition;
+import org.springframework.context.annotation.ConditionContext;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.web.client.RestClient;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.retry.RetryMode;
@@ -50,6 +54,17 @@ class OtpConfiguration {
 
     static final String DELIVERY = "credit.auth.otp.delivery";
 
+    /**
+     * SES and SNS are built only in local mode, read the way {@link NotificationsProperties} binds it, so a
+     * blank NOTIFICATIONS_MODE means local for the beans and the gateway alike.
+     */
+    static final class LocalNotifications implements Condition {
+        @Override
+        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+            return NotificationsProperties.mode(context.getEnvironment()) == NotificationsProperties.Mode.LOCAL;
+        }
+    }
+
     @Bean
     OtpChallengeRepository otpChallengeRepository(DynamoDbClient dynamo, AuthProperties auth, OtpProperties otp) {
         if (auth.dynamodb().createTables()) {
@@ -61,7 +76,7 @@ class OtpConfiguration {
 
     @Bean(destroyMethod = "close")
     @ConditionalOnProperty(name = DELIVERY, havingValue = "aws", matchIfMissing = true)
-    @ConditionalOnProperty(name = NotificationsProperties.MODE, havingValue = "local", matchIfMissing = true)
+    @Conditional(LocalNotifications.class)
     SesV2Client sesClient(OtpProperties otp) {
         SesV2ClientBuilder builder = SesV2Client.builder()
                 .region(Region.of(otp.region()))
@@ -74,7 +89,7 @@ class OtpConfiguration {
 
     @Bean(destroyMethod = "close")
     @ConditionalOnProperty(name = DELIVERY, havingValue = "aws", matchIfMissing = true)
-    @ConditionalOnProperty(name = NotificationsProperties.MODE, havingValue = "local", matchIfMissing = true)
+    @Conditional(LocalNotifications.class)
     SnsClient snsClient(OtpProperties otp) {
         SnsClientBuilder builder = SnsClient.builder()
                 .region(Region.of(otp.region()))
@@ -147,8 +162,8 @@ class OtpConfiguration {
             @Value("${credit.internal.token:}") String serviceToken) {
         if (notifications.mode() == NotificationsProperties.Mode.REMOTE) {
             log.info("Sign-in codes are sent through the notification-service at {}", notifications.url());
-            return RemoteNotificationGateway.create(builder, notifications.url(), notifications.timeout(), retry,
-                    serviceToken);
+            return RemoteNotificationGateway.create(builder, notifications.url(), notifications.connectTimeout(),
+                    notifications.timeout(), retry, serviceToken);
         }
         return new LocalNotificationGateway(senders(otp, auth, ses.getIfAvailable(), sns.getIfAvailable()));
     }

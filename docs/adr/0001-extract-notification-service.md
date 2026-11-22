@@ -24,7 +24,9 @@ or `UNCERTAIN`) sent; 422 refused (the sign-in send is given back; the alert cla
 5xx, a timeout or a failed connect unknown (the code stays valid and the send counts; the claims are
 released and a later duplicate is accepted); 400, 401, 404, 409 a caller bug (500). web-server retries
 only a failed connect, with the same key and `credit.retry` backoff and jitter, never a timeout or a 5xx, so
-the service stays the one retry layer. The alert key is `alert:<HMAC of the address>:<run time>`. Sign-in
+the service stays the one retry layer. Connects time out after `NOTIFICATIONS_CONNECT_TIMEOUT` (2 s) and answers
+after `NOTIFICATIONS_TIMEOUT` (10 s), so a sign-in waits at most about 14.5 s (two failed connects, the
+backoff, one full try). `NOTIFICATIONS_URL` must be https unless it names this machine or a compose service. The alert key is `alert:<HMAC of the address>:<run time>`. Sign-in
 codes now carry `validSeconds`, so a TTL that is not whole minutes is exact.
 
 The sign-in key is `otp:<challengeId>:<send number>`. A send the provider clearly refused is given back,

@@ -27,16 +27,30 @@ public final class HttpClients {
      */
     public static RestClient restClient(
             RestClient.Builder builder, String baseUrl, Duration timeout, RetrySettings retry, boolean idempotent) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(timeout)
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
-        factory.setReadTimeout(timeout);
+        return restClient(builder, baseUrl, timeout, timeout, retry, idempotent);
+    }
+
+    /**
+     * As {@link #restClient(RestClient.Builder, String, Duration, RetrySettings, boolean)}, with a
+     * separate, usually shorter, connect timeout: a service that cannot be reached fails fast, while
+     * a slow answer still gets {@code readTimeout}.
+     */
+    public static RestClient restClient(RestClient.Builder builder, String baseUrl, Duration connectTimeout,
+            Duration readTimeout, RetrySettings retry, boolean idempotent) {
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient(connectTimeout));
+        factory.setReadTimeout(readTimeout);
         return builder.clone()
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
                 .requestInterceptor(new RetryingInterceptor(retry, idempotent))
+                .build();
+    }
+
+    /** No redirects, and {@code connectTimeout} to open a connection. */
+    static HttpClient httpClient(Duration connectTimeout) {
+        return HttpClient.newBuilder()
+                .connectTimeout(connectTimeout)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
     }
 }
