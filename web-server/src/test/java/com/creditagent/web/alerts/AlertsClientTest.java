@@ -54,7 +54,7 @@ class AlertsClientTest {
         java.util.List<AlertsClient.Finding> many = java.util.stream.IntStream.range(0, 25)
                 .mapToObj(i -> new AlertsClient.Finding("loc-" + i, java.time.Instant.EPOCH)).toList();
         org.mockito.BDDMockito.given(client.lookup("ada@example.com")).willReturn(new AlertsClient.Lookup(true, many));
-        AlertsService.View view = new AlertsService(auth, client, client).current("ada");
+        AlertsService.View view = new AlertsService(auth, client, client, userId -> true).current("ada");
         assertThat(view.findings()).hasSize(AlertsService.MAX_FINDINGS).first().extracting(AlertsClient.Finding::location).isEqualTo("loc-0");
     }
 
@@ -64,9 +64,28 @@ class AlertsClientTest {
         AlertsClient retrying = mock(AlertsClient.class);
         AlertsClient once = mock(AlertsClient.class);
         org.mockito.BDDMockito.given(auth.account("x")).willReturn(Optional.empty());
-        AlertsService alerts = new AlertsService(auth, retrying, once);
+        AlertsService alerts = new AlertsService(auth, retrying, once, userId -> {
+            throw new AssertionError("no finding, so no entitlement check");
+        });
         assertThat(alerts.alertsFor("x").exposed()).isFalse();
         assertThat(alerts.current("x").status()).isEqualTo(AlertsService.Status.OK);
         org.mockito.Mockito.verifyNoInteractions(retrying, once);
+    }
+
+    @Test
+    void anEntitlementThatCannotBeToldShowsNothingRatherThanFindingsUnpaidFor() {
+        AuthService auth = mock(AuthService.class);
+        AlertsClient client = mock(AlertsClient.class);
+        com.creditagent.web.auth.User user = new com.creditagent.web.auth.User("ada", "$2a$h", "ada@example.com",
+                "h", "6789", "k", java.time.Instant.EPOCH, com.creditagent.web.auth.ReportStatus.UNLOCKED);
+        org.mockito.BDDMockito.given(auth.account("ada")).willReturn(Optional.of(user));
+        org.mockito.BDDMockito.given(client.lookup("ada@example.com")).willReturn(new AlertsClient.Lookup(true,
+                java.util.List.of(new AlertsClient.Finding("loc", java.time.Instant.EPOCH))));
+        AlertsService alerts = new AlertsService(auth, client, client, userId -> {
+            throw new IllegalStateException("subscriptions table down");
+        });
+        AlertsService.View view = alerts.alertsFor("ada");
+        assertThat(view.status()).isEqualTo(AlertsService.Status.UNAVAILABLE);
+        assertThat(view.findings()).isEmpty();
     }
 }

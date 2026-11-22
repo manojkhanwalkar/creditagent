@@ -23,6 +23,7 @@
     <h2 id="alerts-title">Your information was found on the dark web</h2>
     <p id="alerts-message"></p>
     <ul id="alerts-findings"></ul>
+    <p id="alerts-upsell" hidden><a href="#subscriptions-widget">See ID Protection</a></p>
   </section>
 
   <main class="widgets">
@@ -105,6 +106,11 @@
         </div>
         <p id="reg-authorize-help" class="help">This is your written instruction under the Fair Credit Reporting Act.
           You can delete your account and data at any time.</p>
+        <!-- Optional paid add-on; shown only when it can be bought, with its price. -->
+        <div class="consent" id="reg-id-protection-offer" hidden>
+          <input id="reg-id-protection" name="idProtection" type="checkbox">
+          <label for="reg-id-protection" id="reg-id-protection-label">Add ID Protection (optional)</label>
+        </div>
         <button type="submit" id="register-submit">Verify card and create account</button>
         <p id="register-error" class="error" role="alert" hidden></p>
       </form>
@@ -159,6 +165,14 @@
       <ol class="offers-list" id="offers-list"></ol>
       <p class="help" id="offers-basis" hidden></p>
       <p class="help offers-disclaimer" id="offers-disclaimer" hidden></p>
+    </section>
+
+    <!-- Widget: the user's ID Protection subscription, or the offer to subscribe. Shown while signed in. -->
+    <section class="widget" id="subscriptions-widget" aria-labelledby="subscriptions-title" tabindex="-1" hidden>
+      <h2 id="subscriptions-title">ID Protection</h2>
+      <p id="subscriptions-status" role="status"></p>
+      <button type="button" id="subscribe-button" hidden>Subscribe to ID Protection</button>
+      <p id="subscribe-error" class="error" role="alert" hidden></p>
     </section>
 
     <!-- Widget: chat about the user's own credit report. Shown while signed in. -->

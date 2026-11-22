@@ -36,6 +36,8 @@ credit:
     region: ${AWS_REGION:us-east-1}
     dynamodb-timeout: ${DYNAMODB_TIMEOUT:5s}
     alerts-table: ${ALERTS_TABLE:Alerts}
+    # Only ID Protection subscribers are emailed; read-only (dynamodb:GetItem).
+    subscriptions-table: ${SUBSCRIPTIONS_TABLE:credit-agent-subscriptions}
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
 
 management:

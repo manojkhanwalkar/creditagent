@@ -66,7 +66,8 @@ class AlertsFlowTest {
 
         @Bean
         AlertsService alertsService(AuthService auth, AlertsClient client) {
-            return new AlertsService(auth, client, client);
+            // Ada has ID Protection; Bob is a free user.
+            return new AlertsService(auth, client, client, "ada"::equals);
         }
     }
 
@@ -97,18 +98,37 @@ class AlertsFlowTest {
     }
 
     @Test
-    void anExposedUserIsWarnedAtLoginAndAdvisedToBuyIdentityProtection() throws Exception {
+    void anExposedSubscriberSeesWhereAndWhenAtLogin() throws Exception {
         given(client.lookup("Ada@Example.com")).willReturn(new AlertsClient.Lookup(true,
                 List.of(new AlertsClient.Finding("breach-forum-beta", Instant.parse("2026-11-09T12:00:00Z")))));
         String body = login("ada");
         assertThat((Boolean) JsonPath.read(body, "$.alerts.exposed")).isTrue();
-        assertThat((String) JsonPath.read(body, "$.alerts.message")).contains("dark web").contains("identity protection");
+        assertThat((Boolean) JsonPath.read(body, "$.alerts.locked")).isFalse();
+        assertThat((String) JsonPath.read(body, "$.alerts.message")).contains("dark web").contains("passwords");
         assertThat((String) JsonPath.read(body, "$.alerts.findings[0].location")).isEqualTo("breach-forum-beta");
 
         String bearer = "Bearer " + JsonPath.read(body, "$.token");
         mvc.perform(get(AlertsController.PATH).header("Authorization", bearer))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.exposed").value(true));
+    }
+
+    @Test
+    void anExposedFreeUserIsToldSomethingWasFoundButNotWhereAndOfferedIdProtection() throws Exception {
+        given(client.lookup("bob@example.com")).willReturn(new AlertsClient.Lookup(true,
+                List.of(new AlertsClient.Finding("breach-forum-beta", Instant.parse("2026-11-09T12:00:00Z")))));
+        String body = login("bob");
+        assertThat((Boolean) JsonPath.read(body, "$.alerts.exposed")).isTrue();
+        assertThat((Boolean) JsonPath.read(body, "$.alerts.locked")).isTrue();
+        assertThat((List<?>) JsonPath.read(body, "$.alerts.findings")).isEmpty();
+        assertThat((String) JsonPath.read(body, "$.alerts.message")).contains("Subscribe to ID Protection");
+        assertThat(body).doesNotContain("breach-forum-beta");
+
+        String bearer = "Bearer " + JsonPath.read(body, "$.token");
+        mvc.perform(get(AlertsController.PATH).header("Authorization", bearer))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.locked").value(true))
+                .andExpect(jsonPath("$.findings").isEmpty());
     }
 
     @Test

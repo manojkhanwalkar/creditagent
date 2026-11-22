@@ -77,7 +77,8 @@ class AccountFlowTest {
 
         @Bean
         AccountService accountService(AuthService auth, AlertsService alerts, ReportEraseClient reports, CreditReportSource source) {
-            return new AccountService(auth, USERS, SESSIONS, alerts, reports, source, List.of(), new AuditLog(), Clock.systemUTC());
+            return new AccountService(auth, USERS, SESSIONS, alerts,
+                    new com.creditagent.web.subscriptions.InMemorySubscriptions().service(auth, Clock.systemUTC()), reports, source, List.of(), new AuditLog(), Clock.systemUTC());
         }
     }
 

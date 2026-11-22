@@ -4,11 +4,11 @@ import { MAX_FINDINGS, RETRY_DELAYS_MS, alertsChecked, alertsView } from '../../
 
 test('nothing is shown unless the email was found', () => {
   for (const data of [null, {}, { status: 'UNAVAILABLE' }, { status: 'OK', exposed: false }]) {
-    assert.deepEqual(alertsView(data), { show: false, message: null, findings: [] });
+    assert.deepEqual(alertsView(data), { show: false, message: null, findings: [], locked: false });
   }
 });
 
-test('a finding shows the message, where and when, and suggests identity protection', () => {
+test('a subscriber\'s finding shows the message, where and when', () => {
   const view = alertsView({
     status: 'OK',
     exposed: true,
@@ -18,7 +18,8 @@ test('a finding shows the message, where and when, and suggests identity protect
   assert.equal(view.show, true);
   assert.equal(view.message, 'Found. We suggest you buy identity protection.');
   assert.deepEqual(view.findings, ['Found at breach forum beta on 2026-11-09', 'Found at an unnamed location on an unknown date']);
-  assert.match(alertsView({ status: 'OK', exposed: true, findings: [] }).message, /identity protection/);
+  assert.match(alertsView({ status: 'OK', exposed: true, findings: [] }).message, /passwords/);
+  assert.equal(view.locked, false);
 });
 
 test('an unavailable or missing answer is asked again; a checked one is final', () => {
@@ -31,4 +32,13 @@ test('an unavailable or missing answer is asked again; a checked one is final', 
 test('the list is capped', () => {
   const findings = Array.from({ length: 30 }, (_, i) => ({ location: `l${i}`, foundAt: '2026-01-01T00:00:00Z' }));
   assert.equal(alertsView({ status: 'OK', exposed: true, findings }).findings.length, MAX_FINDINGS);
+});
+
+test('a free user is told something was found, without details, and offered ID Protection', () => {
+  const view = alertsView({ status: 'OK', exposed: true, locked: true, findings: [{ location: 'x', foundAt: '2026-01-01' }] });
+  assert.equal(view.show, true);
+  assert.equal(view.locked, true);
+  assert.deepEqual(view.findings, []);
+  assert.match(view.message, /Subscribe to ID Protection/);
+  assert.equal(alertsView({ status: 'OK', exposed: true, locked: true, message: 'Server says.' }).message, 'Server says.');
 });

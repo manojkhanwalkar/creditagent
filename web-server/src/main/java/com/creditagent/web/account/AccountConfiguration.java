@@ -31,9 +31,9 @@ class AccountConfiguration {
 
     @Bean
     AccountService accountService(AuthService auth, UserRepository users, SessionRepository sessions, AlertsService alerts,
-            ReportEraseClient reports, CreditReportSource reportSource, ObjectProvider<SessionEndListener> listeners,
+            com.creditagent.web.subscriptions.SubscriptionService subscriptions, ReportEraseClient reports, CreditReportSource reportSource, ObjectProvider<SessionEndListener> listeners,
             AuditLog audit) {
-        return new AccountService(auth, users, sessions, alerts, reports, reportSource, listeners.orderedStream().toList(),
+        return new AccountService(auth, users, sessions, alerts, subscriptions, reports, reportSource, listeners.orderedStream().toList(),
                 audit, Clock.systemUTC());
     }
 

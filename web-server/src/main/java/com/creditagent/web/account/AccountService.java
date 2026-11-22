@@ -8,6 +8,8 @@ import com.creditagent.common.SafeLogging;
 import com.creditagent.common.Ssn;
 import com.creditagent.web.alerts.AlertsClient;
 import com.creditagent.web.alerts.AlertsService;
+import com.creditagent.web.subscriptions.SubscriptionService;
+import com.creditagent.subscriptions.Subscription;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.AuthService;
 import com.creditagent.web.auth.AuthenticatedUser;
@@ -47,7 +49,7 @@ public class AccountService {
 
     /** Everything held about the user, as the export returns it. No hashes, keys or other users' data. */
     public record Export(Instant exportedAt, Account account, CreditReport creditReport, List<AlertsClient.Finding> darkWebFindings,
-            String notes) {}
+            List<Subscription> subscriptions, String notes) {}
 
     /** The account's stored fields, minus secrets (password hash) and keyed hashes. */
     public record Account(String userId, String email, String mobilePhone, String zip, String ssnMasked, Instant createdAt, Instant lastLoginAt,
@@ -59,12 +61,14 @@ public class AccountService {
             + " same. Not included: chat conversations (kept in memory for at most 5 minutes); a redacted copy of chat"
             + " questions and answers kept for up to 30 days to test the assistant's safety checks; and security audit"
             + " records of when your report was read or your account changed, kept for at least a year, also after"
-            + " deletion. Ask us for a copy of those.";
+            + " deletion. Ask us for a copy of those. Card details for subscriptions are held by the payment provider,"
+            + " not by CreditAgent.";
 
     private final AuthService auth;
     private final UserRepository users;
     private final SessionRepository sessions;
     private final AlertsService alerts;
+    private final SubscriptionService subscriptions;
     private final ReportEraseClient reports;
     private final CreditReportSource reportSource;
     private final List<SessionEndListener> sessionEndListeners;
@@ -72,12 +76,13 @@ public class AccountService {
     private final Clock clock;
 
     public AccountService(AuthService auth, UserRepository users, SessionRepository sessions, AlertsService alerts,
-            ReportEraseClient reports, CreditReportSource reportSource, List<SessionEndListener> sessionEndListeners,
-            AuditLog audit, Clock clock) {
+            SubscriptionService subscriptions, ReportEraseClient reports, CreditReportSource reportSource,
+            List<SessionEndListener> sessionEndListeners, AuditLog audit, Clock clock) {
         this.auth = Objects.requireNonNull(auth);
         this.users = Objects.requireNonNull(users);
         this.sessions = Objects.requireNonNull(sessions);
         this.alerts = Objects.requireNonNull(alerts);
+        this.subscriptions = Objects.requireNonNull(subscriptions);
         this.reports = Objects.requireNonNull(reports);
         this.reportSource = Objects.requireNonNull(reportSource);
         this.sessionEndListeners = List.copyOf(sessionEndListeners);
@@ -100,11 +105,12 @@ public class AccountService {
         CreditReport report = reportSource.findReport(ssn).orElse(null);
         auth.auditReportRead(user, "export");
         List<AlertsClient.Finding> findings = account.email() == null ? List.of() : alerts.findingsFor(account.email());
+        List<Subscription> held = subscriptions.forExport(account.userId());
         audit.record(Event.ACCOUNT_EXPORTED, "user:" + user.userId(), "user:" + user.userId(), "OK");
         return new Export(clock.instant(), new Account(account.userId(), account.email(), account.mobilePhone(), account.zip(),
                 AuthenticatedUser.mask(account.ssnLastFour()), account.createdAt(), account.lastLoginAt(),
                 account.reportStatus(), account.lastScore(), account.lastScoreAt(), account.consentVersion(),
-                account.consentedAt(), account.kycVerificationId()), report, findings, EXPORT_NOTES);
+                account.consentedAt(), account.kycVerificationId()), report, findings, held, EXPORT_NOTES);
     }
 
     /**
@@ -113,7 +119,7 @@ public class AccountService {
      *
      * @throws NotTheOwnerException if the password or SSN is wrong
      * @throws com.creditagent.clients.ServiceUnavailableException if the alerts or reports could not be
-     *     erased; the account itself is then kept (what was already erased stays erased), and the user can
+     *     erased (or a DynamoDB error if the subscriptions could not); the account itself is then kept (what was already erased stays erased), and the user can
      *     try again
      */
     public void delete(AuthenticatedUser user, String password, Ssn ssn) {
@@ -123,6 +129,7 @@ public class AccountService {
             alerts.erase(account.email());
         }
         reports.erase(ssn);
+        subscriptions.erase(account.userId(), account.email());
         removeAccount(account);
         for (SessionEndListener listener : sessionEndListeners) {
             try {
@@ -143,7 +150,7 @@ public class AccountService {
      *
      * @param cutoff the account is purged only if it is still unused since then: re-checked here, so a
      *     user who signed in after the retention job read its page is kept
-     * @return false if the account no longer existed or was used meanwhile
+     * @return false if the account no longer existed, was used meanwhile, or has an active subscription
      * @throws com.creditagent.clients.ServiceUnavailableException if the alerts could not be erased
      */
     public boolean purge(String userId, Instant cutoff) {
@@ -151,9 +158,14 @@ public class AccountService {
         if (account == null || !account.lastActiveAt().isBefore(cutoff)) {
             return false;
         }
+        // A paying subscriber is a current customer, however long since they signed in.
+        if (subscriptions.hasAnyActive(userId)) {
+            return false;
+        }
         if (account.email() != null) {
             alerts.erase(account.email());
         }
+        subscriptions.erase(account.userId(), account.email());
         removeAccount(account);
         audit.record(Event.ACCOUNT_PURGED, "job:account-retention", "user:" + userId, "OK",
                 Map.of("lastActiveAt", account.lastActiveAt()));

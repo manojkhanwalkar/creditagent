@@ -52,7 +52,15 @@ public final class AuditLog {
         /** A one-time sign-in code was sent (detail: the channel). */
         LOGIN_CODE_SENT,
         /** A one-time sign-in code was wrong, expired or used up its attempts. */
-        LOGIN_CODE_FAILED
+        LOGIN_CODE_FAILED,
+        /**
+         * A payment for a subscription was taken (outcome OK: a term started; ALREADY_ACTIVE: the user was
+         * subscribed meanwhile, so the payment started nothing and needs a refund). Detail: the product,
+         * the payment reference and the term's end.
+         */
+        SUBSCRIPTION_STARTED,
+        /** A user's subscription records were erased (account deletion). */
+        SUBSCRIPTIONS_ERASED
     }
 
     static final int MAX_VALUE_LENGTH = 96;

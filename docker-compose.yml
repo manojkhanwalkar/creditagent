@@ -104,6 +104,8 @@ services:
       # No AWS account locally: sign-in codes are written to this service's log instead of being sent
       # by SES or SNS (docker compose logs web-server | grep "sign-in code"). Set to aws in AWS.
       OTP_DELIVERY: ${OTP_DELIVERY:-log}
+      # No payment provider locally: the test gateway starts subscriptions without charging anything.
+      PAYMENTS_PROVIDER: ${PAYMENTS_PROVIDER:-test}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb, user-advisor-agent, offers-service, alerts-service]

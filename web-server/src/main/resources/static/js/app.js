@@ -6,6 +6,7 @@ import {
 import { appendEntry, assistantEntry, checkChat, createSendGate, userEntry } from './chat.js';
 import { NO_SCORE_RETRY_DELAYS, offersView } from './offers.js';
 import { RETRY_DELAYS_MS, alertsChecked, alertsView } from './alerts.js';
+import { registrationNotice, registrationOffer, subscribeResult, subscriptionsView } from './subscriptions.js';
 
 const RADIUS = 80;
 const session = createSession(window.sessionStorage);
@@ -44,10 +45,11 @@ const lockWidget = $('lock-widget');
 const chatWidget = $('chat-widget');
 const offersWidget = $('offers-widget');
 const dataWidget = $('data-widget');
+const subscriptionsWidget = $('subscriptions-widget');
 
 // ---------- signed-in / signed-out view ----------
 
-function showSignedIn(userId, ssnMasked, offers, alerts) {
+function showSignedIn(userId, ssnMasked, offers, alerts, subscriptions) {
   accountUser.textContent = userId;
   $('ssn-hint').textContent = ssnHint(ssnMasked || session.ssnMasked());
   account.hidden = false;
@@ -57,6 +59,7 @@ function showSignedIn(userId, ssnMasked, offers, alerts) {
   chatWidget.hidden = false;
   offersWidget.hidden = false;
   dataWidget.hidden = false;
+  subscriptionsWidget.hidden = false;
   hideNotice();
   scheduleIdleWarning();
   resetLockWidget();
@@ -65,6 +68,8 @@ function showSignedIn(userId, ssnMasked, offers, alerts) {
   if (offers) renderOffers(offers); else loadOffers();
   // Login waits 1.5 s at most: if the alerts service did not answer in time, ask again.
   if (alertsChecked(alerts)) renderAlerts(alerts); else loadAlerts();
+  // Free users are offered ID Protection at every login.
+  if (subscriptions?.status === 'OK') renderSubscriptions(subscriptions); else loadSubscriptions();
 }
 
 function showSignedOut(message) {
@@ -77,6 +82,8 @@ function showSignedOut(message) {
   chatWidget.hidden = true;
   offersWidget.hidden = true;
   dataWidget.hidden = true;
+  subscriptionsWidget.hidden = true;
+  $('alerts-banner').hidden = true;
   resetDataWidget();
   cancelIdleWarning();
   renderAlerts(null);
@@ -331,8 +338,10 @@ function finishLogin(data) {
     try { window.sessionStorage.setItem(IDLE_KEY, String(idleTimeoutSeconds)); } catch { /* storage blocked */ }
   }
   // The login answer carries the offers matched to the user's last score and ZIP code.
-  showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts);
+  showSignedIn(data.userId, data.ssnMasked, data.offers, data.alerts, data.subscriptions);
   if (afterRegistration) waitForFirstOffers();
+  if (afterRegistration && pendingRegistrationNotice) showNotice(pendingRegistrationNotice);
+  pendingRegistrationNotice = null;
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -420,6 +429,23 @@ $('otp-cancel').addEventListener('click', () => showPasswordStep(''));
 
 // ---------- registration ----------
 
+// What to say after the first sign-in about the ID Protection asked for at registration.
+let pendingRegistrationNotice = null;
+
+/** Shows the optional ID Protection tick box, with its price, when it can be bought. */
+async function loadRegistrationOffer() {
+  const offer = $('reg-id-protection-offer');
+  try {
+    const response = await fetch('/api/v1/subscriptions/plans', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    const label = response.ok ? registrationOffer(await response.json()) : null;
+    if (label) $('reg-id-protection-label').textContent = label;
+    offer.hidden = !label;
+  } catch {
+    offer.hidden = true;
+  }
+  if (offer.hidden) $('reg-id-protection').checked = false;
+}
+
 registerForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const error = $('register-error');
@@ -452,6 +478,7 @@ registerForm.addEventListener('submit', async (event) => {
     body.append('authorize', 'true'); // checkRegistration refused the form without it
     body.append('zip', form.zip);
     body.append('ssnCard', form.ssnCard, form.ssnCard.name);
+    if (!$('reg-id-protection-offer').hidden && $('reg-id-protection').checked) body.append('idProtection', 'true');
     const response = await fetch('/api/v1/auth/register', {
       method: 'POST',
       headers: { Accept: 'application/json' },
@@ -471,6 +498,7 @@ registerForm.addEventListener('submit', async (event) => {
       }
       return;
     }
+    pendingRegistrationNotice = registrationNotice(data.idProtection);
     // The new account signs in like any other: password (already known), then a code.
     loginAfterRegistration = true;
     if (await logIn(form.userId, form.password, error)) {
@@ -603,6 +631,9 @@ let alertsGeneration = 0;
 function renderAlerts(data) {
   const view = alertsView(data);
   const banner = $('alerts-banner');
+  $('alerts-title').textContent = view.locked
+    ? 'Something was found on the dark web' : 'Your information was found on the dark web';
+  $('alerts-upsell').hidden = !view.locked;
   $('alerts-message').textContent = view.message ?? '';
   $('alerts-findings').replaceChildren(...view.findings.map((text) => {
     const item = document.createElement('li');
@@ -630,6 +661,60 @@ async function loadAlerts(attempt = 0) {
   }
   // After that, no banner is better than a wrong one; the next login checks again.
 }
+
+// ---------- ID Protection subscription ----------
+
+const subscribeButton = $('subscribe-button');
+let subscriptionsGeneration = 0;
+
+function renderSubscriptions(data) {
+  const view = subscriptionsView(data);
+  $('subscriptions-status').textContent = view.status;
+  subscribeButton.hidden = !view.offer;
+  if (view.offer) subscribeButton.textContent = view.offer.label;
+}
+
+async function loadSubscriptions() {
+  const generation = ++subscriptionsGeneration;
+  let data = null;
+  try {
+    const answer = await api('/api/v1/subscriptions', { method: 'GET' });
+    if (answer.response.ok) data = answer.data;
+  } catch {
+    // Shown as "could not be loaded" below.
+  }
+  if (generation === subscriptionsGeneration) renderSubscriptions(data);
+}
+
+subscribeButton.addEventListener('click', async () => {
+  const error = $('subscribe-error');
+  showFormError(error, '');
+  subscribeButton.disabled = true;
+  try {
+    const { response, data } = await api('/api/v1/subscriptions', { method: 'POST', body: { product: 'ID_PROTECTION' } });
+    if (response.status === 401) {
+      showSignedOut(messageFor(401, data));
+      return;
+    }
+    const result = subscribeResult(response.status, data);
+    if (result.checkoutUrl) {
+      $('subscriptions-status').textContent = result.message;
+      window.location.assign(result.checkoutUrl);
+      return;
+    }
+    if (result.refresh) {
+      showNotice(result.message);
+      await loadSubscriptions();
+      loadAlerts(); // the details are unlocked now
+    } else {
+      showFormError(error, result.message);
+    }
+  } catch {
+    showFormError(error, 'Could not reach the server. Reload the page to see whether ID Protection started before trying again.');
+  } finally {
+    subscribeButton.disabled = false;
+  }
+});
 
 // ---------- card offers ----------
 
@@ -894,6 +979,8 @@ $('delete-form').addEventListener('submit', async (event) => {
 });
 
 // ---------- start-up: resume a session from this tab if it is still valid ----------
+
+loadRegistrationOffer();
 
 (async () => {
   if (!session.token()) {

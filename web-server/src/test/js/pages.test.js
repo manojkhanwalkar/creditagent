@@ -61,3 +61,14 @@ test('form fields have a 3:1 border and the grid reflows at 320 px', () => {
   assert.match(css, /minmax\(min\(320px, 100%\), 1fr\)/);
   assert.doesNotMatch(css, /outline:\s*(none|0)/);
 });
+
+test('ID Protection at registration is optional, never pre-ticked, and its widget is labelled', () => {
+  assert.match(index, /<input id="reg-id-protection" name="idProtection" type="checkbox">/);
+  assert.doesNotMatch(index, /id="reg-id-protection"[^>]*(checked|required)/);
+  assert.match(index, /<label for="reg-id-protection"/);
+  assert.match(index, /<section class="widget" id="subscriptions-widget" aria-labelledby="subscriptions-title"/);
+  assert.match(index, /<p id="subscriptions-status" role="status">/);
+  assert.match(index, /<button type="button" id="subscribe-button"/);
+  assert.match(index, /<p id="subscribe-error" class="error" role="alert" hidden>/);
+  assert.match(index, /<p id="alerts-upsell" hidden><a href="#subscriptions-widget">/);
+});
