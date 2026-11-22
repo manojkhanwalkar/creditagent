@@ -42,6 +42,8 @@ export DYNAMODB_CREATE_TABLES=true
 # sandbox (a sender can never be verified locally, so every email is refused) and does not implement SNS
 # Publish to a phone number yet (aws/aws-emulator#572). The real SES/SNS calls are covered by unit tests.
 export OTP_DELIVERY=log
+# The same for notification-service: messages are logged (masked, never the code), not sent.
+export NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log
 # Subscriptions "paid" with the test gateway: every payment succeeds and nothing is charged.
 export PAYMENTS_PROVIDER=test
 echo "Pointed at AWS Emulator on https://127.0.0.1:$_ae_port"

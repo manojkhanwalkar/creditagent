@@ -179,6 +179,30 @@ services:
       NOTIFIER_APP_URL: ${NOTIFIER_APP_URL:-http://localhost:8080}
     depends_on: [dynamodb, mailpit]
 
+  # Templated email and SMS, once per idempotency key (internal, service token). Nothing calls it yet:
+  # web-server and alert-notifier switch to it in a later step (NOTIFICATIONS_MODE).
+  notification-service:
+    <<: *service
+    build: { context: ., args: { MODULE: notification-service } }
+    environment:
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
+      DYNAMODB_ENDPOINT: http://dynamodb:8000
+      DYNAMODB_CREATE_TABLES: "true"
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      # Emails go to Mailpit (http://localhost:8025); texts are logged, masked and without the code.
+      NOTIFICATIONS_EMAIL: ${NOTIFICATIONS_EMAIL:-smtp}
+      NOTIFICATIONS_SMS: ${NOTIFICATIONS_SMS:-log}
+      NOTIFICATIONS_EMAIL_FROM: ${NOTIFICATIONS_EMAIL_FROM:-CreditAgent <no-reply@creditagent.local>}
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      # Off only for the bundled Mailpit; the service refuses STARTTLS off for any other relay.
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-false}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
+    depends_on: [dynamodb, mailpit]
+
   # Catches the notifier's emails locally; nothing leaves the machine. Web UI on 127.0.0.1:8025.
   mailpit:
     image: axllent/mailpit:v1.20.0

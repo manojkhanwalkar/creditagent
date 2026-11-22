@@ -1,0 +1,82 @@
+server:
+  port: ${PORT:8094}
+  # Finish sends in progress (up to the lifecycle timeout) before stopping; new requests are refused.
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: notification-service
+  lifecycle:
+    # At least one send (3 x DynamoDB timeout + the longer provider timeout; checked at start-up).
+    timeout-per-shutdown-phase: ${NOTIFICATIONS_SHUTDOWN_TIMEOUT:20s}
+  mvc:
+    problemdetails:
+      enabled: true
+  jackson:
+    deserialization:
+      # A field this API does not define is a 400, not silently dropped.
+      fail-on-unknown-properties: true
+  # The SMTP relay, used only with NOTIFICATIONS_EMAIL=smtp. Every call is bounded.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
+      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
+      mail.smtp.starttls.required: ${MAIL_STARTTLS:true}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+credit:
+  notifications:
+    # Required: only callers presenting this token may send. Empty = the API is off (404).
+    service-token: ${INTERNAL_API_TOKEN:}
+    # ses | smtp | log (log: development only, refused unless DynamoDB is local)
+    email: ${NOTIFICATIONS_EMAIL:ses}
+    # sns | log
+    sms: ${NOTIFICATIONS_SMS:sns}
+    region: ${AWS_REGION:us-east-1}
+    ses-endpoint: ${NOTIFICATIONS_SES_ENDPOINT:}
+    sns-endpoint: ${NOTIFICATIONS_SNS_ENDPOINT:}
+    email-from: ${NOTIFICATIONS_EMAIL_FROM:CreditAgent <no-reply@creditagent.example>}
+    ses-configuration-set: ${NOTIFICATIONS_SES_CONFIGURATION_SET:}
+    sms-sender-id: ${NOTIFICATIONS_SMS_SENDER_ID:}
+    sms-origination-number: ${NOTIFICATIONS_SMS_ORIGINATION_NUMBER:}
+    provider-timeout: ${NOTIFICATIONS_PROVIDER_TIMEOUT:4s}
+    table: ${NOTIFICATIONS_TABLE:credit-agent-notifications}
+    dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
+    dynamodb-timeout: ${NOTIFICATIONS_DYNAMODB_TIMEOUT:2s}
+    create-tables: ${DYNAMODB_CREATE_TABLES:false}
+    retention: ${NOTIFICATIONS_RETENTION:30d}
+    lease: ${NOTIFICATIONS_LEASE:60s}
+    # One SMTP send in all; given up (an unknown outcome) after this. Counts towards the lease and shutdown.
+    smtp-timeout: ${NOTIFICATIONS_SMTP_TIMEOUT:10s}
+    # Keys the stored hashes (>= 32 chars). Empty = derived from INTERNAL_API_TOKEN, so rotating the token
+    # re-keys them: repeats of keys sent before the rotation are then not recognised.
+    hash-key: ${NOTIFICATIONS_HASH_KEY:}
+
+logging:
+  level:
+    # It logs a rejected request's field values, which here would be an address or a code.
+    org.springframework.web.servlet.mvc.support.DefaultHandlerExceptionResolver: error
+    org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver: error
+
+management:
+  health:
+    mail:
+      # A relay outage must not mark the service down (or restart it): sends answer 503 and callers retry.
+      enabled: false
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
