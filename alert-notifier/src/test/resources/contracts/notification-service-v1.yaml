@@ -20,9 +20,12 @@ paths:
           in: header
           required: true
           description: >
-            1 to 128 printable ASCII characters without spaces. A repeat of an accepted key with the same
-            body answers the original 202 without sending again; only accepted sends are remembered, so after
-            a 422 or 503 the same key may be sent again. Sign-in codes use otp:<challengeId>:<send number>.
+            1 to 128 printable ASCII characters without spaces. Every key that was sent or may have been
+            delivered is remembered: a repeat with the same body answers 202 with the original id and
+            sends nothing. Only after a 422 (clearly refused, not delivered) may the same key send again.
+            After a 503 whose outcome is unknown the key is kept as UNCERTAIN: retrying it does not re-send,
+            so a caller that wants a new attempt must use a new key. Sign-in codes use
+            otp:<challengeId>:<send number>.
           schema:
             type: string
             minLength: 1
@@ -42,7 +45,10 @@ paths:
                         params: {count: "2", firstSeen: "2026-11-09", appUrl: "https://app.creditagent.example"}}
       responses:
         '202':
-          description: Sent (or a repeat of a send already accepted with this key and body)
+          description: >
+            Sent (status SENT), or a repeat of this key and body: the original id, with SENT, or UNCERTAIN
+            when the first attempt's outcome was never known (it may or may not have arrived). Nothing is sent
+            again either way.
           content:
             application/json:
               schema:
@@ -79,9 +85,10 @@ paths:
             Retry-After: {$ref: '#/components/headers/RetryAfter'}
         '503':
           description: >
-            Outcome unknown (a provider timeout, 5xx or throttling: the message may still arrive), a send
-            with this key still in progress, the store unavailable, or the service over its concurrency cap.
-            Retry with the same key after Retry-After.
+            Outcome unknown (a provider timeout, 5xx or throttling: the message may still arrive; the key is
+            kept as UNCERTAIN and will not send again, so a new attempt needs a new key), a send with this
+            key still in progress (retry the same key after Retry-After), the store unavailable before
+            anything was sent, or the service over its concurrency cap.
           headers:
             Retry-After: {$ref: '#/components/headers/RetryAfter'}
           content:
@@ -129,7 +136,7 @@ components:
       required: [id, status]
       properties:
         id: {type: string, description: This service's id for the send}
-        status: {type: string, enum: [SENT]}
+        status: {type: string, enum: [SENT, UNCERTAIN]}
     Problem:
       type: object
       properties:

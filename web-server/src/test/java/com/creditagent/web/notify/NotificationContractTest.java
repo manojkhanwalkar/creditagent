@@ -89,4 +89,13 @@ class NotificationContractTest {
         assertThat(((Map<String, Object>) post.get("responses")).keySet())
                 .contains("202", "400", "401", "409", "422", "429", "503");
     }
+
+    /** Every 202 status is one the gateway treats as success (it accepts any 2xx). */
+    @Test
+    void every202StatusIsKnownSentOrUncertain() throws Exception {
+        assertThat((List<String>) at(spec(), "components", "schemas", "SendResponse", "properties", "status", "enum"))
+                .containsExactlyInAnyOrder("SENT", "UNCERTAIN");
+        assertThat((String) at(spec(), "paths", RemoteNotificationGateway.PATH, "post", "responses", "202", "content",
+                "application/json", "schema", "$ref")).isEqualTo("#/components/schemas/SendResponse");
+    }
 }

@@ -71,4 +71,14 @@ class NotificationContractTest {
         assertThat(Pattern.compile(at(key, "schema", "pattern")).matcher(sample).matches()).isTrue();
         assertThat((String) at(spec(), "components", "securitySchemes", "serviceToken", "scheme")).isEqualTo("bearer");
     }
+
+    /** Every 202 status is one the sender treats as success (it accepts any 2xx). */
+    @Test
+    @SuppressWarnings("unchecked")
+    void every202StatusIsKnownSentOrUncertain() throws Exception {
+        assertThat((List<String>) at(spec(), "components", "schemas", "SendResponse", "properties", "status", "enum"))
+                .containsExactlyInAnyOrder("SENT", "UNCERTAIN");
+        assertThat((String) at(spec(), "paths", RemoteEmailSender.PATH, "post", "responses", "202", "content",
+                "application/json", "schema", "$ref")).isEqualTo("#/components/schemas/SendResponse");
+    }
 }
