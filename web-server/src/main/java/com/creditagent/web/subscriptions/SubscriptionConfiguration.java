@@ -26,7 +26,7 @@ class SubscriptionConfiguration {
 
     @Bean
     PaymentGateway paymentGateway(SubscriptionProperties properties, AuthProperties auth) {
-        return gateway(properties, auth);
+        return new CachingPaymentGateway(gateway(properties, auth), CachingPaymentGateway.DEFAULT_TTL, Clock.systemUTC());
     }
 
     /** The test gateway gives subscriptions away, so it is refused unless DynamoDB is local. */

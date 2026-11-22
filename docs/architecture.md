@@ -117,6 +117,8 @@ flowchart LR
 
 **Two Jackson versions.** Spring Boot 4 uses Jackson 3 (`tools.jackson`) for HTTP and domain JSON. LangChain4j and the MCP protocol objects still use Jackson 2. Each module uses whichever its library expects; the two do not mix.
 
+**Payments seam ([ADR 0002](adr/0002-extract-payments-service.md)).** `PaymentGateway` is the branch-by-abstraction seam for a coming `payments-service` (port 8095). Its `CheckoutRequest` already carries the service's contract (`userId, product, amountCents, currency, idempotencyKey, returnUrl`), and the key reaches the provider unchanged. `CachingPaymentGateway` remembers `available()` for 30 s (one value, so bounded), because every login view asks it; a checkout that finds the provider unavailable forgets it. web-server stays the only writer of the Subscriptions table and its prices: the payments-service will start a term through `POST /internal/v1/subscriptions/activations` (service token; contract [`subscriptions-internal-v1.yaml`](api/subscriptions-internal-v1.yaml)), which wraps the same conditional `activate` the in-process flow uses. 200 `ACTIVE` or `ALREADY_SAME_PAYMENT` (a repeat of the payment that bought the active term), 409 `ALREADY_ACTIVE` (the saga's compensation: the caller refunds), 404 unknown user, 503 with Retry-After on a DynamoDB failure. Trade-off: one more internal hop per purchase after P3, in exchange for provider code, credentials and the Payments table living outside the user-facing server.
+
 **Advice: rules first, LLM optional.** The rule-based advisor is deterministic and testable. The LLM advisor (Anthropic through LangChain4j) only ever sees de-identified data, and falls back to the rules if it fails.
 
 ## Resilience

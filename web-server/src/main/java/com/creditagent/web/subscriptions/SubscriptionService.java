@@ -64,6 +64,30 @@ public class SubscriptionService implements AccountSubscriptions {
         CHECKOUT
     }
 
+    /** What a confirmed payment did ({@link #activatePaid}, the internal activation API). */
+    public enum ActivationOutcome {
+        /** A term was started by this payment. */
+        ACTIVE,
+        /** This payment already bought the active term (a repeated confirmation): nothing changed. */
+        ALREADY_SAME_PAYMENT,
+        /** Another payment's term is active: this payment started nothing and must be refunded. */
+        ALREADY_ACTIVE
+    }
+
+    /** @param term the active term this payment bought; null for {@link ActivationOutcome#ALREADY_ACTIVE} */
+    public record Activation(ActivationOutcome outcome, Subscription term) {
+        public Activation {
+            Objects.requireNonNull(outcome, "outcome");
+            if ((term == null) != (outcome == ActivationOutcome.ALREADY_ACTIVE)) {
+                throw new IllegalArgumentException("Only ALREADY_ACTIVE has no term");
+            }
+        }
+
+        public Instant expiresAt() {
+            return term == null ? null : term.expiresAt();
+        }
+    }
+
     /** What can be bought, for the registration form (no sign-in). */
     public record Plan(Product product, long priceCents, String currency) {}
 
@@ -195,21 +219,39 @@ public class SubscriptionService implements AccountSubscriptions {
         return switch (checkout) {
             case PaymentGateway.Redirect redirect -> new SubscribeResult(Outcome.CHECKOUT, product, null, redirect.url());
             case PaymentGateway.Paid paid -> {
-                Optional<Subscription> started = activate(account, product, paid.paymentReference());
-                yield started.map(s -> new SubscribeResult(Outcome.ACTIVE, product, s.expiresAt(), null))
-                        .orElseGet(() -> new SubscribeResult(Outcome.ALREADY_ACTIVE, product, null, null));
+                Activation activation = activate(account, product, paid.paymentReference());
+                yield activation.outcome() == ActivationOutcome.ALREADY_ACTIVE
+                        ? new SubscribeResult(Outcome.ALREADY_ACTIVE, product, null, null)
+                        : new SubscribeResult(Outcome.ACTIVE, product, activation.expiresAt(), null);
             }
         };
     }
 
     /**
-     * Starts a one-year term for a payment the provider confirmed (here, or from the provider's webhook
-     * later). If a term started meanwhile (two payments raced), this payment starts nothing; the audit
-     * record says so, for a refund.
+     * Starts a term for a payment confirmed elsewhere (the payments-service, through
+     * {@code POST /internal/v1/subscriptions/activations}). Safe to repeat: the same payment answers
+     * {@link ActivationOutcome#ALREADY_SAME_PAYMENT}.
      *
-     * @return the term started, or empty if the user was already subscribed
+     * @throws ProductNotOfferedException if the product cannot be bought
+     * @throws UnknownSubscriberException if there is no such account, or it has no email to hold a term
+     * @throws RuntimeException if DynamoDB fails (audited as {@code FAILED})
      */
-    Optional<Subscription> activate(User account, Product product, String paymentReference) {
+    public Activation activatePaid(String userId, Product product, String paymentReference) {
+        if (product == null || !OFFERED.contains(product)) {
+            throw new ProductNotOfferedException();
+        }
+        Objects.requireNonNull(paymentReference, "paymentReference");
+        User account = auth.account(userId).filter(u -> u.email() != null).orElseThrow(UnknownSubscriberException::new);
+        return activate(account, product, paymentReference);
+    }
+
+    /**
+     * Starts a one-year term for a payment the provider confirmed (here, or from the payments-service
+     * later). If a term started meanwhile (two payments raced), this payment starts nothing; the audit
+     * record says so, for a refund. The store's conditional write decides; a repeat of the payment that
+     * bought the active term is recognised by its {@code paymentReference}.
+     */
+    Activation activate(User account, Product product, String paymentReference) {
         Instant now = clock.instant();
         Instant end = now.atZone(ZoneOffset.UTC).plusYears(1).toInstant();
         Subscription term = new Subscription(account.userId(), product, now, end, paymentReference);
@@ -230,16 +272,17 @@ public class SubscriptionService implements AccountSubscriptions {
             // The same payment confirmed twice (a repeated webhook) bought the term that is active: not a refund.
             Optional<Subscription> same = store.findAll(account.userId()).stream()
                     .filter(s -> s.product() == product && paymentReference.equals(s.paymentReference())).findFirst();
-            if (same.isPresent()) {
-                return same;
+            if (same.isPresent() && same.get().activeAt(now)) {
+                return new Activation(ActivationOutcome.ALREADY_SAME_PAYMENT, same.get());
             }
         }
         audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, "user:" + account.userId(), "user:" + account.userId(),
                 started ? "OK" : "ALREADY_ACTIVE", detail);
         if (!started) {
             log.warn("Payment {} for {} started nothing: already subscribed; refund it", paymentReference, product);
+            return new Activation(ActivationOutcome.ALREADY_ACTIVE, null);
         }
-        return started ? Optional.of(term) : Optional.empty();
+        return new Activation(ActivationOutcome.ACTIVE, term);
     }
 
     /**

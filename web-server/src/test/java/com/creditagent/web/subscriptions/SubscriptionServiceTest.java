@@ -146,13 +146,55 @@ class SubscriptionServiceTest {
     @Test
     void theSamePaymentConfirmedTwiceIsTheActiveTermNotARefund() {
         SubscriptionService subscriptions = service(PaymentGateway.test());
-        Subscription first = subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_1").orElseThrow();
-        assertThat(subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_1")).contains(first);
-        assertThat(subscriptions.activate(ADA, Product.ID_PROTECTION, "pay_2")).isEmpty();
+        SubscriptionService.Activation first = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_1");
+        assertThat(first.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ACTIVE);
+        assertThat(first.expiresAt()).isEqualTo(Instant.parse("2027-11-21T10:00:00Z"));
+        SubscriptionService.Activation again = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_1");
+        assertThat(again.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ALREADY_SAME_PAYMENT);
+        assertThat(again.term()).isEqualTo(first.term());
+        SubscriptionService.Activation other = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_2");
+        assertThat(other.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ALREADY_ACTIVE);
+        assertThat(other.expiresAt()).isNull();
         verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
                 eq("OK"), any(Map.class));
         verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
                 eq("ALREADY_ACTIVE"), any(Map.class));
+    }
+
+    @Test
+    void activationRefusesUnknownUsersAndProductsNotOffered() {
+        SubscriptionService subscriptions = service(PaymentGateway.none());
+        given(auth.account("ghost")).willReturn(Optional.empty());
+        given(auth.account("noemail")).willReturn(Optional.of(new User("noemail", "$2a$h", null, "h", "6789", "k",
+                Instant.EPOCH, ReportStatus.UNLOCKED)));
+        assertThatThrownBy(() -> subscriptions.activatePaid("ghost", Product.ID_PROTECTION, "pay_1"))
+                .isInstanceOf(UnknownSubscriberException.class);
+        assertThatThrownBy(() -> subscriptions.activatePaid("noemail", Product.ID_PROTECTION, "pay_1"))
+                .isInstanceOf(UnknownSubscriberException.class);
+        assertThatThrownBy(() -> subscriptions.activatePaid("ada", Product.CREDIT_MONITORING, "pay_1"))
+                .isInstanceOf(ProductNotOfferedException.class);
+        assertThatThrownBy(() -> subscriptions.activatePaid("ada", null, "pay_1"))
+                .isInstanceOf(ProductNotOfferedException.class);
+        assertThat(store.findAll("ada")).isEmpty();
+    }
+
+    @Test
+    void anActivationWhoseTermCannotBeStoredIsAuditedAsFailed() {
+        SubscriptionRepository failing = mock(SubscriptionRepository.class);
+        given(failing.activate(any(), anyString())).willThrow(SdkClientException.create("timeout"));
+        assertThatThrownBy(() -> service(PaymentGateway.none(), failing).activatePaid("ada", Product.ID_PROTECTION, "pay_9"))
+                .isInstanceOf(SdkClientException.class);
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"), eq("FAILED"), any(Map.class));
+    }
+
+    @Test
+    void anActivationIsCheckedForATerm() {
+        Subscription term = new Subscription("ada", Product.ID_PROTECTION, NOW, NOW.plusSeconds(1), "p");
+        assertThatThrownBy(() -> new SubscriptionService.Activation(SubscriptionService.ActivationOutcome.ACTIVE, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SubscriptionService.Activation(SubscriptionService.ActivationOutcome.ALREADY_ACTIVE, term))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new SubscriptionService.Activation(null, term)).isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -204,6 +246,33 @@ class SubscriptionServiceTest {
         assertThatThrownBy(() -> new PaymentGateway.Redirect(null)).isInstanceOf(NullPointerException.class);
         assertThat(PaymentGateway.test().checkout(new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "k")))
                 .isInstanceOf(PaymentGateway.Paid.class);
+        assertThatThrownBy(() -> new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "usd", "k"))
+                .isInstanceOf(IllegalArgumentException.class);
+        for (String key : new String[] {"", "has space", "x".repeat(129), "café"}) {
+            assertThatThrownBy(() -> new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", key))
+                    .as(key).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "x".repeat(128)).returnUrl()).isNull();
+        for (String url : new String[] {"/relative", "ftp://host/x", "javascript:alert(1)", "https:///nohost"}) {
+            assertThatThrownBy(() -> new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "k", URI.create(url)))
+                    .as(url).isInstanceOf(IllegalArgumentException.class);
+        }
+        URI back = URI.create("https://app.example.com/subscriptions/done");
+        assertThat(new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "k", back).returnUrl()).isEqualTo(back);
+        assertThat(new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "k", URI.create("http://localhost:8080/x"))
+                .returnUrl()).isNotNull();
+    }
+
+    @Test
+    void theIdempotencyKeyReachesTheGatewayUnchanged() {
+        PaymentGateway hosted = mock(PaymentGateway.class);
+        given(hosted.available()).willReturn(true);
+        given(hosted.checkout(any())).willReturn(new PaymentGateway.Paid("pay_k"));
+        new CachingPaymentGateway(hosted, java.time.Duration.ofSeconds(30), clock)
+                .checkout(new PaymentGateway.CheckoutRequest("ada", Product.ID_PROTECTION, 1, "USD", "sub:ada:ID_PROTECTION:first"));
+        ArgumentCaptor<PaymentGateway.CheckoutRequest> sent = ArgumentCaptor.forClass(PaymentGateway.CheckoutRequest.class);
+        verify(hosted).checkout(sent.capture());
+        assertThat(sent.getValue().idempotencyKey()).isEqualTo("sub:ada:ID_PROTECTION:first");
     }
 
     @Test
@@ -234,5 +303,31 @@ class SubscriptionServiceTest {
         assertThat(unavailable.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(unavailable.getHeaders().getFirst("Retry-After")).isEqualTo("5");
         assertThat(controller.storeUnavailable(SdkClientException.create("down")).getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @Test
+    void activationAnswersMapToTheirStatuses() {
+        SubscriptionActivationController controller = new SubscriptionActivationController(service(PaymentGateway.none()));
+        var request = new SubscriptionActivationController.ActivationRequest("ada", "id_protection", "pay_1");
+        var first = controller.activate(request);
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(first.getBody().outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ACTIVE);
+        assertThat(first.getBody().expiresAt()).isEqualTo(Instant.parse("2027-11-21T10:00:00Z"));
+        var repeat = controller.activate(request);
+        assertThat(repeat.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(repeat.getBody()).isEqualTo(new SubscriptionActivationController.ActivationResponse(
+                SubscriptionService.ActivationOutcome.ALREADY_SAME_PAYMENT, first.getBody().expiresAt()));
+        var other = controller.activate(new SubscriptionActivationController.ActivationRequest("ada", "ID_PROTECTION", "pay_2"));
+        assertThat(other.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(other.getBody()).isEqualTo(new SubscriptionActivationController.ActivationResponse(
+                SubscriptionService.ActivationOutcome.ALREADY_ACTIVE, null));
+        assertThatThrownBy(() -> controller.activate(new SubscriptionActivationController.ActivationRequest("ada", "gold", "p")))
+                .isInstanceOf(ProductNotOfferedException.class);
+
+        assertThat(controller.notOffered(new ProductNotOfferedException()).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(controller.unknownUser(new UnknownSubscriberException()).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        var down = controller.storeUnavailable(SdkClientException.create("down"));
+        assertThat(down.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(down.getHeaders().getFirst("Retry-After")).isEqualTo("5");
     }
 }

@@ -29,7 +29,7 @@ class WebServerConfiguration {
         return RequestSizeLimitFilter.registration(MAX_JSON_BYTES,
                 "/api/v1/credit-score", "/api/v1/chat", "/api/v1/auth/login", "/api/v1/auth/login/*", "/api/v1/credit-report/status",
                 "/api/v1/account/export", "/api/v1/account/delete",
-                "/internal/v1/report-locks/lookup", "/internal/v1/connector/*",
+                "/internal/v1/report-locks/lookup", "/internal/v1/connector/*", "/internal/v1/subscriptions/activations",
                 "/oauth/register", "/oauth/authorize", "/oauth/authorize/*", "/oauth/token", "/oauth/revoke");
     }
 
