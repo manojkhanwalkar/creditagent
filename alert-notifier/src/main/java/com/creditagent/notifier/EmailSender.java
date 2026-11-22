@@ -1,5 +1,8 @@
 package com.creditagent.notifier;
 
+import com.creditagent.alerts.Alert;
+import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
@@ -11,6 +14,15 @@ public interface EmailSender {
 
     /** @throws MailException or another runtime exception if the email was not accepted for delivery */
     void send(String to, String subject, String body);
+
+    /**
+     * Sends the dark-web alert for {@code alerts} (claimed in the run at {@code runAt}). By default the
+     * fixed {@link AlertEmail} text through {@link #send}; {@link RemoteEmailSender} sends the template's
+     * params to the notification-service instead.
+     */
+    default void sendAlert(String to, List<Alert> alerts, Instant runAt, String appUrl) {
+        send(to, AlertEmail.SUBJECT, AlertEmail.body(alerts, appUrl));
+    }
 
     /** False for the placeholder: nothing is sent, so nothing may be marked as notified. */
     default boolean configured() {

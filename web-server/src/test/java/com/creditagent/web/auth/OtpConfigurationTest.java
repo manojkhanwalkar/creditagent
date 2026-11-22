@@ -16,6 +16,8 @@ import com.creditagent.web.auth.otp.SesEmailOtpSender;
 import com.creditagent.web.auth.otp.SnsSmsOtpSender;
 import com.creditagent.web.notify.LocalNotificationGateway;
 import com.creditagent.web.notify.NotificationGateway;
+import com.creditagent.web.notify.NotificationsProperties;
+import com.creditagent.web.notify.RemoteNotificationGateway;
 import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -118,11 +120,62 @@ class OtpConfigurationTest {
         org.springframework.beans.factory.ObjectProvider<SesV2Client> ses = providerOf(mock(SesV2Client.class));
         org.springframework.beans.factory.ObjectProvider<SnsClient> sns = providerOf(mock(SnsClient.class));
         NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
-                auth(null, false), ses, sns);
+                auth(null, false), new NotificationsProperties(null, null, null), ses, sns, org.springframework.web.client.RestClient.builder(),
+                com.creditagent.clients.RetrySettings.DEFAULTS, "");
         assertThat(gateway).isInstanceOf(LocalNotificationGateway.class);
         assertThat(config.otpLoginService(authService, new InMemoryRepositories.OtpChallenges(),
                 otp(OtpProperties.Delivery.AWS, null, null), auth(null, false), gateway,
                 new com.creditagent.common.AuditLog())).isNotNull();
+    }
+
+    @Test
+    void localIsTheDefaultMode() {
+        NotificationsProperties defaults = new NotificationsProperties(null, null, null);
+        assertThat(defaults.mode()).isEqualTo(NotificationsProperties.Mode.LOCAL);
+        assertThat(defaults.url()).isEqualTo("http://localhost:8094");
+        assertThat(defaults.timeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThatThrownBy(() -> new NotificationsProperties(null, null, Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void remoteModeSendsThroughTheServiceWithoutSesOrSns() {
+        NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
+                auth(null, false), new NotificationsProperties(NotificationsProperties.Mode.REMOTE, "http://notification-service:8094",
+                        Duration.ofSeconds(10)), providerOf(null), providerOf(null), org.springframework.web.client.RestClient.builder(),
+                com.creditagent.clients.RetrySettings.DEFAULTS, TestSecrets.of("internal"));
+        assertThat(gateway).isInstanceOf(RemoteNotificationGateway.class);
+        assertThatThrownBy(() -> config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null), auth(null, false),
+                new NotificationsProperties(NotificationsProperties.Mode.REMOTE, null, null), providerOf(null), providerOf(null),
+                org.springframework.web.client.RestClient.builder(), com.creditagent.clients.RetrySettings.DEFAULTS, " ")).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("INTERNAL_API_TOKEN");
+    }
+
+    final org.springframework.boot.test.context.runner.ApplicationContextRunner runner =
+            new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+                    .withUserConfiguration(OtpConfiguration.class)
+                    .withBean(DynamoDbClient.class, () -> mock(DynamoDbClient.class))
+                    .withBean(AuthProperties.class, () -> auth(null, false))
+                    .withBean(AuthService.class, () -> mock(AuthService.class))
+                    .withBean(com.creditagent.common.AuditLog.class, com.creditagent.common.AuditLog::new)
+                    .withBean(org.springframework.web.client.RestClient.Builder.class, org.springframework.web.client.RestClient::builder)
+                    .withBean(com.creditagent.clients.RetrySettings.class, () -> com.creditagent.clients.RetrySettings.DEFAULTS)
+                    .withPropertyValues("credit.auth.otp.email-from=no-reply@creditagent.example",
+                            "credit.auth.otp.table=challenges", "credit.internal.token=" + TestSecrets.of("internal"));
+
+    @Test
+    void theContextIsLocalByDefaultAndRemoteBuildsNoSesOrSns() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(LocalNotificationGateway.class);
+            assertThat(context).hasSingleBean(SesV2Client.class).hasSingleBean(SnsClient.class);
+        });
+        runner.withPropertyValues("credit.notifications.mode=remote", "credit.notifications.url=http://notification-service:8094")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(RemoteNotificationGateway.class);
+                    assertThat(context).doesNotHaveBean(SesV2Client.class).doesNotHaveBean(SnsClient.class);
+                });
     }
 
     @SuppressWarnings("unchecked")

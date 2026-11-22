@@ -20,7 +20,7 @@ class LocalNotificationGatewayTest {
     @Test
     void aSignInCodeIsRenderedByTheChannelsSender() {
         gateway.send(new Notification(OtpChannel.EMAIL, "a@example.com", Template.OTP_SIGN_IN,
-                Map.of("code", "042917", "validMinutes", "5"), "otp:c1:1"));
+                Map.of("code", "042917", "validSeconds", "300"), "otp:c1:1"));
         assertThat(email.sent).containsExactly(new RecordingOtpSender.Sent("a@example.com", "042917", Duration.ofMinutes(5)));
         assertThat(sms.sent).isEmpty();
     }
@@ -30,7 +30,7 @@ class LocalNotificationGatewayTest {
         assertThatThrownBy(() -> gateway.send(new Notification(OtpChannel.EMAIL, "a@example.com", Template.DARK_WEB_ALERT,
                 Map.of(), "k"))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("DARK_WEB_ALERT");
         assertThatThrownBy(() -> gateway.send(new Notification(OtpChannel.SMS, "+12065550100", Template.OTP_SIGN_IN,
-                Map.of("code", "042917"), "k"))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("validMinutes");
+                Map.of("code", "042917"), "k"))).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("validSeconds");
         assertThat(email.sent.size() + sms.sent.size()).isZero();
         assertThatThrownBy(() -> new LocalNotificationGateway(Map.of(OtpChannel.EMAIL, email)))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("SMS");
@@ -39,8 +39,8 @@ class LocalNotificationGatewayTest {
     @Test
     void toStringHidesTheCodeDestinationAndKey() {
         String text = new Notification(OtpChannel.SMS, "+12065550100", Template.OTP_SIGN_IN,
-                Map.of("code", "042917", "validMinutes", "5"), "otp:secret-challenge:1").toString();
-        assertThat(text).contains("OTP_SIGN_IN", "SMS", "code", "validMinutes")
+                Map.of("code", "042917", "validSeconds", "300"), "otp:secret-challenge:1").toString();
+        assertThat(text).contains("OTP_SIGN_IN", "SMS", "code", "validSeconds")
                 .doesNotContain("042917", "+12065550100", "secret-challenge");
     }
 }

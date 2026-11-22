@@ -13,7 +13,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(NotifierProperties.class)
+@EnableConfigurationProperties({NotifierProperties.class, NotificationsProperties.class})
 class NotifierConfiguration {
 
     @Bean(destroyMethod = "close")
@@ -31,11 +31,18 @@ class NotifierConfiguration {
         return new DynamoDbAlertRepository(dynamo, properties.alertsTable());
     }
 
-    /** SMTP when a relay is configured ({@code spring.mail.host}, i.e. MAIL_HOST), else the placeholder. */
+    /**
+     * The notification-service when {@code NOTIFICATIONS_MODE=remote}; otherwise SMTP when a relay is
+     * configured ({@code spring.mail.host}, i.e. MAIL_HOST), else the placeholder.
+     */
     @Bean
     EmailSender emailSender(ObjectProvider<JavaMailSender> mail, NotifierProperties properties,
+            NotificationsProperties notifications, @Value("${credit.internal.token:}") String serviceToken,
             @Value("${spring.mail.host:}") String host,
             @Value("${spring.mail.properties.mail.smtp.starttls.required:false}") boolean tlsRequired) {
+        if (notifications.mode() == NotificationsProperties.Mode.REMOTE) {
+            return RemoteEmailSender.create(notifications.url(), notifications.timeout(), serviceToken);
+        }
         requireTlsUnlessLocal(host, tlsRequired);
         // Decided on the host itself: an empty MAIL_HOST must mean "no relay", not a relay at "".
         JavaMailSender sender = host.isBlank() ? null : mail.getIfAvailable();

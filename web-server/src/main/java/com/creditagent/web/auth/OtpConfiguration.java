@@ -1,5 +1,6 @@
 package com.creditagent.web.auth;
 
+import com.creditagent.clients.RetrySettings;
 import com.creditagent.common.AuditLog;
 import com.creditagent.web.auth.otp.LoggingOtpSender;
 import com.creditagent.web.auth.otp.OtpChannel;
@@ -9,6 +10,8 @@ import com.creditagent.web.auth.otp.SesEmailOtpSender;
 import com.creditagent.web.auth.otp.SnsSmsOtpSender;
 import com.creditagent.web.notify.LocalNotificationGateway;
 import com.creditagent.web.notify.NotificationGateway;
+import com.creditagent.web.notify.NotificationsProperties;
+import com.creditagent.web.notify.RemoteNotificationGateway;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -20,10 +23,12 @@ import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.core.retry.RetryMode;
 import software.amazon.awssdk.regions.Region;
@@ -33,9 +38,12 @@ import software.amazon.awssdk.services.sesv2.SesV2ClientBuilder;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sns.SnsClientBuilder;
 
-/** One-time sign-in codes: the challenge store, the SES and SNS senders, and {@link OtpLoginService}. */
+/**
+ * One-time sign-in codes: the challenge store, how codes are sent (SES and SNS in this process, or the
+ * notification-service when {@code NOTIFICATIONS_MODE=remote}), and {@link OtpLoginService}.
+ */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(OtpProperties.class)
+@EnableConfigurationProperties({OtpProperties.class, NotificationsProperties.class})
 class OtpConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(OtpConfiguration.class);
@@ -53,6 +61,7 @@ class OtpConfiguration {
 
     @Bean(destroyMethod = "close")
     @ConditionalOnProperty(name = DELIVERY, havingValue = "aws", matchIfMissing = true)
+    @ConditionalOnProperty(name = NotificationsProperties.MODE, havingValue = "local", matchIfMissing = true)
     SesV2Client sesClient(OtpProperties otp) {
         SesV2ClientBuilder builder = SesV2Client.builder()
                 .region(Region.of(otp.region()))
@@ -65,6 +74,7 @@ class OtpConfiguration {
 
     @Bean(destroyMethod = "close")
     @ConditionalOnProperty(name = DELIVERY, havingValue = "aws", matchIfMissing = true)
+    @ConditionalOnProperty(name = NotificationsProperties.MODE, havingValue = "local", matchIfMissing = true)
     SnsClient snsClient(OtpProperties otp) {
         SnsClientBuilder builder = SnsClient.builder()
                 .region(Region.of(otp.region()))
@@ -127,10 +137,19 @@ class OtpConfiguration {
         }
     }
 
-    /** Sends in this process through the SES and SNS (or log) senders. */
+    /**
+     * In this process through the SES and SNS (or log) senders, or through the notification-service in
+     * remote mode, where SES and SNS are not built.
+     */
     @Bean
-    NotificationGateway notificationGateway(OtpProperties otp, AuthProperties auth, ObjectProvider<SesV2Client> ses,
-            ObjectProvider<SnsClient> sns) {
+    NotificationGateway notificationGateway(OtpProperties otp, AuthProperties auth, NotificationsProperties notifications,
+            ObjectProvider<SesV2Client> ses, ObjectProvider<SnsClient> sns, RestClient.Builder builder, RetrySettings retry,
+            @Value("${credit.internal.token:}") String serviceToken) {
+        if (notifications.mode() == NotificationsProperties.Mode.REMOTE) {
+            log.info("Sign-in codes are sent through the notification-service at {}", notifications.url());
+            return RemoteNotificationGateway.create(builder, notifications.url(), notifications.timeout(), retry,
+                    serviceToken);
+        }
         return new LocalNotificationGateway(senders(otp, auth, ses.getIfAvailable(), sns.getIfAvailable()));
     }
 

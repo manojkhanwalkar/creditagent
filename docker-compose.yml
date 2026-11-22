@@ -104,6 +104,9 @@ services:
       # No AWS account locally: sign-in codes are written to this service's log instead of being sent
       # by SES or SNS (docker compose logs web-server | grep "sign-in code"). Set to aws in AWS.
       OTP_DELIVERY: ${OTP_DELIVERY:-log}
+      # Sign-in codes go out from this process until N4 flips this to remote (the notification-service).
+      NOTIFICATIONS_MODE: ${NOTIFICATIONS_MODE:-local}
+      NOTIFICATIONS_URL: http://notification-service:8094
       # No payment provider locally: the test gateway starts subscriptions without charging anything.
       PAYMENTS_PROVIDER: ${PAYMENTS_PROVIDER:-test}
     ports:
@@ -177,6 +180,10 @@ services:
       MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
       NOTIFIER_CRON: ${NOTIFIER_CRON:-0 0 8 * * *}
       NOTIFIER_APP_URL: ${NOTIFIER_APP_URL:-http://localhost:8080}
+      # Alert emails go through Mailpit until N4 flips this to remote (the notification-service).
+      NOTIFICATIONS_MODE: ${NOTIFICATIONS_MODE:-local}
+      NOTIFICATIONS_URL: http://notification-service:8094
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
     depends_on: [dynamodb, mailpit]
 
   # Catches the notifier's emails locally; nothing leaves the machine. Web UI on 127.0.0.1:8025.

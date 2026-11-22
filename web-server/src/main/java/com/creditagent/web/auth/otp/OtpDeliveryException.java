@@ -24,6 +24,14 @@ public class OtpDeliveryException extends RuntimeException {
         this(channel, cause, clearlyRefused(cause), null, false);
     }
 
+    /**
+     * A failure already classified, e.g. by the notification-service: {@code refused} only when the
+     * message was certainly not delivered.
+     */
+    public OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused) {
+        this(channel, cause, refused, null, false);
+    }
+
     private OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused, Duration retryAfter,
             boolean lastSend) {
         super("Could not send a sign-in code by " + channel, cause);

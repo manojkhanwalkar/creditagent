@@ -72,12 +72,24 @@ class OtpLoginServiceTest {
         clock.advance(Duration.ofSeconds(30));
         service.send(id, OtpChannel.SMS);
         assertThat(sent.get(0)).isEqualTo(new NotificationGateway.Notification(OtpChannel.SMS, "+12065550100",
-                NotificationGateway.Template.OTP_SIGN_IN, Map.of("code", sms.sent.get(0).code(), "validMinutes", "5"),
+                NotificationGateway.Template.OTP_SIGN_IN, Map.of("code", sms.sent.get(0).code(), "validSeconds", "300"),
                 "otp:" + id + ":1"));
         assertThat(sent.get(1).idempotencyKey()).isEqualTo("otp:" + id + ":2");
         String other = service.start("avery", PASSWORD).challengeId();
         service.send(other, OtpChannel.EMAIL);
         assertThat(sent.get(2).idempotencyKey()).isEqualTo("otp:" + other + ":1").doesNotContain(email.lastCode());
+    }
+
+    @Test
+    void aCodeTtlThatIsNotWholeMinutesIsSentExactlyInSeconds() {
+        List<NotificationGateway.Notification> sent = new ArrayList<>();
+        OtpLoginService.Limits limits = new OtpLoginService.Limits(Duration.ofSeconds(90), Duration.ofMinutes(10), 5, 3,
+                Duration.ofSeconds(30), 10);
+        OtpLoginService service = new OtpLoginService(auth, challenges, n -> { sent.add(n); gateway(email).send(n); },
+                limits, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+        service.send(service.start("avery", PASSWORD).challengeId(), OtpChannel.EMAIL);
+        assertThat(sent.get(0).params()).containsEntry("validSeconds", "90");
+        assertThat(email.sent.get(0).validFor()).isEqualTo(Duration.ofSeconds(90));
     }
 
     @Test
