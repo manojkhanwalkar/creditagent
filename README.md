@@ -290,10 +290,10 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | Workflow | Runs on | What it does |
 |---|---|---|
 | `ci.yml` | PRs, pushes to `main` | Maven verify on Java 26, UI tests, image build with Trivy scan; pushes `ghcr.io/<owner>/creditagent-<service>` from `main`, then deletes superseded CI builds (tagged only `sha-*`), keeping `latest` and every release image |
-| `codeql.yml` | PRs, `main`, weekly | CodeQL (`security-extended`) for Java, JavaScript and the workflows; any finding fails the job (results kept as a SARIF artifact, since the private repo has no code scanning) |
-| `security.yml` | PRs, `main` | Trivy scan of the declared dependencies (high and critical advisories with a fix fail it) and Gitleaks secret scan |
+| `codeql.yml` | PRs, `main`, weekly | CodeQL (`security-extended`) for Java, JavaScript and the workflows; results go to code scanning (Security tab) and any finding fails the job |
+| `security.yml` | PRs, `main` | GitHub dependency review of a PR's dependency changes (high or critical advisories, or AGPL/GPL-3.0 licences, fail it), Trivy scan of all declared dependencies (high and critical advisories with a fix fail it) and Gitleaks secret scan |
 | `release.yml` | tags `v*.*.*` | Versioned images with SBOM and provenance, plus a GitHub release |
 
-The repository is private on a GitHub plan without Code Security or branch protection for private repositories: CodeQL runs but does not upload, a Trivy scan stands in for GitHub's dependency review, and `main` is not protected by GitHub. Every change still goes through a PR, its reviews and green CI before it is merged.
+The repository is public. `main` is protected by GitHub: every change goes through a PR with green required checks (build and tests, UI tests, CodeQL, dependency review and scan, secret scan) before it is merged.
 
 Dependabot keeps Maven, npm, Docker and action pins up to date.
