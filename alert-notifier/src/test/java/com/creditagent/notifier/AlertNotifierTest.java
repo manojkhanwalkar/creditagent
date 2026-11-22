@@ -62,13 +62,16 @@ class AlertNotifierTest {
     final InMemoryAlerts alerts = new InMemoryAlerts();
     final List<Sent> sent = new ArrayList<>();
     final List<Duration> pauses = new ArrayList<>();
+    /** Addresses without ID Protection; everyone else subscribes. */
+    static final java.util.Set<String> FREE = java.util.Set.of("free@example.com");
+    static final AlertNotifier.Subscribers SUBSCRIBERS = (email, now) -> !FREE.contains(email);
 
     static NotifierProperties properties(int max) {
-        return new NotifierProperties(Duration.ofDays(7), max, 4.0, null, "https://credit.example", null, null, null, null, null);
+        return new NotifierProperties(Duration.ofDays(7), max, 4.0, null, "https://credit.example", null, null, null, null, null, null);
     }
 
     AlertNotifier notifier(EmailSender email, int max) {
-        return new AlertNotifier(alerts, email, properties(max), Clock.fixed(RUN, ZoneOffset.UTC), pauses::add);
+        return new AlertNotifier(alerts, email, properties(max), Clock.fixed(RUN, ZoneOffset.UTC), pauses::add, SUBSCRIBERS);
     }
 
     AlertNotifier notifier() {
@@ -85,7 +88,7 @@ class AlertNotifierTest {
         assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(3, 2, 0));
         assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com", "bob@example.com");
         assertThat(sent.get(0).subject()).isEqualTo(AlertEmail.SUBJECT);
-        assertThat(sent.get(0).body()).contains("2 places").contains("identity protection").contains("https://credit.example");
+        assertThat(sent.get(0).body()).contains("2 places").contains("ID Protection").contains("https://credit.example");
         // One pause between the two emails, at 4 a second.
         assertThat(pauses).containsExactly(Duration.ofMillis(250));
 
@@ -119,7 +122,7 @@ class AlertNotifierTest {
         assertThat(notifier(down, 100).run()).isEqualTo(new AlertNotifier.Run(1, 0, 1));
 
         AlertNotifier tomorrow = new AlertNotifier(alerts, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
-                Clock.fixed(RUN.plus(Duration.ofDays(1)), ZoneOffset.UTC), pauses::add);
+                Clock.fixed(RUN.plus(Duration.ofDays(1)), ZoneOffset.UTC), pauses::add, SUBSCRIBERS);
         assertThat(tomorrow.run()).isEqualTo(new AlertNotifier.Run(1, 1, 0));
         assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com");
     }
@@ -163,7 +166,7 @@ class AlertNotifierTest {
             }
         };
         AlertNotifier notifier = new AlertNotifier(flaky, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
-                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add);
+                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add, SUBSCRIBERS);
         assertThat(notifier.run()).isEqualTo(new AlertNotifier.Run(3, 1, 1));
         assertThat(sent).extracting(Sent::to).containsExactly("bob@example.com");
         assertThat(alerts.claims).doesNotContainKey(InMemoryAlerts.key(first)); // released for the next run
@@ -185,7 +188,7 @@ class AlertNotifierTest {
             }
         };
         AlertNotifier notifier = new AlertNotifier(racing, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
-                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add);
+                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add, SUBSCRIBERS);
         assertThat(notifier.run()).isEqualTo(new AlertNotifier.Run(1, 0, 0));
         assertThat(sent).isEmpty();
     }
@@ -197,7 +200,7 @@ class AlertNotifierTest {
         AlertNotifier notifier = new AlertNotifier(alerts, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
                 Clock.fixed(RUN, ZoneOffset.UTC), duration -> {
                     throw new InterruptedException();
-                });
+                }, SUBSCRIBERS);
         try {
             assertThat(notifier.run()).isEqualTo(new AlertNotifier.Run(2, 1, 0));
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
@@ -221,21 +224,46 @@ class AlertNotifierTest {
                 throw new IllegalStateException("DynamoDB down");
             }
         };
-        new AlertNotifier(broken, (to, s, b) -> { }, properties(10), Clock.fixed(RUN, ZoneOffset.UTC), d -> { }).scheduled();
+        new AlertNotifier(broken, (to, s, b) -> { }, properties(10), Clock.fixed(RUN, ZoneOffset.UTC), d -> { }, SUBSCRIBERS).scheduled();
         notifier().scheduled();
     }
 
     @Test
     void propertiesHaveSafeDefaultsAndRefuseNonsense() {
-        NotifierProperties defaults = new NotifierProperties(null, null, null, " ", null, null, null, null, " ", null);
+        NotifierProperties defaults = new NotifierProperties(null, null, null, " ", null, null, null, null, " ", null, " ");
+        assertThat(defaults.subscriptionsTable()).isEqualTo("credit-agent-subscriptions");
         assertThat(defaults.lookback()).isEqualTo(Duration.ofDays(7));
         assertThat(defaults.from()).isEqualTo("alerts@creditagent.local");
         assertThat(defaults.appUrl()).isEmpty();
         assertThat(defaults.alertsTable()).isEqualTo("Alerts");
         assertThat(defaults.createTables()).isFalse();
-        assertThatThrownBy(() -> new NotifierProperties(Duration.ZERO, null, null, null, null, null, null, null, null, null))
+        assertThatThrownBy(() -> new NotifierProperties(Duration.ZERO, null, null, null, null, null, null, null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new NotifierProperties(null, null, 0.0, null, null, null, null, null, null, null))
+        assertThatThrownBy(() -> new NotifierProperties(null, null, 0.0, null, null, null, null, null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void freeUsersAlertsAreClaimedButNotEmailed() {
+        alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+        alerts.record(new Alert("free@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(2, 1, 0, false, 1, 0));
+        assertThat(sent).extracting(Sent::to).containsExactly("ada@example.com");
+        // Claimed, so the next run does not read them again.
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(0, 0, 0, false, 0, 0));
+    }
+
+    @Test
+    void anAddressWhoseSubscriptionCannotBeToldIsLeftForTheNextRun() {
+        alerts.record(new Alert("ada@example.com", "loc-a", RUN.minus(Duration.ofHours(1))));
+        AlertNotifier unsure = new AlertNotifier(alerts, (to, s, b) -> sent.add(new Sent(to, s, b)), properties(100),
+                Clock.fixed(RUN, ZoneOffset.UTC), pauses::add, (email, now) -> {
+                    throw new IllegalStateException("subscriptions table down");
+                });
+        assertThat(unsure.run()).isEqualTo(new AlertNotifier.Run(1, 0, 0, false, 0, 1));
+        assertThat(sent).isEmpty();
+
+        assertThat(notifier().run()).isEqualTo(new AlertNotifier.Run(1, 1, 0, false, 0, 0));
     }
 }

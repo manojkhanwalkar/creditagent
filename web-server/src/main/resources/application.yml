@@ -34,6 +34,14 @@ credit:
     timeout: ${OFFERS_TIMEOUT:3s}
     # Login asks once and waits at most this; the page fetches offers again if they were not ready.
     login-timeout: ${OFFERS_LOGIN_TIMEOUT:1500ms}
+  subscriptions:
+    # Who takes payments. none (default) = subscriptions are listed but cannot be bought. test = every
+    # payment succeeds and nothing is charged (local development only: refused unless DynamoDB is local).
+    provider: ${PAYMENTS_PROVIDER:none}
+    table: ${SUBSCRIPTIONS_TABLE:credit-agent-subscriptions}
+    currency: ${SUBSCRIPTIONS_CURRENCY:USD}
+    # A year of ID Protection, in cents. A placeholder until pricing is decided.
+    id-protection-price-cents: ${ID_PROTECTION_PRICE_CENTS:2999}
   alerts:
     # The Alerts service: has the user's email been found on the dark web? Asked at login.
     url: ${ALERTS_URL:http://localhost:8092}

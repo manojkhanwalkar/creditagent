@@ -57,6 +57,7 @@ class AccountServiceTest {
     final AlertsService alerts = mock(AlertsService.class);
     final ReportEraseClient reports = mock(ReportEraseClient.class);
     final CreditReportSource reportSource = mock(CreditReportSource.class);
+    final com.creditagent.web.subscriptions.InMemorySubscriptions subscriptions = new com.creditagent.web.subscriptions.InMemorySubscriptions();
     final List<AuthenticatedUser> ended = new ArrayList<>();
     AccountService accounts;
     AuthenticatedUser ada;
@@ -66,7 +67,7 @@ class AccountServiceTest {
         SessionEndListener failing = user -> {
             throw new IllegalStateException("advisor down");
         };
-        accounts = new AccountService(auth, users, sessions, alerts, reports, reportSource, List.of(failing, ended::add),
+        accounts = new AccountService(auth, users, sessions, alerts, subscriptions.service(auth, clock), reports, reportSource, List.of(failing, ended::add),
                 audit, clock);
         auth.register("ada", PASSWORD, "ada@example.com", "+12065550100", "98101", FakeIdentityVerifier.card("123-45-6789"));
         TestLogins.login(auth, "ada", PASSWORD);
@@ -89,7 +90,8 @@ class AccountServiceTest {
         assertThat(export.account().lastLoginAt()).isEqualTo(NOW);
         assertThat(export.account().consentVersion()).isNotBlank();
         assertThat(export.account().kycVerificationId()).isNotBlank();
-        assertThat(export.notes()).contains("audit").contains("30 days");
+        assertThat(export.notes()).contains("audit").contains("30 days").contains("payment provider");
+        assertThat(export.subscriptions()).isEmpty();
         assertThat(export.creditReport()).isEqualTo(report);
         assertThat(export.darkWebFindings()).hasSize(1);
         assertThat(export.toString()).doesNotContain("$2").doesNotContain(ada.ssnHash());
@@ -112,8 +114,12 @@ class AccountServiceTest {
     void deletionErasesEverythingEndsEveryTokenAndFreesTheSsnAndEmail() {
         // A connector grant and its used-code marker, besides the login session.
         auth.openGrant("grant-1", "ada", ADA_SSN, NOW.plusSeconds(60), NOW.plus(Duration.ofHours(1)));
+        subscriptions.service(auth, clock).subscribe("ada", com.creditagent.subscriptions.Product.ID_PROTECTION);
 
         accounts.delete(ada, PASSWORD, ADA_SSN);
+
+        assertThat(subscriptions.findAll("ada")).isEmpty();
+        assertThat(subscriptions.activeForEmail("ada@example.com", com.creditagent.subscriptions.Product.ID_PROTECTION, NOW)).isFalse();
 
         verify(alerts).erase("ada@example.com");
         verify(reports).erase(ADA_SSN);
@@ -163,6 +169,15 @@ class AccountServiceTest {
     }
 
     @Test
+    void aPayingSubscriberIsNotPurgedHoweverLongSinceTheySignedIn() {
+        subscriptions.service(auth, clock).subscribe("ada", com.creditagent.subscriptions.Product.ID_PROTECTION);
+        assertThat(accounts.purge("ada", NOW.plusSeconds(1))).isFalse();
+        assertThat(users.find("ada")).isPresent();
+        assertThat(accounts.export(ada, ADA_SSN).subscriptions()).hasSize(1);
+        verify(alerts, never()).erase(anyString());
+    }
+
+    @Test
     void accountsWithoutAnEmailNeedNoAlertErase() {
         users.byId.put("old", new com.creditagent.web.auth.User("old", "$2a$h", null, "h-old", "0000", null, NOW,
                 com.creditagent.web.auth.ReportStatus.UNLOCKED));
@@ -184,7 +199,7 @@ class AccountServiceTest {
                 return super.delete(user);
             }
         };
-        new AccountService(auth, racing, sessions, alerts, reports, reportSource, List.of(), audit, clock)
+        new AccountService(auth, racing, sessions, alerts, subscriptions.service(auth, clock), reports, reportSource, List.of(), audit, clock)
                 .delete(ada, PASSWORD, ADA_SSN);
         assertThat(sessions.byId).doesNotContainKey("late");
     }

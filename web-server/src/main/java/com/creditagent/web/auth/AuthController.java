@@ -61,14 +61,17 @@ class AuthController {
 
     private final org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers;
     private final org.springframework.beans.factory.ObjectProvider<LoginAlerts> loginAlerts;
+    private final org.springframework.beans.factory.ObjectProvider<AccountSubscriptions> subscriptions;
 
     AuthController(AuthService auth, OtpLoginService otp, org.springframework.beans.factory.ObjectProvider<SessionEndListener> sessionEndListeners,
             org.springframework.beans.factory.ObjectProvider<LoginOffers> loginOffers,
-            org.springframework.beans.factory.ObjectProvider<LoginAlerts> loginAlerts) {
+            org.springframework.beans.factory.ObjectProvider<LoginAlerts> loginAlerts,
+            org.springframework.beans.factory.ObjectProvider<AccountSubscriptions> subscriptions) {
         this.auth = auth;
         this.otp = otp;
         this.loginOffers = loginOffers;
         this.loginAlerts = loginAlerts;
+        this.subscriptions = subscriptions;
         this.sessionEndListeners = sessionEndListeners.orderedStream().toList();
     }
 
@@ -79,6 +82,8 @@ class AuthController {
      *
      * @param authorize the user ticked "I agree to the terms and privacy notice and authorise CreditAgent
      *     to obtain my credit reports" (FCRA written instruction); must be {@code true}
+     * @param idProtection the user also wants to buy ID Protection; optional, and registration succeeds
+     *     without it or if the payment cannot be taken
      */
     record RegisterForm(
             @NotNull @Size(max = 64) String userId,
@@ -87,18 +92,20 @@ class AuthController {
             @NotNull @Size(max = 32) String mobilePhone,
             @NotNull @Size(max = 10) String zip,
             Boolean authorize,
-            @NotNull MultipartFile ssnCard) {
+            @NotNull MultipartFile ssnCard,
+            Boolean idProtection) {
         @Override
         public String toString() {
             return "RegisterForm[userId=" + userId + ", password=<redacted>, email=<redacted>, mobilePhone=<redacted>, zip=<redacted>, authorize="
-                    + authorize + ", ssnCard=<redacted>]";
+                    + authorize + ", ssnCard=<redacted>, idProtection=" + idProtection + "]";
         }
     }
 
     static final String AUTHORIZATION_REQUIRED = "To open an account, agree to the terms of use and privacy notice and"
             + " authorise CreditAgent to obtain your credit reports.";
 
-    record RegisterResponse(String userId) {}
+    /** {@code idProtection}: the outcome of the ID Protection the user asked for; null when they did not. */
+    record RegisterResponse(String userId, Object idProtection) {}
 
     record LoginRequest(@NotNull @Size(max = 64) String userId, @NotNull @Size(max = 256) String password) {
         @Override
@@ -124,10 +131,12 @@ class AuthController {
 
     /**
      * {@code offers}: card offers matched at login (see {@link LoginOffers}); {@code alerts}: whether the
-     * user's email was found on the dark web (see {@link LoginAlerts}). Each is null when there is no source.
+     * user's email was found on the dark web (see {@link LoginAlerts}); {@code subscriptions}: the user's
+     * paid subscriptions and what to offer them (see {@link AccountSubscriptions}). Each is null when there
+     * is no source.
      */
     record LoginResponse(String token, String tokenType, String userId, String ssnMasked, long idleTimeoutSeconds,
-            Object offers, Object alerts) {}
+            Object offers, Object alerts, Object subscriptions) {}
 
     record SessionResponse(String userId, String ssnMasked) {}
 
@@ -139,7 +148,9 @@ class AuthController {
         }
         String userId = auth.register(
                 form.userId(), form.password(), form.email(), form.mobilePhone(), form.zip(), bytes(form.ssnCard()));
-        return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId));
+        AccountSubscriptions paid = subscriptions.getIfAvailable();
+        Object idProtection = Boolean.TRUE.equals(form.idProtection()) && paid != null ? paid.atRegistration(userId) : null;
+        return ResponseEntity.created(URI.create(BASE + "/session")).body(new RegisterResponse(userId, idProtection));
     }
 
     private static byte[] bytes(MultipartFile file) {
@@ -174,13 +185,15 @@ class AuthController {
         AuthService.LoginResult result = otp.verify(request.challengeId(), request.code());
         LoginOffers offers = loginOffers.getIfAvailable();
         LoginAlerts alerts = loginAlerts.getIfAvailable();
-        // Both are optional extras that never throw; asked side by side, so a login waits for the
-        // slower of the two, not their sum.
+        AccountSubscriptions paid = subscriptions.getIfAvailable();
+        // Optional extras that never throw; asked side by side, so a login waits for the slowest, not
+        // their sum.
         try (var tasks = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var offersFuture = tasks.submit(() -> offers == null ? null : offers.offersFor(result.userId()));
             var alertsFuture = tasks.submit(() -> alerts == null ? null : alerts.alertsFor(result.userId()));
+            var subscriptionsFuture = tasks.submit(() -> paid == null ? null : paid.atLogin(result.userId()));
             return new LoginResponse(result.token(), "Bearer", result.userId(), result.ssnMasked(),
-                    result.idleTimeout().toSeconds(), extra(offersFuture), extra(alertsFuture));
+                    result.idleTimeout().toSeconds(), extra(offersFuture), extra(alertsFuture), extra(subscriptionsFuture));
         }
     }
 

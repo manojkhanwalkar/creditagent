@@ -21,6 +21,7 @@ class NotifierConfiguration {
         DynamoDbClient client = AlertsTable.client(properties.dynamodbEndpoint(), properties.region(), properties.dynamodbTimeout());
         if (properties.createTables()) {
             AlertsTable.ensure(client, properties.alertsTable());
+            com.creditagent.subscriptions.SubscriptionsTable.ensure(client, properties.subscriptionsTable());
         }
         return client;
     }
@@ -56,8 +57,16 @@ class NotifierConfiguration {
         }
     }
 
+    /** Read-only use: the notifier only asks whether an address has ID Protection. */
     @Bean
-    AlertNotifier alertNotifier(AlertRepository alerts, EmailSender email, NotifierProperties properties) {
-        return new AlertNotifier(alerts, email, properties, Clock.systemUTC(), duration -> Thread.sleep(duration));
+    com.creditagent.subscriptions.SubscriptionRepository subscriptionRepository(DynamoDbClient dynamo, NotifierProperties properties) {
+        return new com.creditagent.subscriptions.DynamoDbSubscriptionRepository(dynamo, properties.subscriptionsTable());
+    }
+
+    @Bean
+    AlertNotifier alertNotifier(AlertRepository alerts, EmailSender email, NotifierProperties properties,
+            com.creditagent.subscriptions.SubscriptionRepository subscriptions) {
+        return new AlertNotifier(alerts, email, properties, Clock.systemUTC(), duration -> Thread.sleep(duration),
+                (address, now) -> subscriptions.activeForEmail(address, com.creditagent.subscriptions.Product.ID_PROTECTION, now));
     }
 }

@@ -17,7 +17,7 @@ class AlertEmailTest {
     @Test
     void theEmailSaysWhatWasFoundAndWhatToDoButNotWhere() {
         String body = AlertEmail.body(List.of(new Alert("ada@example.com", "breach-forum-beta", Instant.parse("2026-11-11T09:00:00Z"))), "");
-        assertThat(body).contains("1 place").contains("first seen 2026-11-11").contains("identity protection")
+        assertThat(body).contains("1 place").contains("first seen 2026-11-11").contains("ID Protection")
                 .contains("Sign in to Credit Agent to see the details").contains("never ask for your password")
                 .doesNotContain("breach-forum-beta").doesNotContain("ada@example.com");
     }

@@ -35,6 +35,7 @@
         <module>user-advisor-agent</module>
         <module>offers-service</module>
         <module>alerts-store</module>
+        <module>subscription-store</module>
         <module>dark-web-monitor</module>
         <module>alerts-service</module>
         <module>alert-notifier</module>
@@ -75,6 +76,11 @@
             <dependency>
                 <groupId>com.creditagent</groupId>
                 <artifactId>alerts-store</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.creditagent</groupId>
+                <artifactId>subscription-store</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

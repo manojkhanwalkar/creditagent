@@ -3,8 +3,11 @@
 
 export const MAX_FINDINGS = 20;
 
-const DEFAULT_MESSAGE = 'Your information was found on the dark web. We suggest you buy identity protection'
-  + ' and change the passwords you use with this email.';
+const DEFAULT_MESSAGE = 'Your information was found on the dark web. Change the passwords you use with this'
+  + ' email, and watch your credit report for accounts you did not open.';
+
+const LOCKED_MESSAGE = 'Something connected to your email was found on the dark web. Change the passwords you use'
+  + ' with this email. Where and when is listed in your data download; subscribe to ID Protection to see it here.';
 
 function readableLocation(location) {
   return String(location ?? 'an unnamed location').replace(/[-_]+/g, ' ');
@@ -23,9 +26,17 @@ export function alertsChecked(data) {
   return data?.status === 'OK';
 }
 
-/** @returns {{ show: boolean, message: string|null, findings: string[] }} */
+/**
+ * `locked`: something was found, but the user has no ID Protection, so no details are shown and the
+ * banner offers the subscription.
+ * @returns {{ show: boolean, message: string|null, findings: string[], locked: boolean }}
+ */
 export function alertsView(data) {
-  if (data?.status !== 'OK' || data.exposed !== true) return { show: false, message: null, findings: [] };
+  if (data?.status !== 'OK' || data.exposed !== true) return { show: false, message: null, findings: [], locked: false };
+  if (data.locked === true) {
+    const message = typeof data.message === 'string' && data.message.trim() ? data.message : LOCKED_MESSAGE;
+    return { show: true, message, findings: [], locked: true };
+  }
   const findings = (Array.isArray(data.findings) ? data.findings : [])
     .slice(0, MAX_FINDINGS)
     .map((f) => `Found at ${readableLocation(f.location)} on ${readableDate(f.foundAt)}`);
@@ -33,5 +44,6 @@ export function alertsView(data) {
     show: true,
     message: typeof data.message === 'string' && data.message.trim() ? data.message : DEFAULT_MESSAGE,
     findings,
+    locked: false,
   };
 }

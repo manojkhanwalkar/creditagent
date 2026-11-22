@@ -27,6 +27,7 @@ flowchart LR
     AT[(Alerts table<br/>email + location → timestamp)]
     ALS[alerts-service :8092<br/>internal look-up]
     AN[alert-notifier :8093<br/>daily at 08:00 UTC]
+    ST[(Subscriptions table<br/>user / email# + product → term)]
     MAIL([SMTP relay<br/>Mailpit locally])
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
@@ -60,7 +61,9 @@ flowchart LR
     ALS -- "L5 · query by email" --> AT
     ALS -. "L6 · exposed + where, when" .-> WS
     AN -- "N1 · last 24 h, not yet notified (by-day index); claim" --> AT
-    AN -- "N2 · one email per user" --> MAIL
+    AN -- "N2 · subscriber? (email# item)" --> ST
+    AN -- "N3 · one email per ID Protection subscriber" --> MAIL
+    WS -- "S1 · subscriptions at login; start a term (one conditional transaction)" --> ST
     UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
     WS -- "Q2 · report (resources/read)" --> M
     WS -- "Q3 · question + report" --> UAA
@@ -92,8 +95,9 @@ flowchart LR
 | `offers-service` | Credit card offers for a score and ZIP code, ranked; an MCP tool, and a REST API that calls it | Spring Boot, LangChain4j `McpServer` |
 | `dark-web-monitor` | Scheduled job: checks registered users' emails against known dark-web locations and records exposures in the `Alerts` table (placeholder source) | Spring Boot `@Scheduled`, AWS SDK DynamoDB |
 | `alerts-service` | Internal look-up: does the `Alerts` table hold a record for this email? | Spring Boot, AWS SDK DynamoDB |
-| `alert-notifier` | Daily job: emails each user whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring Mail (SMTP), AWS SDK DynamoDB |
+| `alert-notifier` | Daily job: emails each ID Protection subscriber whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring Mail (SMTP), AWS SDK DynamoDB |
 | `alerts-store` | The `Alerts` table: record type, repository, table creation | AWS SDK DynamoDB |
+| `subscription-store` | The Subscriptions table: products, terms, conditional activation, look-up by email | AWS SDK DynamoDB |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
 | `claude-connector` | Remote MCP server for Claude: the signed-in user's own score, report, advice and report lock | Spring Boot, hand-written MCP JSON-RPC over Streamable HTTP, OAuth 2.1 resource server |
 
@@ -385,12 +389,18 @@ sequenceDiagram
 sequenceDiagram
     participant N as alert-notifier
     participant A as Alerts table
+    participant T as Subscriptions table
     participant S as SMTP relay
     Note over N: every day at 08:00 UTC (NOTIFIER_CRON)
     N->>A: query by-day index: day ∈ last 8 UTC days, timestamp ∈ [run − 7 d, run), notifiedAt absent (normally only the last 24 h)
     loop each user (≤ 10 a second)
+        N->>T: ID Protection active? (GetItem email#hash; on error leave the user for the next run)
         N->>A: claim each alert: SET notifiedAt = run IF absent
-        N->>S: one plain-text email (no locations)
+        alt free user
+            Note over N: claimed, not emailed (the login banner covers them)
+        else subscriber
+            N->>S: one plain-text email (no locations)
+        end
         alt send failed
             N->>A: release: REMOVE notifiedAt IF = run
         end

@@ -15,7 +15,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param appUrl the address users sign in at, named in the email; blank = not named
  * @param dynamodbEndpoint blank = AWS; {@code http://localhost:8000} for DynamoDB Local
  * @param alertsTable the Alerts table
- * @param createTables create the Alerts table (and its index) if missing (local and test only)
+ * @param createTables create the Alerts and Subscriptions tables (and the index) if missing (local and test only)
+ * @param subscriptionsTable the Subscriptions table: only ID Protection subscribers are emailed
  */
 @ConfigurationProperties("credit.notifier")
 public record NotifierProperties(
@@ -28,7 +29,8 @@ public record NotifierProperties(
         String region,
         Duration dynamodbTimeout,
         String alertsTable,
-        Boolean createTables) {
+        Boolean createTables,
+        String subscriptionsTable) {
 
     public NotifierProperties {
         lookback = lookback == null ? Duration.ofDays(7) : lookback;
@@ -40,6 +42,8 @@ public record NotifierProperties(
         dynamodbTimeout = dynamodbTimeout == null ? Duration.ofSeconds(5) : dynamodbTimeout;
         alertsTable = alertsTable == null || alertsTable.isBlank() ? "Alerts" : alertsTable;
         createTables = createTables != null && createTables;
+        subscriptionsTable = subscriptionsTable == null || subscriptionsTable.isBlank()
+                ? "credit-agent-subscriptions" : subscriptionsTable;
         if (!lookback.isPositive() || maxAlertsPerRun < 1 || sendsPerSecond <= 0) {
             throw new IllegalArgumentException(
                     "credit.notifier: lookback positive, max-alerts-per-run at least 1, sends-per-second above 0");

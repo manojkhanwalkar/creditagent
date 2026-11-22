@@ -44,6 +44,26 @@ public record AuthProperties(
         public DynamoDb {
             timeout = timeout == null ? Duration.ofSeconds(5) : timeout;
         }
+
+        /** DynamoDB hosts that mean "local development": this machine, or the compose service. */
+        static final java.util.Set<String> LOCAL_HOSTS =
+                java.util.Set.of("localhost", "127.0.0.1", "[::1]", "::1", "dynamodb", "dynamodb-local");
+
+        /**
+         * @return true if the endpoint is a DynamoDB on this machine or in compose; false for AWS (an AWS,
+         *     VPC or FIPS endpoint override included). Guards the development-only stand-ins.
+         */
+        public boolean local() {
+            if (endpoint == null || endpoint.isBlank()) {
+                return false;
+            }
+            try {
+                String host = java.net.URI.create(endpoint.strip()).getHost();
+                return host != null && LOCAL_HOSTS.contains(host.toLowerCase(java.util.Locale.ROOT));
+            } catch (IllegalArgumentException malformed) {
+                return false;
+            }
+        }
     }
 
     @Override

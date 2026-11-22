@@ -15,11 +15,13 @@ class AlertsConfiguration {
 
     @Bean
     AlertsService alertsService(AuthService auth, RestClient.Builder builder, AlertsProperties properties,
-            RetrySettings retry, @Value("${credit.internal.token:}") String serviceToken) {
+            RetrySettings retry, @Value("${credit.internal.token:}") String serviceToken,
+            com.creditagent.web.subscriptions.SubscriptionService subscriptions) {
         AlertsClient retrying = new AlertsClient(
                 HttpClients.restClient(builder, properties.url(), properties.timeout(), retry), serviceToken);
         AlertsClient once = new AlertsClient(
                 HttpClients.restClient(builder, properties.url(), properties.loginTimeout(), RetrySettings.none()), serviceToken);
-        return new AlertsService(auth, retrying, once);
+        return new AlertsService(auth, retrying, once,
+                userId -> subscriptions.isActive(userId, com.creditagent.subscriptions.Product.ID_PROTECTION));
     }
 }

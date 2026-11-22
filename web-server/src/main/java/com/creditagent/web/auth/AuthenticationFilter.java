@@ -27,7 +27,9 @@ import tools.jackson.databind.json.JsonMapper;
 class AuthenticationFilter extends OncePerRequestFilter {
 
     static final Set<String> OPEN_PATHS = Set.of(AuthController.BASE + "/register", AuthController.BASE + "/login",
-            AuthController.BASE + "/login/otp", AuthController.BASE + "/login/verify");
+            AuthController.BASE + "/login/otp", AuthController.BASE + "/login/verify",
+            // Prices only, for the registration form; nothing about any user.
+            "/api/v1/subscriptions/plans");
     private static final String BEARER = "Bearer ";
 
     private final AuthService auth;

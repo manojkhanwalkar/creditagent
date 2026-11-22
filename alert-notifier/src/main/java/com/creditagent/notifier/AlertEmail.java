@@ -24,11 +24,11 @@ public final class AlertEmail {
         return """
                 Hello,
 
-                Our dark web monitoring found your email address in %s on the dark web (first seen %s). \
+                Your ID Protection found your email address in %s on the dark web (first seen %s). \
                 Someone may try to use it to open accounts in your name or to get into yours.
 
                 What we suggest:
-                - Consider buying identity protection, which monitors your credit and helps restore your identity if it is misused.
+                - Watch your credit report for accounts you did not open.
                 - Change the passwords you use with this email address, and turn on two-step sign-in where you can.
                 - %s to see the details.
 

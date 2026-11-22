@@ -23,17 +23,36 @@ import org.springframework.scheduling.annotation.Scheduled;
  * replicas or two runs overlap. If the email cannot be sent, or the claims cannot all be made, the
  * claims are released so the next run retries. If the process dies between sending and the end of the
  * run, the claim stays and the user is not emailed again: at most once.
+ *
+ * <p>Emails are for ID Protection subscribers only. A free user's alerts are claimed without an email
+ * ({@code notSubscribed}), so they do not fill every later run's cap; the user still sees that something
+ * was found when they sign in, and the details once they subscribe. If whether an address subscribes
+ * cannot be told, its alerts are left unclaimed for the next run.
  */
 public class AlertNotifier {
 
     private static final Logger log = LoggerFactory.getLogger(AlertNotifier.class);
 
-    /** What one run did. {@code skipped}: no mail relay is configured, so nothing was read or claimed. */
-    public record Run(int alerts, int emailsSent, int emailsFailed, boolean skipped) {
+    /**
+     * What one run did. {@code skipped}: no mail relay is configured, so nothing was read or claimed.
+     * {@code notSubscribed}: users not emailed because they have no ID Protection. {@code unknown}: users
+     * left for the next run because whether they subscribe could not be read.
+     */
+    public record Run(int alerts, int emailsSent, int emailsFailed, boolean skipped, int notSubscribed, int unknown) {
 
         public Run(int alerts, int emailsSent, int emailsFailed) {
-            this(alerts, emailsSent, emailsFailed, false);
+            this(alerts, emailsSent, emailsFailed, false, 0, 0);
         }
+
+        public Run(int alerts, int emailsSent, int emailsFailed, boolean skipped) {
+            this(alerts, emailsSent, emailsFailed, skipped, 0, 0);
+        }
+    }
+
+    /** Whether an address belongs to a user with active ID Protection; may throw if it cannot be told. */
+    @FunctionalInterface
+    public interface Subscribers {
+        boolean idProtection(String email, Instant now);
     }
 
     /** Pauses between emails; replaced in tests. */
@@ -47,13 +66,16 @@ public class AlertNotifier {
     private final NotifierProperties properties;
     private final Clock clock;
     private final Pause pause;
+    private final Subscribers subscribers;
 
-    public AlertNotifier(AlertRepository alerts, EmailSender email, NotifierProperties properties, Clock clock, Pause pause) {
+    public AlertNotifier(AlertRepository alerts, EmailSender email, NotifierProperties properties, Clock clock, Pause pause,
+            Subscribers subscribers) {
         this.alerts = alerts;
         this.email = email;
         this.properties = properties;
         this.clock = clock;
         this.pause = pause;
+        this.subscribers = java.util.Objects.requireNonNull(subscribers);
     }
 
     @Scheduled(cron = "${credit.notifier.cron:0 0 8 * * *}", zone = "UTC")
@@ -65,7 +87,9 @@ public class AlertNotifier {
                 return;
             }
             // Counts only: no addresses in logs.
-            log.info("Alert emails: {} new alerts, {} emails sent, {} failed", run.alerts(), run.emailsSent(), run.emailsFailed());
+            log.info("Alert emails: {} new alerts, {} emails sent, {} failed, {} users without ID Protection, {} left for"
+                    + " the next run (subscription unknown)", run.alerts(), run.emailsSent(), run.emailsFailed(),
+                    run.notSubscribed(), run.unknown());
         } catch (RuntimeException e) {
             log.warn("Alert email run failed; the next one runs on schedule: {}", e.getClass().getSimpleName());
         }
@@ -84,7 +108,18 @@ public class AlertNotifier {
         Duration gap = Duration.ofNanos((long) (1_000_000_000L / properties.sendsPerSecond()));
         int sent = 0;
         int failed = 0;
+        int notSubscribed = 0;
+        int unknown = 0;
         for (Map.Entry<String, List<Alert>> user : byEmail.entrySet()) {
+            boolean subscribed;
+            try {
+                subscribed = subscribers.idProtection(user.getKey(), now);
+            } catch (RuntimeException e) {
+                // Nothing claimed: the next run asks again.
+                unknown++;
+                log.warn("Whether a user has ID Protection could not be read: {}", e.getClass().getSimpleName());
+                continue;
+            }
             List<Alert> claimed = new ArrayList<>();
             try {
                 for (Alert alert : user.getValue()) {
@@ -94,6 +129,10 @@ public class AlertNotifier {
                 }
                 if (claimed.isEmpty()) {
                     continue; // another run or replica has them
+                }
+                if (!subscribed) {
+                    notSubscribed++;
+                    continue; // claimed, not emailed: the in-app alert covers a free user
                 }
                 if (sent + failed > 0 && !pauseFor(gap)) {
                     release(claimed, now);
@@ -108,7 +147,7 @@ public class AlertNotifier {
                 log.warn("An alert email could not be sent: {}", e.getClass().getSimpleName());
             }
         }
-        return new Run(found.size(), sent, failed);
+        return new Run(found.size(), sent, failed, false, notSubscribed, unknown);
     }
 
     /** Best effort: a claim that cannot be released stays, and that alert is not emailed (at most once). */
