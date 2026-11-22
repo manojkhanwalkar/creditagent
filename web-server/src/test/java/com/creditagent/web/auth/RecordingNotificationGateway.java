@@ -1,26 +1,30 @@
 package com.creditagent.web.auth;
 
-import com.creditagent.web.auth.otp.OtpSender;
+import com.creditagent.web.notify.NotificationGateway;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** A mock delivery channel: keeps every code "sent" so a test can type it in, as the user would. */
-public final class RecordingOtpSender implements OtpSender {
+/**
+ * A mock notification-service: keeps every sign-in code "sent" so a test can type it in, as the user
+ * would.
+ */
+public final class RecordingNotificationGateway implements NotificationGateway {
 
     /** One delivered message. */
     public record Sent(String destination, String code, Duration validFor) {}
 
     public final List<Sent> sent = new CopyOnWriteArrayList<>();
-    /** When set, every send throws it (a provider outage). */
+    /** When set, every send throws it (a service or provider outage). */
     public volatile RuntimeException failure;
 
     @Override
-    public void send(String destination, String code, Duration validFor) {
+    public void send(Notification n) {
         if (failure != null) {
             throw failure;
         }
-        sent.add(new Sent(destination, code, validFor));
+        sent.add(new Sent(n.to(), n.params().get("code"),
+                Duration.ofSeconds(Long.parseLong(n.params().get("validSeconds")))));
     }
 
     /** The code most recently sent, to anyone. */

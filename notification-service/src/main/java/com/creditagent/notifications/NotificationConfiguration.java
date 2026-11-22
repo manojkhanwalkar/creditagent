@@ -102,6 +102,10 @@ class NotificationConfiguration {
         if (properties.logsAnything()) {
             requireLocal(properties.dynamodbEndpoint());
             log.warn("A channel is set to log: those messages are not sent. Development only.");
+            if (properties.smsLogCodes()) {
+                log.warn("NOTIFICATIONS_SMS_LOG_CODES=true: text messages, sign-in codes included, are written to this"
+                        + " log. Local sign-in only.");
+            }
         }
         Map<Channel, Sender> senders = new EnumMap<>(Channel.class);
         senders.put(Channel.EMAIL, switch (properties.email()) {
@@ -117,7 +121,7 @@ class NotificationConfiguration {
         });
         senders.put(Channel.SMS, switch (properties.sms()) {
             case SNS -> new Senders.Sns(sns, properties.smsSenderId(), properties.smsOriginationNumber());
-            case LOG -> new Senders.Logging(Channel.SMS);
+            case LOG -> new Senders.Logging(Channel.SMS, properties.smsLogCodes());
         });
         return senders;
     }

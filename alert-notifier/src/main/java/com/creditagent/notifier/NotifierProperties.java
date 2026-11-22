@@ -10,8 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *     finds only the last 24 hours' alerts (the previous run claimed the rest); the longer lookback lets
  *     a missed, failed or capped run catch up instead of losing those alerts
  * @param maxAlertsPerRun most alerts one run reads; the rest stay unclaimed for the next run
- * @param sendsPerSecond most emails a second, to stay within the mail relay's limits
- * @param from the sender address
+ * @param sendsPerSecond most emails a second, to stay within the notification-service's limits
  * @param appUrl the address users sign in at, named in the email; blank = not named
  * @param dynamodbEndpoint blank = AWS; {@code http://localhost:8000} for DynamoDB Local
  * @param alertsTable the Alerts table
@@ -23,7 +22,6 @@ public record NotifierProperties(
         Duration lookback,
         Integer maxAlertsPerRun,
         Double sendsPerSecond,
-        String from,
         String appUrl,
         String dynamodbEndpoint,
         String region,
@@ -36,7 +34,6 @@ public record NotifierProperties(
         lookback = lookback == null ? Duration.ofDays(7) : lookback;
         maxAlertsPerRun = maxAlertsPerRun == null ? 10_000 : maxAlertsPerRun;
         sendsPerSecond = sendsPerSecond == null ? 10.0 : sendsPerSecond;
-        from = from == null || from.isBlank() ? "alerts@creditagent.local" : from.strip();
         appUrl = appUrl == null ? "" : appUrl.strip();
         region = region == null || region.isBlank() ? "us-east-1" : region;
         dynamodbTimeout = dynamodbTimeout == null ? Duration.ofSeconds(5) : dynamodbTimeout;

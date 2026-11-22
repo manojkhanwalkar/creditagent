@@ -4,12 +4,10 @@ import com.creditagent.alerts.AlertRepository;
 import com.creditagent.alerts.AlertsTable;
 import com.creditagent.alerts.DynamoDbAlertRepository;
 import java.time.Clock;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.mail.javamail.JavaMailSender;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
 @Configuration(proxyBeanMethods = false)
@@ -32,36 +30,15 @@ class NotifierConfiguration {
     }
 
     /**
-     * The notification-service when {@code NOTIFICATIONS_MODE=remote}; otherwise SMTP when a relay is
-     * configured ({@code spring.mail.host}, i.e. MAIL_HOST), else the placeholder.
+     * The notification-service, once the service token is set ({@code INTERNAL_API_TOKEN}); else the
+     * placeholder, which sends nothing and leaves every alert unclaimed.
      */
     @Bean
-    EmailSender emailSender(ObjectProvider<JavaMailSender> mail, NotifierProperties properties,
-            NotificationsProperties notifications, @Value("${credit.internal.token:}") String serviceToken,
-            @Value("${spring.mail.host:}") String host,
-            @Value("${spring.mail.properties.mail.smtp.starttls.required:false}") boolean tlsRequired) {
-        if (notifications.mode() == NotificationsProperties.Mode.REMOTE) {
-            return RemoteEmailSender.create(notifications.url(), notifications.timeout(), serviceToken);
+    EmailSender emailSender(NotificationsProperties notifications, @Value("${credit.internal.token:}") String serviceToken) {
+        if (serviceToken == null || serviceToken.isBlank()) {
+            return EmailSender.placeholder();
         }
-        requireTlsUnlessLocal(host, tlsRequired);
-        // Decided on the host itself: an empty MAIL_HOST must mean "no relay", not a relay at "".
-        JavaMailSender sender = host.isBlank() ? null : mail.getIfAvailable();
-        return sender == null ? EmailSender.placeholder() : EmailSender.smtp(sender, properties.from());
-    }
-
-    /** Hosts where plain SMTP is acceptable: the local Mailpit catcher, on this machine or in compose. */
-    static final java.util.Set<String> LOCAL_RELAYS = java.util.Set.of("localhost", "127.0.0.1", "::1", "mailpit");
-
-    /**
-     * Emails carry users' addresses and findings, and the relay login: refuse to start with TLS off
-     * for any relay but a local mail catcher.
-     */
-    static void requireTlsUnlessLocal(String host, boolean tlsRequired) {
-        String name = host == null ? "" : host.strip().toLowerCase(java.util.Locale.ROOT);
-        if (!name.isEmpty() && !tlsRequired && !LOCAL_RELAYS.contains(name)) {
-            throw new IllegalStateException("MAIL_STARTTLS must be true for the mail relay " + name
-                    + " (plain SMTP is allowed only for a local mail catcher)");
-        }
+        return RemoteEmailSender.create(notifications.url(), notifications.timeout(), serviceToken);
     }
 
     /** Read-only use: the notifier only asks whether an address has ID Protection. */

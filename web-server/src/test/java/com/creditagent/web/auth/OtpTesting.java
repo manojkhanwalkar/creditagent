@@ -4,12 +4,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.creditagent.common.AuditLog;
 import com.creditagent.web.auth.otp.OtpChannel;
-import com.creditagent.web.auth.otp.OtpSender;
-import com.creditagent.web.notify.LocalNotificationGateway;
+import com.creditagent.web.notify.NotificationGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -23,14 +21,13 @@ public final class OtpTesting {
 
     private OtpTesting() {}
 
-    public static OtpLoginService service(AuthService auth, OtpChallengeRepository challenges, OtpSender sender,
+    public static OtpLoginService service(AuthService auth, OtpChallengeRepository challenges, NotificationGateway sender,
             Clock clock, AuditLog audit) {
-        return new OtpLoginService(auth, challenges,
-                new LocalNotificationGateway(Map.of(OtpChannel.EMAIL, sender, OtpChannel.SMS, sender)), LIMITS,
+        return new OtpLoginService(auth, challenges, sender, LIMITS,
                 TestSecrets.of("otp").getBytes(java.nio.charset.StandardCharsets.UTF_8), clock, audit);
     }
 
-    public static OtpLoginService service(AuthService auth, OtpSender sender, Clock clock) {
+    public static OtpLoginService service(AuthService auth, NotificationGateway sender, Clock clock) {
         return service(auth, new InMemoryRepositories.OtpChallenges(), sender, clock, new AuditLog());
     }
 
@@ -39,7 +36,7 @@ public final class OtpTesting {
      * code that was "delivered". If the password step fails, returns that step again so the caller can
      * assert on its answer.
      */
-    public static MockHttpServletRequestBuilder loginRequest(MockMvc mvc, RecordingOtpSender sender, String userId,
+    public static MockHttpServletRequestBuilder loginRequest(MockMvc mvc, RecordingNotificationGateway sender, String userId,
             String password, OtpChannel channel) throws Exception {
         MockHttpServletRequestBuilder passwordStep = post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"userId\":\"" + userId + "\",\"password\":\"" + password + "\"}");
@@ -58,7 +55,7 @@ public final class OtpTesting {
                 .content("{\"challengeId\":\"" + challengeId + "\",\"code\":\"" + sender.lastCode() + "\"}");
     }
 
-    public static MockHttpServletRequestBuilder loginRequest(MockMvc mvc, RecordingOtpSender sender, String userId,
+    public static MockHttpServletRequestBuilder loginRequest(MockMvc mvc, RecordingNotificationGateway sender, String userId,
             String password) throws Exception {
         return loginRequest(mvc, sender, userId, password, OtpChannel.EMAIL);
     }

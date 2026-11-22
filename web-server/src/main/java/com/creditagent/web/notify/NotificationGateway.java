@@ -5,9 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Sends one templated message: in this process ({@link LocalNotificationGateway}) or through the
- * notification-service ({@link RemoteNotificationGateway}), chosen by {@code NOTIFICATIONS_MODE}
- * (docs/adr/0001).
+ * Sends one templated message through the notification-service ({@link RemoteNotificationGateway}, the
+ * only implementation; docs/adr/0001). Kept as an interface so tests can record sends.
  */
 public interface NotificationGateway {
 
