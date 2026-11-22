@@ -43,8 +43,9 @@ class NotificationServiceTest {
     @Test
     void aRepeatOfAnAcceptedKeyAnswersTheOriginalIdWithoutSendingAgain() {
         NotificationService service = service(store);
-        var first = service.send("otp:c1:1", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
-        var again = service.send("otp:c1:1", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
+        // A challenge id with letters outside hex, so it can't appear by chance in the stored hashes or id.
+        var first = service.send("otp:challenge-zq:1", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
+        var again = service.send("otp:challenge-zq:1", Channel.SMS, "+15555550100", Template.OTP_SIGN_IN, OTP);
         assertThat(again).isEqualTo(first);
         assertThat(sent).hasSize(1);
 
@@ -54,7 +55,7 @@ class NotificationServiceTest {
         assertThat(record.destination()).isEqualTo("+1******0100");
         assertThat(record.expiresAt()).isEqualTo(clock.instant().plus(Duration.ofDays(30)));
         // Neither the raw key (a challenge id) nor the code nor the number is stored.
-        assertThat(record.toString()).doesNotContain("c1").doesNotContain("042917").doesNotContain("5555550100");
+        assertThat(record.toString()).doesNotContain("challenge-zq").doesNotContain("042917").doesNotContain("5555550100");
         assertThat(record.key()).hasSize(64);
     }
 
