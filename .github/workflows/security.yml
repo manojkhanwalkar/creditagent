@@ -10,10 +10,27 @@ permissions:
   contents: read
 
 jobs:
-  # GitHub's dependency review needs Code Security on a private repository, so Trivy checks the
-  # declared dependencies instead (the Maven poms; npm only if a lock file is committed, and the UI has
-  # no npm dependencies today): a high or critical advisory with a fix fails the PR. The built images
-  # are scanned again in CI.
+  # GitHub's dependency review checks the dependencies a PR adds or changes: a high or critical
+  # advisory, or a denied licence, fails it.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Post the summary comment when the review fails.
+      pull-requests: write
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-3.0, GPL-3.0
+          comment-summary-in-pr: on-failure
+
+  # Trivy scans every declared dependency, not just the PR's changes, on PRs and on main (the Maven
+  # poms; npm only if a lock file is committed): a high or critical advisory with a fix fails it. The
+  # built images are scanned again in CI.
   dependency-scan:
     name: Dependency scan
     runs-on: ubuntu-latest
@@ -39,8 +56,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Private repositories: Gitleaks lists the pull request's commits.
-      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

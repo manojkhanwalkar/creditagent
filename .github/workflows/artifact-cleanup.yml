@@ -11,7 +11,7 @@ name: Artifact cleanup
 
 on:
   workflow_run:
-    workflows: [CI, CodeQL, Release]
+    workflows: [CI, Release]
     types: [completed]
   workflow_dispatch:
 
