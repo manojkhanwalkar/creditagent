@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.creditagent.common.AuditLog;
 import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.otp.OtpSender;
+import com.creditagent.web.notify.LocalNotificationGateway;
 import com.jayway.jsonpath.JsonPath;
 import java.time.Clock;
 import java.time.Duration;
@@ -24,7 +25,8 @@ public final class OtpTesting {
 
     public static OtpLoginService service(AuthService auth, OtpChallengeRepository challenges, OtpSender sender,
             Clock clock, AuditLog audit) {
-        return new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, sender, OtpChannel.SMS, sender), LIMITS,
+        return new OtpLoginService(auth, challenges,
+                new LocalNotificationGateway(Map.of(OtpChannel.EMAIL, sender, OtpChannel.SMS, sender)), LIMITS,
                 TestSecrets.of("otp").getBytes(java.nio.charset.StandardCharsets.UTF_8), clock, audit);
     }
 

@@ -6,7 +6,8 @@ import com.creditagent.web.auth.AuthExceptions.OtpFailedException;
 import com.creditagent.web.auth.AuthExceptions.TooManyCodesException;
 import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.otp.OtpDeliveryException;
-import com.creditagent.web.auth.otp.OtpSender;
+import com.creditagent.web.notify.NotificationGateway;
+import com.creditagent.web.notify.NotificationGateway.Notification;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
@@ -18,7 +19,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.EnumMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +74,7 @@ public class OtpLoginService {
 
     private final AuthService auth;
     private final OtpChallengeRepository challenges;
-    private final Map<OtpChannel, OtpSender> senders;
+    private final NotificationGateway notifications;
     private final Limits limits;
     private final SecretKeySpec codeKey;
     private final Clock clock;
@@ -82,17 +82,14 @@ public class OtpLoginService {
     private final SecureRandom random = new SecureRandom();
 
     /**
-     * @param senders one sender per channel; every channel must have one
+     * @param notifications sends the codes (OTP_SIGN_IN)
      * @param codeKey key for the HMAC codes are stored as (at least 32 bytes)
      */
     public OtpLoginService(AuthService auth, OtpChallengeRepository challenges,
-            Map<OtpChannel, OtpSender> senders, Limits limits, byte[] codeKey, Clock clock, AuditLog audit) {
+            NotificationGateway notifications, Limits limits, byte[] codeKey, Clock clock, AuditLog audit) {
         this.auth = Objects.requireNonNull(auth);
         this.challenges = Objects.requireNonNull(challenges);
-        this.senders = new EnumMap<>(senders);
-        for (OtpChannel channel : OtpChannel.values()) {
-            Objects.requireNonNull(this.senders.get(channel), "no sender for " + channel);
-        }
+        this.notifications = Objects.requireNonNull(notifications);
         this.limits = Objects.requireNonNull(limits);
         if (codeKey == null || codeKey.length < 32) {
             throw new IllegalArgumentException("The OTP code key must be at least 32 bytes");
@@ -181,7 +178,10 @@ public class OtpLoginService {
                     Duration.between(now, now.truncatedTo(ChronoUnit.HOURS).plus(Duration.ofHours(1))), true);
         }
         try {
-            senders.get(channel).send(destination, code, limits.codeTtl());
+            // Keyed by this challenge's send count after this send: stable for one send, new for the next.
+            notifications.send(new Notification(channel, destination, NotificationGateway.Template.OTP_SIGN_IN,
+                    Map.of("code", code, "validMinutes", String.valueOf(limits.codeTtl().toMinutes())),
+                    "otp:" + challengeId + ":" + (challenge.sends() + 1)));
         } catch (OtpDeliveryException e) {
             if (e.refused()) {
                 // Certainly not delivered: give the send back, so "try again or choose the other option"

@@ -14,6 +14,8 @@ import com.creditagent.web.auth.otp.OtpProperties;
 import com.creditagent.web.auth.otp.OtpSender;
 import com.creditagent.web.auth.otp.SesEmailOtpSender;
 import com.creditagent.web.auth.otp.SnsSmsOtpSender;
+import com.creditagent.web.notify.LocalNotificationGateway;
+import com.creditagent.web.notify.NotificationGateway;
 import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -115,8 +117,11 @@ class OtpConfigurationTest {
         AuthService authService = mock(AuthService.class);
         org.springframework.beans.factory.ObjectProvider<SesV2Client> ses = providerOf(mock(SesV2Client.class));
         org.springframework.beans.factory.ObjectProvider<SnsClient> sns = providerOf(mock(SnsClient.class));
+        NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
+                auth(null, false), ses, sns);
+        assertThat(gateway).isInstanceOf(LocalNotificationGateway.class);
         assertThat(config.otpLoginService(authService, new InMemoryRepositories.OtpChallenges(),
-                otp(OtpProperties.Delivery.AWS, null, null), auth(null, false), ses, sns,
+                otp(OtpProperties.Delivery.AWS, null, null), auth(null, false), gateway,
                 new com.creditagent.common.AuditLog())).isNotNull();
     }
 

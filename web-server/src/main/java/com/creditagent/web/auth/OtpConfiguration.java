@@ -7,6 +7,8 @@ import com.creditagent.web.auth.otp.OtpProperties;
 import com.creditagent.web.auth.otp.OtpSender;
 import com.creditagent.web.auth.otp.SesEmailOtpSender;
 import com.creditagent.web.auth.otp.SnsSmsOtpSender;
+import com.creditagent.web.notify.LocalNotificationGateway;
+import com.creditagent.web.notify.NotificationGateway;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -125,14 +127,19 @@ class OtpConfiguration {
         }
     }
 
+    /** Sends in this process through the SES and SNS (or log) senders. */
+    @Bean
+    NotificationGateway notificationGateway(OtpProperties otp, AuthProperties auth, ObjectProvider<SesV2Client> ses,
+            ObjectProvider<SnsClient> sns) {
+        return new LocalNotificationGateway(senders(otp, auth, ses.getIfAvailable(), sns.getIfAvailable()));
+    }
+
     @Bean
     OtpLoginService otpLoginService(AuthService authService, OtpChallengeRepository challenges,
-            OtpProperties otp, AuthProperties auth, ObjectProvider<SesV2Client> ses, ObjectProvider<SnsClient> sns,
-            AuditLog audit) {
-        Map<OtpChannel, OtpSender> senders = senders(otp, auth, ses.getIfAvailable(), sns.getIfAvailable());
+            OtpProperties otp, AuthProperties auth, NotificationGateway notifications, AuditLog audit) {
         OtpLoginService.Limits limits = new OtpLoginService.Limits(otp.codeTtl(), otp.challengeTtl(), otp.maxAttempts(),
                 otp.maxSends(), otp.resendCooldown(), otp.maxSendsPerUserPerHour());
-        return new OtpLoginService(authService, challenges, senders, limits, codeKey(auth.jwtSecret()),
+        return new OtpLoginService(authService, challenges, notifications, limits, codeKey(auth.jwtSecret()),
                 Clock.systemUTC(), audit);
     }
 }
