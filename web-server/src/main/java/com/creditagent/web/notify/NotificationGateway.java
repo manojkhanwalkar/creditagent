@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.Objects;
 
 /** Sends one templated message: the seam for the coming notification-service (docs/adr/0001). */
-@FunctionalInterface
 public interface NotificationGateway {
 
     /** @throws com.creditagent.web.auth.otp.OtpDeliveryException if the provider did not accept it */

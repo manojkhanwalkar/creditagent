@@ -26,8 +26,7 @@ public final class LocalNotificationGateway implements NotificationGateway {
         if (n.template() != Template.OTP_SIGN_IN) {
             throw new IllegalArgumentException("web-server does not send " + n.template());
         }
-        senders.get(n.channel()).send(n.to(), param(n, "code"),
-                Duration.ofMinutes(Long.parseLong(param(n, "validMinutes"))));
+        senders.get(n.channel()).send(n.to(), param(n, "code"), Duration.ofMinutes(Long.parseLong(param(n, "validMinutes"))));
     }
 
     private static String param(Notification n, String name) {
