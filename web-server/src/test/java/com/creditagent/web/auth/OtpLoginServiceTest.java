@@ -10,6 +10,8 @@ import com.creditagent.web.auth.AuthExceptions.TooManyCodesException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.otp.OtpDeliveryException;
+import com.creditagent.web.notify.LocalNotificationGateway;
+import com.creditagent.web.notify.NotificationGateway;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -51,8 +53,31 @@ class OtpLoginServiceTest {
     }
 
     OtpLoginService service(OtpLoginService.Limits limits) {
-        return new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms), limits,
+        return new OtpLoginService(auth, challenges, gateway(email), limits,
                 TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+    }
+
+    LocalNotificationGateway gateway(com.creditagent.web.auth.otp.OtpSender emailSender) {
+        return new LocalNotificationGateway(Map.of(OtpChannel.EMAIL, emailSender, OtpChannel.SMS, sms));
+    }
+
+    @Test
+    void eachSendGoesThroughTheGatewayAsOtpSignInWithItsOwnIdempotencyKey() {
+        List<NotificationGateway.Notification> sent = new ArrayList<>();
+        NotificationGateway recording = n -> { sent.add(n); gateway(email).send(n); };
+        OtpLoginService service = new OtpLoginService(auth, challenges, recording, OtpTesting.LIMITS,
+                TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
+        String id = service.start("avery", PASSWORD).challengeId();
+        service.send(id, OtpChannel.SMS);
+        clock.advance(Duration.ofSeconds(30));
+        service.send(id, OtpChannel.SMS);
+        assertThat(sent.get(0)).isEqualTo(new NotificationGateway.Notification(OtpChannel.SMS, "+12065550100",
+                NotificationGateway.Template.OTP_SIGN_IN, Map.of("code", sms.sent.get(0).code(), "validMinutes", "5"),
+                "otp:" + id + ":1"));
+        assertThat(sent.get(1).idempotencyKey()).isEqualTo("otp:" + id + ":2");
+        String other = service.start("avery", PASSWORD).challengeId();
+        service.send(other, OtpChannel.EMAIL);
+        assertThat(sent.get(2).idempotencyKey()).isEqualTo("otp:" + other + ":1").doesNotContain(email.lastCode());
     }
 
     @Test
@@ -215,7 +240,7 @@ class OtpLoginServiceTest {
             }
         };
         racing.byId.putAll(challenges.byId);
-        OtpLoginService raced = new OtpLoginService(auth, racing, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        OtpLoginService raced = new OtpLoginService(auth, racing, gateway(email),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
 
         assertThatThrownBy(() -> raced.verify(id, code)).isInstanceOf(OtpFailedException.class)
@@ -258,7 +283,7 @@ class OtpLoginServiceTest {
             }
         };
         racing.byId.putAll(challenges.byId);
-        OtpLoginService raced = new OtpLoginService(auth, racing, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        OtpLoginService raced = new OtpLoginService(auth, racing, gateway(email),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
 
         assertThatThrownBy(() -> raced.send(id, OtpChannel.EMAIL)).isInstanceOf(TooManyCodesException.class);
@@ -345,7 +370,7 @@ class OtpLoginServiceTest {
         String id = otp.start("avery", PASSWORD).challengeId();
         // The provider takes the message, then the call times out.
         OtpSenderThatDeliversThenFails late = new OtpSenderThatDeliversThenFails();
-        OtpLoginService service = new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, late, OtpChannel.SMS, sms),
+        OtpLoginService service = new OtpLoginService(auth, challenges, gateway(late),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
 
         assertThatThrownBy(() -> service.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpDeliveryException.class)
@@ -428,7 +453,7 @@ class OtpLoginServiceTest {
                 throw new IllegalStateException("DynamoDB down");
             }
         };
-        OtpLoginService service = new OtpLoginService(auth, broken, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        OtpLoginService service = new OtpLoginService(auth, broken, gateway(email),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
         String id = service.start("avery", PASSWORD).challengeId();
         email.failure = rejected(OtpChannel.EMAIL);
@@ -488,7 +513,7 @@ class OtpLoginServiceTest {
             }
         };
         expiring.byId.putAll(challenges.byId);
-        OtpLoginService raced = new OtpLoginService(auth, expiring, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        OtpLoginService raced = new OtpLoginService(auth, expiring, gateway(email),
                 OtpTesting.LIMITS, TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
 
         assertThatThrownBy(() -> raced.send(id, OtpChannel.EMAIL)).isInstanceOf(OtpFailedException.class)
@@ -519,13 +544,13 @@ class OtpLoginServiceTest {
     }
 
     @Test
-    void theServiceNeedsEverySenderAndAStrongKey() {
+    void theServiceNeedsAGatewayAndAStrongKey() {
         byte[] key = TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8);
-        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, email), OtpTesting.LIMITS,
-                key, clock, audit)).isInstanceOf(NullPointerException.class).hasMessageContaining("SMS");
-        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, null, OtpTesting.LIMITS,
+                key, clock, audit)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, gateway(email),
                 OtpTesting.LIMITS, new byte[16], clock, audit)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, Map.of(OtpChannel.EMAIL, email, OtpChannel.SMS, sms),
+        assertThatThrownBy(() -> new OtpLoginService(auth, challenges, gateway(email),
                 OtpTesting.LIMITS, null, clock, audit)).isInstanceOf(IllegalArgumentException.class);
     }
 }
