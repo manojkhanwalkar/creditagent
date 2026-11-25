@@ -252,7 +252,12 @@ public class SubscriptionService implements AccountSubscriptions {
      * Starts a one-year term for a payment the provider confirmed (here, or from the payments-service
      * later). If a term started meanwhile (two payments raced), this payment starts nothing; the audit
      * record says so, for a refund. The store's conditional write decides; a repeat of the payment that
-     * bought the active term is recognised by its {@code paymentReference}.
+     * bought the active term is recognised by its {@code paymentReference} and writes no audit entry.
+     *
+     * @param actor the audit actor: {@code user:<id>} for a purchase in the browser, {@code service:payments}
+     *     for the internal activation API
+     * @return the outcome, with the active term unless another payment's term is active
+     * @throws RuntimeException if DynamoDB fails; audited as {@code FAILED} so the payment can be refunded
      */
     Activation activate(String actor, User account, Product product, String paymentReference) {
         Instant now = clock.instant();

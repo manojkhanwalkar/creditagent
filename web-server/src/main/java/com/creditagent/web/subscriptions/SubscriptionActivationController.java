@@ -24,7 +24,8 @@ import software.amazon.awssdk.core.exception.SdkException;
  * table. Contract: {@code docs/api/subscriptions-internal-v1.yaml}.
  *
  * <p>200 {@code ACTIVE} or {@code ALREADY_SAME_PAYMENT} (safe to repeat), 409 {@code ALREADY_ACTIVE}
- * (another term is active: the caller refunds this payment), 404 unknown user, 400 invalid request,
+ * (another term is active: the caller refunds this payment), 404 unknown user (problem type
+ * {@code urn:creditagent:problem:unknown-user}), 400 invalid request,
  * 503 with Retry-After when DynamoDB fails.
  */
 @RestController
@@ -54,6 +55,7 @@ class SubscriptionActivationController {
             @NotNull @Size(min = 1, max = 32) String product,
             @NotNull @Pattern(regexp = "[\\x21-\\x7E]{1,128}") String paymentReference) {}
 
+    /** @param expiresAt the end of the active term; null (left out of the JSON) for {@code ALREADY_ACTIVE} */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ActivationResponse(SubscriptionService.ActivationOutcome outcome, Instant expiresAt) {}
 

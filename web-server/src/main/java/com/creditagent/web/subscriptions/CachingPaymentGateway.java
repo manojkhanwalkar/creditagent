@@ -22,6 +22,10 @@ final class CachingPaymentGateway implements PaymentGateway {
     private final Clock clock;
     private volatile Answer answer;
 
+    /**
+     * @param ttl how long an answer of {@code available()} is reused
+     * @throws IllegalArgumentException if {@code ttl} is zero or negative
+     */
     CachingPaymentGateway(PaymentGateway delegate, Duration ttl, Clock clock) {
         this.delegate = Objects.requireNonNull(delegate);
         this.ttl = Objects.requireNonNull(ttl);
