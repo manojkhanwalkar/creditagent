@@ -240,4 +240,11 @@ class SendersTest {
                 .contains("Your CreditAgent sign-in code")
                 .doesNotContain("042917").doesNotContain("5555550100").doesNotContain("ada@example.com");
     }
+
+    @Test
+    void withSmsLogCodesTheTextAndItsCodeAreLoggedButNotTheFullNumber(CapturedOutput output) {
+        new Senders.Logging(Channel.SMS, true).send("+15555550100", SMS);
+        assertThat(output.getAll()).contains("NOTIFICATIONS_SMS_LOG_CODES=true").contains("042917")
+                .contains("+1******0100").doesNotContain("5555550100");
+    }
 }

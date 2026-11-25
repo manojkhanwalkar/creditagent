@@ -101,17 +101,14 @@ services:
       # DynamoDB Local accepts any credentials; real AWS uses the instance or task role.
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
-      # No AWS account locally: sign-in codes are written to this service's log instead of being sent
-      # by SES or SNS (docker compose logs web-server | grep "sign-in code"). Set to aws in AWS.
-      OTP_DELIVERY: ${OTP_DELIVERY:-log}
-      # Sign-in codes go out from this process until N4 flips this to remote (the notification-service).
-      NOTIFICATIONS_MODE: ${NOTIFICATIONS_MODE:-local}
+      # Sign-in codes are sent by the notification-service: emailed codes land in Mailpit
+      # (http://localhost:8025).
       NOTIFICATIONS_URL: http://notification-service:8094
       # No payment provider locally: the test gateway starts subscriptions without charging anything.
       PAYMENTS_PROVIDER: ${PAYMENTS_PROVIDER:-test}
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb, user-advisor-agent, offers-service, alerts-service]
+    depends_on: [credit-report-mcp-server, score-calculator, kyc-service, dynamodb, user-advisor-agent, offers-service, alerts-service, notification-service]
 
   credit-intelligence-agent:
     <<: *service
@@ -160,8 +157,8 @@ services:
       AWS_SECRET_ACCESS_KEY: local
     depends_on: [dynamodb, web-server]
 
-  # Once a day emails each user whose address was found in the last 24 hours. Locally the emails go to
-  # Mailpit (http://localhost:8025); in production point MAIL_HOST at a real relay.
+  # Once a day emails each user whose address was found in the last 24 hours, through the
+  # notification-service (locally the emails land in Mailpit, http://localhost:8025).
   alert-notifier:
     <<: *service
     build: { context: ., args: { MODULE: alert-notifier } }
@@ -170,24 +167,14 @@ services:
       DYNAMODB_CREATE_TABLES: "true"
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
-      MAIL_HOST: ${MAIL_HOST:-mailpit}
-      MAIL_PORT: ${MAIL_PORT:-1025}
-      MAIL_USERNAME: ${MAIL_USERNAME:-}
-      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      # Off only for the bundled Mailpit: for any other MAIL_HOST set both to true in .env (the
-      # notifier refuses to start with STARTTLS off for a relay that is not local).
-      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-false}
-      MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
       NOTIFIER_CRON: ${NOTIFIER_CRON:-0 0 8 * * *}
       NOTIFIER_APP_URL: ${NOTIFIER_APP_URL:-http://localhost:8080}
-      # Alert emails go through Mailpit until N4 flips this to remote (the notification-service).
-      NOTIFICATIONS_MODE: ${NOTIFICATIONS_MODE:-local}
       NOTIFICATIONS_URL: http://notification-service:8094
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in .env}
-    depends_on: [dynamodb, mailpit]
+    depends_on: [dynamodb, notification-service]
 
-  # Templated email and SMS, once per idempotency key (internal, service token). Nothing calls it yet:
-  # web-server and alert-notifier switch to it in a later step (NOTIFICATIONS_MODE).
+  # Templated email and SMS, once per idempotency key (internal, service token): sign-in codes for
+  # web-server and dark-web alerts for alert-notifier.
   notification-service:
     <<: *service
     build: { context: ., args: { MODULE: notification-service } }
@@ -197,9 +184,11 @@ services:
       DYNAMODB_CREATE_TABLES: "true"
       AWS_ACCESS_KEY_ID: local
       AWS_SECRET_ACCESS_KEY: local
-      # Emails go to Mailpit (http://localhost:8025); texts are logged, masked and without the code.
+      # Emails go to Mailpit (http://localhost:8025); texts are logged, masked and without the code
+      # (set NOTIFICATIONS_SMS_LOG_CODES=true in .env to log the code too, for sign-in by text).
       NOTIFICATIONS_EMAIL: ${NOTIFICATIONS_EMAIL:-smtp}
       NOTIFICATIONS_SMS: ${NOTIFICATIONS_SMS:-log}
+      NOTIFICATIONS_SMS_LOG_CODES: ${NOTIFICATIONS_SMS_LOG_CODES:-false}
       NOTIFICATIONS_EMAIL_FROM: ${NOTIFICATIONS_EMAIL_FROM:-CreditAgent <no-reply@creditagent.local>}
       MAIL_HOST: ${MAIL_HOST:-mailpit}
       MAIL_PORT: ${MAIL_PORT:-1025}
@@ -210,7 +199,7 @@ services:
       MAIL_STARTTLS: ${MAIL_STARTTLS:-false}
     depends_on: [dynamodb, mailpit]
 
-  # Catches the notifier's emails locally; nothing leaves the machine. Web UI on 127.0.0.1:8025.
+  # Catches the notification-service's emails locally; nothing leaves the machine. Web UI on 127.0.0.1:8025.
   mailpit:
     image: axllent/mailpit:v1.20.0
     restart: unless-stopped

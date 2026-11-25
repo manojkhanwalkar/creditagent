@@ -6,18 +6,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 /**
- * One-time sign-in codes ({@code credit.auth.otp}).
+ * One-time sign-in codes ({@code credit.auth.otp}): the challenge store and the limits. Codes are sent by
+ * the notification-service ({@code credit.notifications}).
  *
- * @param delivery {@code aws} (SES and SNS) or {@code log} (development only: the code is written to
- *     the server log; refused unless DynamoDB is a local endpoint)
- * @param region AWS region for SES and SNS
- * @param sesEndpoint override for SES, e.g. a LocalStack URL; blank = AWS
- * @param snsEndpoint override for SNS; blank = AWS
- * @param emailFrom the verified SES identity codes are emailed from
- * @param sesConfigurationSet SES configuration set for delivery events; blank = none
- * @param smsSenderId alphanumeric SMS sender id where allowed; blank = none
- * @param smsOriginationNumber registered number texts are sent from; blank = the account default
- * @param timeout longest one SES or SNS call may take, retries included; each attempt gets half
  * @param table DynamoDB table for login challenges (TTL on {@code expiresAt})
  * @param codeTtl how long a sent code works
  * @param challengeTtl how long the user has, after the password step, to finish signing in
@@ -30,15 +21,6 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("credit.auth.otp")
 public record OtpProperties(
-        Delivery delivery,
-        String region,
-        String sesEndpoint,
-        String snsEndpoint,
-        @NotBlank String emailFrom,
-        String sesConfigurationSet,
-        String smsSenderId,
-        String smsOriginationNumber,
-        Duration timeout,
         @NotBlank String table,
         Duration codeTtl,
         Duration challengeTtl,
@@ -47,12 +29,7 @@ public record OtpProperties(
         Duration resendCooldown,
         Integer maxSendsPerUserPerHour) {
 
-    public enum Delivery { AWS, LOG }
-
     public OtpProperties {
-        delivery = delivery == null ? Delivery.AWS : delivery;
-        region = region == null || region.isBlank() ? "us-east-1" : region;
-        timeout = timeout == null ? Duration.ofSeconds(5) : timeout;
         codeTtl = codeTtl == null ? Duration.ofMinutes(5) : codeTtl;
         challengeTtl = challengeTtl == null ? Duration.ofMinutes(10) : challengeTtl;
         maxAttempts = maxAttempts == null ? 5 : maxAttempts;

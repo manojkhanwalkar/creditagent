@@ -75,7 +75,7 @@ class AuthControllerTest {
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
         static final InMemoryRepositories.Users USERS = new InMemoryRepositories.Users();
         static final FakeIdentityVerifier KYC = new FakeIdentityVerifier();
-        static final RecordingOtpSender OTP = new RecordingOtpSender();
+        static final RecordingNotificationGateway OTP = new RecordingNotificationGateway();
         static final InMemoryRepositories.OtpChallenges CHALLENGES = new InMemoryRepositories.OtpChallenges();
 
         @Bean

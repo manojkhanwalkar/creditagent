@@ -1,14 +1,13 @@
 package com.creditagent.web.auth.otp;
 
 import java.time.Duration;
-import software.amazon.awssdk.core.exception.SdkServiceException;
 
 /**
- * The email or SMS provider did not confirm a sign-in code. The message never holds the code or
- * destination.
+ * The notification-service did not confirm a sign-in code: the exception of {@link
+ * com.creditagent.web.notify.NotificationGateway}. The message never holds the code or destination.
  *
- * <p>{@link #refused()} is true only when the provider clearly rejected the message (a 4xx answer that
- * is not throttling), so it was certainly not delivered. A timeout, a 5xx or throttling may still have
+ * <p>{@link #refused()} is true only when the message was certainly not delivered (the service answered
+ * 422: the provider refused it). A timeout, a 5xx, throttling or an unreachable service may still have
  * delivered it: those sends keep counting against the limits, and their code stays valid.
  */
 public class OtpDeliveryException extends RuntimeException {
@@ -20,14 +19,7 @@ public class OtpDeliveryException extends RuntimeException {
     private final transient Duration retryAfter;
     private final boolean lastSend;
 
-    public OtpDeliveryException(OtpChannel channel, Throwable cause) {
-        this(channel, cause, clearlyRefused(cause), null, false);
-    }
-
-    /**
-     * A failure already classified, e.g. by the notification-service: {@code refused} only when the
-     * message was certainly not delivered.
-     */
+    /** A classified failure: {@code refused} only when the message was certainly not delivered. */
     public OtpDeliveryException(OtpChannel channel, Throwable cause, boolean refused) {
         this(channel, cause, refused, null, false);
     }
@@ -54,25 +46,6 @@ public class OtpDeliveryException extends RuntimeException {
     /** True when this was the sign-in's last allowed send, so only a new sign-in can send another. */
     public boolean lastSend() {
         return lastSend;
-    }
-
-    /** Error names that mean "slow down" or "over a limit", not "this message is invalid". */
-    private static final java.util.regex.Pattern THROTTLED =
-            java.util.regex.Pattern.compile("(?i)throttl|limit|toomany|slowdown");
-
-    /**
-     * A 4xx from the provider that is not throttling or a limit: the message was not accepted. SNS answers
-     * {@code Throttled}, which the SDK's own throttling check does not know, so names are checked too.
-     */
-    static boolean clearlyRefused(Throwable cause) {
-        if (!(cause instanceof SdkServiceException service)
-                || service.statusCode() < 400 || service.statusCode() >= 500 || service.isThrottlingException()) {
-            return false;
-        }
-        String code = service instanceof software.amazon.awssdk.awscore.exception.AwsServiceException aws
-                && aws.awsErrorDetails() != null && aws.awsErrorDetails().errorCode() != null
-                ? aws.awsErrorDetails().errorCode() : "";
-        return !THROTTLED.matcher(code).find() && !THROTTLED.matcher(cause.getClass().getSimpleName()).find();
     }
 
     public OtpChannel channel() {

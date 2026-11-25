@@ -171,15 +171,24 @@ final class Senders {
      * Local development only ({@code NOTIFICATIONS_EMAIL=log} or {@code NOTIFICATIONS_SMS=log}): sends
      * nothing and writes one line naming the template and the masked destination. Never the text: a
      * sign-in code in a log would let anyone who reads it sign in. Refused unless DynamoDB is local.
+     *
+     * <p>The one exception is {@code NOTIFICATIONS_SMS_LOG_CODES=true} ({@code showText}), for local
+     * sign-in by text without SNS: the text, code included, is logged too, under the same local-only guard.
      */
     static final class Logging implements Sender {
 
         private static final Logger log = LoggerFactory.getLogger(Logging.class);
 
         private final Channel channel;
+        private final boolean showText;
 
         Logging(Channel channel) {
+            this(channel, false);
+        }
+
+        Logging(Channel channel, boolean showText) {
             this.channel = Objects.requireNonNull(channel);
+            this.showText = showText;
         }
 
         @Override
@@ -187,6 +196,9 @@ final class Senders {
             String id = "log-" + UUID.randomUUID();
             log.warn("[NOTIFICATIONS_{}=log, development only] not sent: {} to {} (id {})", channel, describe(message),
                     channel.mask(to), id);
+            if (showText) {
+                log.warn("[NOTIFICATIONS_SMS_LOG_CODES=true, local sign-in only] text {}: {}", id, message.text());
+            }
             return id;
         }
 

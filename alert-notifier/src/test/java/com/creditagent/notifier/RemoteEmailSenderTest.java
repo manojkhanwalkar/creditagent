@@ -162,8 +162,7 @@ class RemoteEmailSenderTest {
     }
 
     @Test
-    void freeTextIsNeverSentAndATokenIsRequired() {
-        assertThatThrownBy(() -> sender().send("ada@example.com", "s", "b")).isInstanceOf(UnsupportedOperationException.class);
+    void aTokenIsRequired() {
         assertThat(received).isEmpty();
         assertThat(sender().configured()).isTrue();
         for (String token : new String[] {null, " "}) {

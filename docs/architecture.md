@@ -27,10 +27,11 @@ flowchart LR
     AT[(Alerts table<br/>email + location → timestamp)]
     ALS[alerts-service :8092<br/>internal look-up]
     AN[alert-notifier :8093<br/>daily at 08:00 UTC]
-    NS[notification-service :8094<br/>templated email + SMS<br/>idempotent · no traffic yet]
+    NS[notification-service :8094<br/>templated email + SMS<br/>idempotent]
     NT[(credit-agent-notifications<br/>idempotency key → status, masked to)]
     ST[(Subscriptions table<br/>user / email# + product → term)]
     MAIL([SMTP relay<br/>Mailpit locally])
+    SESSNS([Amazon SES / SNS])
     UAA[user-advisor-agent :8089<br/>guardrails · placeholder LLM<br/>memory in RAM]
     CL([Claude])
     CC[claude-connector :8088<br/>/mcp · OAuth protected resource]
@@ -64,7 +65,7 @@ flowchart LR
     ALS -. "L6 · exposed + where, when" .-> WS
     AN -- "N1 · last 24 h, not yet notified (by-day index); claim" --> AT
     AN -- "N2 · subscriber? (email# item)" --> ST
-    AN -- "N3 · one email per ID Protection subscriber" --> MAIL
+    AN -- "N3 · one alert per ID Protection subscriber (DARK_WEB_ALERT)" --> NS
     WS -- "S1 · subscriptions at login; start a term (one conditional transaction)" --> ST
     UI -- "Q1 · question + SSN (POST /api/v1/chat)" --> WS
     WS -- "Q2 · report (resources/read)" --> M
@@ -76,9 +77,10 @@ flowchart LR
     CC -- "C3 · report (resources/read)" --> M
     CC -- "C4 · score" --> SC
     CC -- "C5 · advice (POST /api/v1/advice)" --> CA
-    WS -. "planned (extraction step 3) · sign-in codes" .-> NS
-    AN -. "planned (extraction step 3) · alert emails" .-> NS
+    WS -- "L-otp · sign-in code (OTP_SIGN_IN)" --> NS
     NS -- "reserve key, then SENT" --> NT
+    NS -- "email (SES) · SMS (SNS)" --> SESSNS
+    NS -- "email (SMTP)" --> MAIL
 ```
 
 ## Modules
@@ -100,8 +102,8 @@ flowchart LR
 | `offers-service` | Credit card offers for a score and ZIP code, ranked; an MCP tool, and a REST API that calls it | Spring Boot, LangChain4j `McpServer` |
 | `dark-web-monitor` | Scheduled job: checks registered users' emails against known dark-web locations and records exposures in the `Alerts` table (placeholder source) | Spring Boot `@Scheduled`, AWS SDK DynamoDB |
 | `alerts-service` | Internal look-up: does the `Alerts` table hold a record for this email? | Spring Boot, AWS SDK DynamoDB |
-| `alert-notifier` | Daily job: emails each ID Protection subscriber whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring Mail (SMTP), AWS SDK DynamoDB |
-| `notification-service` | Internal API: sends one templated email (SES or SMTP) or SMS (SNS) per idempotency key; owns the templates. No callers yet (N3 adds them behind `NOTIFICATIONS_MODE`) | Spring Boot, AWS SDK SES v2, SNS, DynamoDB, Spring Mail |
+| `alert-notifier` | Daily job: emails each ID Protection subscriber whose address was found in the last 24 hours | Spring Boot `@Scheduled` cron, Spring `RestClient` (notification-service), AWS SDK DynamoDB |
+| `notification-service` | Internal API: sends one templated email (SES or SMTP) or SMS (SNS) per idempotency key; owns the templates and the provider clients. Called by web-server (sign-in codes) and alert-notifier (alert emails) | Spring Boot, AWS SDK SES v2, SNS, DynamoDB, Spring Mail |
 | `alerts-store` | The `Alerts` table: record type, repository, table creation | AWS SDK DynamoDB |
 | `subscription-store` | The Subscriptions table: products, terms, conditional activation, look-up by email | AWS SDK DynamoDB |
 | `user-advisor-agent` | Chat back end: input and output guardrails around a placeholder LLM, with per-conversation memory in RAM | Spring Boot |
@@ -183,7 +185,8 @@ sequenceDiagram
     participant U as DynamoDB users
     participant S as DynamoDB sessions
     participant C as DynamoDB login-challenges
-    participant M as Amazon SES / SNS
+    participant N as notification-service :8094
+    participant M as Amazon SES / SNS / SMTP
     UI->>WS: POST /api/v1/auth/register (multipart: userId, password, email, mobilePhone, zip, authorize=true, ssnCard image)
     WS->>WS: check fields, password rules, user id free (400 / 409, no KYC call)
     WS->>K: POST /api/v1/ssn-verifications (multipart: document)
@@ -202,7 +205,9 @@ sequenceDiagram
     UI->>WS: POST /api/v1/auth/login/otp {challengeId, channel}
     WS->>C: UpdateItem per-account hourly counter (if < 10)
     WS->>C: UpdateItem code HMAC (if not expired, sends < 3, last send ≥ 30 s ago)
-    WS->>M: SES SendEmail / SNS Publish (Transactional) the 6-digit code
+    WS->>N: POST /internal/v1/notifications OTP_SIGN_IN {code, validSeconds}, Idempotency-Key otp:<challengeId>:<n>
+    N->>M: SES SendEmail / SNS Publish (Transactional) / SMTP, the rendered text
+    N-->>WS: 202 SENT | UNCERTAIN, 422 refused (send given back), 503 / timeout / down (send counts)
     WS-->>UI: 202 {destination, codeExpiresInSeconds, resendAfterSeconds}, or 429 Retry-After, or 503
     UI->>WS: POST /api/v1/auth/login/verify {challengeId, code}
     WS->>C: UpdateItem attempts + 1 (if < 5); compare HMAC in constant time
@@ -217,7 +222,7 @@ sequenceDiagram
     WS->>S: DeleteItem session
 ```
 
-**Two-factor login.** The password step only opens a *challenge* in `credit-agent-login-challenges` (TTL on `expiresAt`); only a correct one-time code opens a session. Codes are 6 random digits stored as an HMAC-SHA256 bound to the challenge id (key derived from `JWT_SECRET`), valid 5 minutes, compared in constant time and consumed by a conditional delete, so each works once. Limits are conditional writes: 5 tries per sign-in, 3 sends per sign-in at least 30 s apart, 10 sends per account per clock hour (counter items `user#<sha-256 of id>#<hour>` in the same table). Trade-offs: a fixed hourly window lets up to 20 sends straddle an hour boundary, accepted for one write per send; codes are not locked to a device, so they defend against password reuse and stuffing, not real-time phishing (passkeys would); SMS is weaker than email against SIM swap, so both are offered and the user picks. Sends go through `NotificationGateway` (template `OTP_SIGN_IN`, params `code` and `validMinutes`, idempotency key `otp:<challengeId>:<send number>`), the seam for the coming notification-service ([ADR 0001](adr/0001-extract-notification-service.md)); today `LocalNotificationGateway` renders through one `OtpSender` per channel. `OtpSender` has three implementations: `SesEmailOtpSender`, `SnsSmsOtpSender` (Transactional, optional origination number) and `LoggingOtpSender` (local only, refused against AWS). SES and SNS calls have a 5 s budget with the SDK's standard retry (backoff with jitter); a duplicate send after a retry delivers the same code. The connector's OAuth consent form uses the same code step after password + SSN (`/oauth/authorize/sign-in`, then `/oauth/authorize/approve`, which checks the code and the SSN again before issuing the authorization code); a plain form post of `allow` is refused. Sends are recorded before the hourly quota is taken. A send the provider clearly refused (4xx, not throttling) is given back, conditional on its code hash; a timeout, 5xx or throttling may still deliver, so that send keeps counting and its code stays valid. Otherwise failures could be used to send codes without limit.
+**Two-factor login.** The password step only opens a *challenge* in `credit-agent-login-challenges` (TTL on `expiresAt`); only a correct one-time code opens a session. Codes are 6 random digits stored as an HMAC-SHA256 bound to the challenge id (key derived from `JWT_SECRET`), valid 5 minutes, compared in constant time and consumed by a conditional delete, so each works once. Limits are conditional writes: 5 tries per sign-in, 3 sends per sign-in at least 30 s apart, 10 sends per account per clock hour (counter items `user#<sha-256 of id>#<hour>` in the same table). Trade-offs: a fixed hourly window lets up to 20 sends straddle an hour boundary, accepted for one write per send; codes are not locked to a device, so they defend against password reuse and stuffing, not real-time phishing (passkeys would); SMS is weaker than email against SIM swap, so both are offered and the user picks. Sends go through `NotificationGateway` to the notification-service (`RemoteNotificationGateway`, template `OTP_SIGN_IN`, params `code` and `validSeconds`, idempotency key `otp:<challengeId>:<send number>`; [ADR 0001](adr/0001-extract-notification-service.md)); the web server holds no SES, SNS or SMTP client. Calls have a 2 s connect and 10 s answer limit; only a failed connect is retried (same key, backoff with jitter), so the service stays the one retry layer. Login depends on the service at run time: while it is down a send answers 503 with `Retry-After`, and that send counts. Locally, emailed codes land in Mailpit; texts are logged with their code only with `NOTIFICATIONS_SMS_LOG_CODES=true` (local DynamoDB only). The connector's OAuth consent form uses the same code step after password + SSN (`/oauth/authorize/sign-in`, then `/oauth/authorize/approve`, which checks the code and the SSN again before issuing the authorization code); a plain form post of `allow` is refused. Sends are recorded before the hourly quota is taken. A send the provider clearly refused (the service answers 422) is given back, conditional on its code hash; a timeout, 5xx, 429 or an unreachable service may still deliver, so that send keeps counting and its code stays valid. Otherwise failures could be used to send codes without limit.
 
 **SSN from the card, not the keyboard.** Registration has no SSN field. The user uploads a photo of their Social Security card and the web server sends it to the KYC provider through `IdentityVerifier` (`KycHttpClient`). The SSN bound to the account is the one the provider read, so nobody can claim another person's SSN by typing it. Field, password and user-id checks run first, so a bad form never costs a KYC call. The web server only forwards PNG and JPEG files (by magic bytes) up to 5 MB, and never decodes them itself.
 
@@ -398,7 +403,7 @@ sequenceDiagram
     participant N as alert-notifier
     participant A as Alerts table
     participant T as Subscriptions table
-    participant S as SMTP relay
+    participant S as notification-service
     Note over N: every day at 08:00 UTC (NOTIFIER_CRON)
     N->>A: query by-day index: day ∈ last 8 UTC days, timestamp ∈ [run − 7 d, run), notifiedAt absent (normally only the last 24 h)
     loop each user (≤ 10 a second)
@@ -407,7 +412,8 @@ sequenceDiagram
         alt free user
             Note over N: claimed, not emailed (the login banner covers them)
         else subscriber
-            N->>S: one plain-text email (no locations)
+            N->>S: POST DARK_WEB_ALERT {count, firstSeen, appUrl}, key alert:<HMAC of address>:<run>
+            Note over S: renders the fixed text, sends by SES or SMTP
         end
         alt send failed
             N->>A: release: REMOVE notifiedAt IF = run
@@ -417,11 +423,11 @@ sequenceDiagram
 
 **Finding the last 24 hours.** The table's key is email + location, so "found in the last day" would need a scan. Each alert now also carries `day` (its UTC date), and a global secondary index `by-day` (key `day` + `timestamp`) answers it with one query per day touched. A run asks for alerts no email has covered within `NOTIFIER_LOOKBACK` (7 days), not only 24 hours: since every run claims what it emails, a healthy daily run still finds just the last 24 hours, and the lookback is what lets a failed send, a capped or interrupted run, a run that started a little later than the day before, an alert written by a monitor cycle that started before the run but finished after it, or a day the service was down, catch up the next day instead of being lost. Each index query's bounds are widened to whole seconds (ISO strings with 0–9 fractional digits do not sort as time within one second) and the exact window is applied in code. Trade-off: every write also writes the index, and a day's alerts share one index partition; at this scale (a handful of new alerts a day per user, at most) that is far from DynamoDB's per-partition limits. `AlertsTable.ensure` adds the index to a table created before it existed; alerts written before it have no `day` and are older than any window anyway.
 
-**Exactly one email per alert, not per run.** Each alert is claimed with a conditional update (`notifiedAt` absent → set to the run's time) before the email goes out, so two overlapping runs or two replicas cannot both email it, and a re-run the same day finds nothing new. A failed send, or a DynamoDB error while claiming, releases that user's claims (only this run's own) and the run carries on with the next user; the next run retries them. If the process dies after sending but before finishing, the claim stays: the user is never emailed twice for the same finding (at most once). Without a mail relay (`MAIL_HOST`) a run reads and claims nothing, so configuring one later still emails the waiting alerts.
+**Exactly one email per alert, not per run.** Each alert is claimed with a conditional update (`notifiedAt` absent → set to the run's time) before the email goes out, so two overlapping runs or two replicas cannot both email it, and a re-run the same day finds nothing new. A failed send, or a DynamoDB error while claiming, releases that user's claims (only this run's own) and the run carries on with the next user; the next run retries them. If the process dies after sending but before finishing, the claim stays: the user is never emailed twice for the same finding (at most once). Without `INTERNAL_API_TOKEN` a run reads and claims nothing, so configuring it later still emails the waiting alerts.
 
-**What the email says.** Fixed wording, plain text: how many places and the first date, what to do (identity protection, change passwords), a sign-in pointer, and that we never ask for a password or SSN by email. No location names (they stay behind sign-in) and nothing else from outside the service, so the email cannot carry markup or attacker-chosen links. The sender comes from config; the recipient is the registered address (validated at registration, unique per account).
+**What the email says.** The notification-service owns the wording (template `DARK_WEB_ALERT`); the notifier sends only the count, the first-seen date and the sign-in address. Fixed wording, plain text: how many places and the first date, what to do (identity protection, change passwords), a sign-in pointer, and that we never ask for a password or SSN by email. No location names (they stay behind sign-in) and nothing else from outside the service, so the email cannot carry markup or attacker-chosen links. The sender is the service's `NOTIFICATIONS_EMAIL_FROM`; the recipient is the registered address (validated at registration, unique per account).
 
-**Resilience.** SMTP calls have a 5 s connect and 10 s read/write timeout. Sends are paced (`NOTIFIER_SENDS_PER_SECOND`, 10) to stay within the relay's limits, and a run reads at most `NOTIFIER_MAX_ALERTS_PER_RUN` alerts. Sends are not retried within a run: a timed-out send may have been delivered, and a second try could duplicate it. The mail health indicator is off, so a relay outage does not mark the notifier unhealthy or get it restarted. Without `MAIL_HOST` the run is skipped with a warning. SMTP needs STARTTLS: the notifier refuses to start with it off unless the relay is local (`localhost`, `mailpit`), which compose's Mailpit is.
+**Resilience.** Each call to the notification-service is bounded by `NOTIFICATIONS_TIMEOUT` (15 s, connect and answer). Sends are paced (`NOTIFIER_SENDS_PER_SECOND`, 10) to stay within the service's and provider's limits, and a run reads at most `NOTIFIER_MAX_ALERTS_PER_RUN` alerts. Sends are not retried within a run (the service retries its providers): a refused, unknown or failed send releases its claims for the next run, which uses a new key, so a later duplicate is accepted over a lost alert. A service outage does not mark the notifier unhealthy. Without `INTERNAL_API_TOKEN` the run is skipped with a warning. SMTP and its STARTTLS rule now live on the notification-service.
 
 ## Credit report storage
 

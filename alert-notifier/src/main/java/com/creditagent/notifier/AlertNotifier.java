@@ -34,7 +34,7 @@ public class AlertNotifier {
     private static final Logger log = LoggerFactory.getLogger(AlertNotifier.class);
 
     /**
-     * What one run did. {@code skipped}: no mail relay is configured, so nothing was read or claimed.
+     * What one run did. {@code skipped}: the notification-service is not configured, so nothing was read or claimed.
      * {@code notSubscribed}: users not emailed because they have no ID Protection. {@code unknown}: users
      * left for the next run because whether they subscribe could not be read.
      */
@@ -83,7 +83,7 @@ public class AlertNotifier {
         try {
             Run run = run();
             if (run.skipped()) {
-                log.warn("Alert emails: no mail relay configured (MAIL_HOST); alerts stay unclaimed until one is");
+                log.warn("Alert emails: no notification-service configured (INTERNAL_API_TOKEN); alerts stay unclaimed until it is");
                 return;
             }
             // Counts only: no addresses in logs.

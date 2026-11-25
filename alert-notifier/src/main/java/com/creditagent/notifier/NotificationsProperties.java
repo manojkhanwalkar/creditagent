@@ -7,24 +7,20 @@ import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * How alert emails are sent ({@code credit.notifications}).
+ * The notification-service that sends alert emails ({@code credit.notifications}).
  *
- * @param mode {@code local} (the SMTP relay, the default) or {@code remote} (the notification-service)
  * @param url the notification-service base URL: absolute http(s) with a host, and https unless the host
  *     is local ({@code localhost}, {@code 127.0.0.1}, {@code ::1}) or a compose service name (no dot), so
  *     addresses and the service token never cross a network in clear text
  * @param timeout longest one call to the service may take; above the service's own worst case (about 8 s)
  */
 @ConfigurationProperties("credit.notifications")
-public record NotificationsProperties(Mode mode, String url, Duration timeout) {
-
-    public enum Mode { LOCAL, REMOTE }
+public record NotificationsProperties(String url, Duration timeout) {
 
     /** Hosts where plain http is acceptable: this machine. A name without a dot is a compose service. */
     static final Set<String> LOCAL_HOSTS = Set.of("localhost", "127.0.0.1", "::1", "[::1]");
 
     public NotificationsProperties {
-        mode = mode == null ? Mode.LOCAL : mode;
         url = url == null || url.isBlank() ? "http://localhost:8094" : url.strip();
         timeout = timeout == null ? Duration.ofSeconds(15) : timeout;
         if (!timeout.isPositive()) {

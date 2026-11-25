@@ -42,7 +42,7 @@ public final class RemoteNotificationGateway implements NotificationGateway {
         this.retry = Objects.requireNonNull(retry);
         if (token == null || token.isBlank()) {
             throw new IllegalStateException(
-                    "NOTIFICATIONS_MODE=remote needs INTERNAL_API_TOKEN, the notification-service's token");
+                    "Sign-in codes need INTERNAL_API_TOKEN, the notification-service's token");
         }
         this.token = token;
     }

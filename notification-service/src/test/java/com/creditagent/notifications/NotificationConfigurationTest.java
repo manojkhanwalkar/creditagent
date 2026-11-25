@@ -57,6 +57,25 @@ class NotificationConfigurationTest {
     }
 
     @Test
+    void smsCodesAreLoggedOnlyWhenAskedForWithTheLogSenderAndALocalDynamoDb() {
+        assertThatThrownBy(() -> new NotificationProperties("t".repeat(40), EmailProvider.SES, SmsProvider.SNS, null, null,
+                null, null, null, null, null, null, null, "http://localhost:8000", null, null, null, null, null, null, true))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("NOTIFICATIONS_SMS=log");
+        NotificationProperties local = new NotificationProperties("t".repeat(40), EmailProvider.LOG, SmsProvider.LOG, null,
+                null, null, null, null, null, null, null, null, "http://localhost:8000", null, null, null, null, null, null, true);
+        assertThat(local.smsLogCodes()).isTrue();
+        assertThat(local.toString()).contains("smsLogCodes=true");
+        assertThat(NotificationConfiguration.senders(local, null, null, null, "", false).get(Channel.SMS))
+                .isInstanceOf(Senders.Logging.class);
+        NotificationProperties aws = new NotificationProperties("t".repeat(40), EmailProvider.SES, SmsProvider.LOG, null,
+                null, null, null, null, null, null, null, null, "https://dynamodb.us-east-1.amazonaws.com", null, null, null,
+                null, null, null, true);
+        assertThatThrownBy(() -> NotificationConfiguration.senders(aws, mock(SesV2Client.class), null, null, "", true))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("local development only");
+        assertThat(props(EmailProvider.SES, SmsProvider.SNS, "").smsLogCodes()).isFalse();
+    }
+
+    @Test
     void smtpNeedsARelayAndTlsUnlessItIsTheLocalCatcher() {
         assertThatThrownBy(() -> NotificationConfiguration.senders(props(EmailProvider.SMTP, SmsProvider.SNS, ""),
                 null, mock(SnsClient.class), mock(JavaMailSender.class), " ", true))

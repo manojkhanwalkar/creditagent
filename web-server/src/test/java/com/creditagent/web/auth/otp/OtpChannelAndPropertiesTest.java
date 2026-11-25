@@ -31,11 +31,7 @@ class OtpChannelAndPropertiesTest {
 
     @Test
     void propertiesDefaultToSafeLimits() {
-        OtpProperties p = new OtpProperties(null, null, null, null, "no-reply@x.example", null, null, null, null, "t",
-                null, null, null, null, null, null);
-        assertThat(p.delivery()).isEqualTo(OtpProperties.Delivery.AWS);
-        assertThat(p.region()).isEqualTo("us-east-1");
-        assertThat(p.timeout()).isEqualTo(Duration.ofSeconds(5));
+        OtpProperties p = new OtpProperties("t", null, null, null, null, null, null);
         assertThat(p.codeTtl()).isEqualTo(Duration.ofMinutes(5));
         assertThat(p.challengeTtl()).isEqualTo(Duration.ofMinutes(10));
         assertThat(p.maxAttempts()).isEqualTo(5);
@@ -46,14 +42,25 @@ class OtpChannelAndPropertiesTest {
 
     @Test
     void propertiesRefuseLimitsThatDisableTheChecks() {
-        assertThatThrownBy(() -> new OtpProperties(null, " ", null, null, "f", null, null, null, null, "t",
-                null, null, 0, null, null, null)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OtpProperties(null, null, null, null, "f", null, null, null, null, "t",
-                null, null, null, 0, null, null)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OtpProperties(null, null, null, null, "f", null, null, null, null, "t",
-                null, null, null, null, null, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OtpProperties(null, null, null, null, "f", null, null, null, null, "t",
-                Duration.ofMinutes(20), Duration.ofMinutes(10), null, null, null, null))
+        assertThatThrownBy(() -> new OtpProperties("t", null, null, 0, null, null, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new OtpProperties("t", null, null, null, 0, null, null)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new OtpProperties("t", null, null, null, null, null, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new OtpProperties("t", Duration.ofMinutes(20), Duration.ofMinutes(10), null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("code-ttl");
+    }
+
+    @Test
+    void aDeliveryFailureKeepsItsClassWhenItGainsAWait() {
+        OtpDeliveryException later = new OtpDeliveryException(OtpChannel.SMS, new IllegalStateException("x"), false)
+                .withRetryAfter(Duration.ofSeconds(30));
+        assertThat(later.retryAfter()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(later.channel()).isEqualTo(OtpChannel.SMS);
+        assertThat(later.refused()).isFalse();
+        assertThat(later.lastSend()).isFalse();
+        OtpDeliveryException last = new OtpDeliveryException(OtpChannel.EMAIL, new IllegalStateException("x"), true).asLastSend();
+        assertThat(last.lastSend()).isTrue();
+        assertThat(last.refused()).isTrue();
+        assertThat(last.retryAfter()).isNull();
+        assertThat(last.getMessage()).isEqualTo("Could not send a sign-in code by EMAIL");
     }
 }

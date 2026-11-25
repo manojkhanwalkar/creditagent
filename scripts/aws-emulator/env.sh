@@ -38,12 +38,12 @@ esac
 # CreditAgent settings: every DynamoDB table goes to the emulator.
 export DYNAMODB_ENDPOINT="https://127.0.0.1:$_ae_port"
 export DYNAMODB_CREATE_TABLES=true
-# Sign-in codes are written to the web server's log, not sent: the emulator (1.0.531) keeps SES in its
+# notification-service logs messages instead of sending them: the emulator (1.0.531) keeps SES in its
 # sandbox (a sender can never be verified locally, so every email is refused) and does not implement SNS
 # Publish to a phone number yet (aws/aws-emulator#572). The real SES/SNS calls are covered by unit tests.
-export OTP_DELIVERY=log
-# The same for notification-service: messages are logged (masked, never the code), not sent.
-export NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log
+# Emails are logged masked and without the code; texts are logged with the code
+# (NOTIFICATIONS_SMS_LOG_CODES, refused unless DynamoDB is local), so sign in by text.
+export NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log NOTIFICATIONS_SMS_LOG_CODES=true
 # Subscriptions "paid" with the test gateway: every payment succeeds and nothing is charged.
 export PAYMENTS_PROVIDER=test
 echo "Pointed at AWS Emulator on https://127.0.0.1:$_ae_port"

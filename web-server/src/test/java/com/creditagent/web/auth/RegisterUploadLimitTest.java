@@ -29,7 +29,9 @@ import org.springframework.test.context.DynamicPropertySource;
     "credit.kyc.url=http://kyc.invalid",
     "credit.auth.dynamodb.endpoint=http://dynamodb.invalid",
     "credit.web.mcp-url=http://mcp.invalid/mcp",
-    "credit.web.score-calculator-url=http://score.invalid"
+    "credit.web.score-calculator-url=http://score.invalid",
+    // Sign-in codes go through the notification-service, which needs the service token to start.
+    "credit.internal.token=test-internal-token-not-a-secret-0123456789"
 })
 class RegisterUploadLimitTest {
 

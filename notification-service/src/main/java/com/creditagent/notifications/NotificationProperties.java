@@ -2,6 +2,7 @@ package com.creditagent.notifications;
 
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /**
  * The notification service ({@code credit.notifications.*}).
@@ -26,6 +27,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param smtpTimeout longest one SMTP send may take in all (the mail timeouts bound single socket steps)
  * @param hashKey keys the stored hashes of idempotency keys and requests, at least 32 characters; blank =
  *     derived from the service token (then rotating the token re-keys every stored hash)
+ * @param smsLogCodes local sign-in only: with {@code sms=log}, also write the text, sign-in code included,
+ *     to the log, so a developer without SNS can sign in by text. Refused unless {@code sms} is {@code log}
+ *     and DynamoDB is local (the same guard as the log senders)
  */
 @ConfigurationProperties("credit.notifications")
 public record NotificationProperties(
@@ -47,12 +51,14 @@ public record NotificationProperties(
         Duration retention,
         Duration lease,
         Duration smtpTimeout,
-        String hashKey) {
+        String hashKey,
+        Boolean smsLogCodes) {
 
     public enum EmailProvider { SES, SMTP, LOG }
 
     public enum SmsProvider { SNS, LOG }
 
+    @ConstructorBinding
     public NotificationProperties {
         serviceToken = serviceToken == null ? "" : serviceToken;
         email = email == null ? EmailProvider.SES : email;
@@ -67,6 +73,10 @@ public record NotificationProperties(
         lease = lease == null ? Duration.ofSeconds(60) : lease;
         smtpTimeout = smtpTimeout == null ? Duration.ofSeconds(10) : smtpTimeout;
         hashKey = hashKey == null ? "" : hashKey.strip();
+        smsLogCodes = smsLogCodes != null && smsLogCodes;
+        if (smsLogCodes && sms != SmsProvider.LOG) {
+            throw new IllegalArgumentException("NOTIFICATIONS_SMS_LOG_CODES needs NOTIFICATIONS_SMS=log");
+        }
         if (!providerTimeout.isPositive() || !dynamodbTimeout.isPositive() || !retention.isPositive()
                 || !smtpTimeout.isPositive()) {
             throw new IllegalArgumentException("credit.notifications: timeouts and retention must be positive");
@@ -82,6 +92,17 @@ public record NotificationProperties(
     }
 
     static final int MIN_HASH_KEY_LENGTH = 32;
+
+    /** Without {@code smsLogCodes} (off): the shape most callers and tests use. */
+    public NotificationProperties(String serviceToken, EmailProvider email, SmsProvider sms, String region,
+            String sesEndpoint, String snsEndpoint, String emailFrom, String sesConfigurationSet, String smsSenderId,
+            String smsOriginationNumber, Duration providerTimeout, String table, String dynamodbEndpoint,
+            Duration dynamodbTimeout, Boolean createTables, Duration retention, Duration lease, Duration smtpTimeout,
+            String hashKey) {
+        this(serviceToken, email, sms, region, sesEndpoint, snsEndpoint, emailFrom, sesConfigurationSet, smsSenderId,
+                smsOriginationNumber, providerTimeout, table, dynamodbEndpoint, dynamodbTimeout, createTables, retention,
+                lease, smtpTimeout, hashKey, false);
+    }
 
     /**
      * The longest one request can take: the reserve (a put, and a read if the key is held), the provider
@@ -108,6 +129,6 @@ public record NotificationProperties(
     @Override
     public String toString() {
         return "NotificationProperties[serviceToken=<redacted>, hashKey=<redacted>, email=" + email + ", sms=" + sms + ", region=" + region
-                + ", table=" + table + "]";
+                + ", table=" + table + ", smsLogCodes=" + smsLogCodes + "]";
     }
 }

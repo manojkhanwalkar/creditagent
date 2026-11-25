@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Import;
 public class AuthControllerConfig {
 
     /** Where the sign-in codes of these tests "arrive". */
-    public static final RecordingOtpSender OTP = new RecordingOtpSender();
+    public static final RecordingNotificationGateway OTP = new RecordingNotificationGateway();
 
     @Bean
     OtpLoginService otpLoginService(AuthService auth) {
