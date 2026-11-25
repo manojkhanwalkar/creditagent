@@ -53,7 +53,7 @@
         <!-- Line coverage every module must keep (the whole project targets 95% in CI). -->
         <coverage.module.minimum>0.90</coverage.module.minimum>
         <jacoco.version>0.8.16</jacoco.version>
-        <aws-sdk.version>2.58.0</aws-sdk.version>
+        <aws-sdk.version>2.59.7</aws-sdk.version>
         <nimbus-jose-jwt.version>10.10</nimbus-jose-jwt.version>
     </properties>
 
