@@ -37,8 +37,14 @@ unchanged), then call the activation endpoint with the `paymentReference`.
 - 200 `ACTIVE` or `ALREADY_SAME_PAYMENT`: done. The same payment twice is safe, so retries are too.
 - 409 `ALREADY_ACTIVE`: another term is active; **compensate by refunding** the payment. web-server's
   audit keeps `SUBSCRIPTION_STARTED/ALREADY_ACTIVE`, as today.
+- 404 with problem type `urn:creditagent:problem:unknown-user`: the account is gone; refund.
+- **Refund only on 409 `ALREADY_ACTIVE` or that typed 404.** A bare 404 (internal API off: no
+  `INTERNAL_API_TOKEN`), 401 or 403 is a configuration error: retry with backoff and alert, never refund.
 - 503 (Retry-After), a timeout or a failed connect: retry with backoff and jitter, the same reference.
-- 404 or 400: a bug or a deleted account; refund.
+- 400: a caller bug; hold the payment and alert.
+
+Activations are audited with actor `service:payments` (a browser purchase is `user:<id>`);
+`ALREADY_SAME_PAYMENT` changes nothing and writes no audit entry.
 
 **No broker.** The activation step is recorded in payments-service's DynamoDB outbox in the same
 write as the payment, and a relay retries it until it gets a final answer. One table and a poller cost

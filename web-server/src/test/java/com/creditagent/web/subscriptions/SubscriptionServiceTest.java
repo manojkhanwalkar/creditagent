@@ -146,19 +146,36 @@ class SubscriptionServiceTest {
     @Test
     void theSamePaymentConfirmedTwiceIsTheActiveTermNotARefund() {
         SubscriptionService subscriptions = service(PaymentGateway.test());
-        SubscriptionService.Activation first = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_1");
+        SubscriptionService.Activation first = subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.ID_PROTECTION, "pay_1");
         assertThat(first.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ACTIVE);
         assertThat(first.expiresAt()).isEqualTo(Instant.parse("2027-11-21T10:00:00Z"));
-        SubscriptionService.Activation again = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_1");
+        SubscriptionService.Activation again = subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.ID_PROTECTION, "pay_1");
         assertThat(again.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ALREADY_SAME_PAYMENT);
         assertThat(again.term()).isEqualTo(first.term());
-        SubscriptionService.Activation other = subscriptions.activatePaid("ada", Product.ID_PROTECTION, "pay_2");
+        SubscriptionService.Activation other = subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.ID_PROTECTION, "pay_2");
         assertThat(other.outcome()).isEqualTo(SubscriptionService.ActivationOutcome.ALREADY_ACTIVE);
         assertThat(other.expiresAt()).isNull();
-        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
+        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("service:payments"), eq("user:ada"),
                 eq("OK"), any(Map.class));
-        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"),
+        verify(audit, org.mockito.Mockito.times(1)).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("service:payments"), eq("user:ada"),
                 eq("ALREADY_ACTIVE"), any(Map.class));
+        // The repeat (ALREADY_SAME_PAYMENT) changed nothing and wrote no audit entry.
+        verify(audit, org.mockito.Mockito.times(2)).record(any(), any(), any(), any(), any(Map.class));
+    }
+
+    @Test
+    void anInternalActivationIsAuditedAsThePaymentsServiceAndABrowserPurchaseAsTheUser() {
+        SubscriptionService subscriptions = service(PaymentGateway.test());
+        subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.ID_PROTECTION, "pay_1");
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("service:payments"), eq("user:ada"), eq("OK"), any(Map.class));
+        subscriptions.subscribe("ada", Product.ID_PROTECTION);
+        verify(audit, org.mockito.Mockito.never()).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), any(), any(),
+                any(Map.class));
+        store.eraseAll("ada", "ada@example.com");
+        subscriptions.subscribe("ada", Product.ID_PROTECTION);
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"), eq("OK"), any(Map.class));
+        assertThatThrownBy(() -> subscriptions.activatePaid(null, "ada", Product.ID_PROTECTION, "pay_2"))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -167,13 +184,13 @@ class SubscriptionServiceTest {
         given(auth.account("ghost")).willReturn(Optional.empty());
         given(auth.account("noemail")).willReturn(Optional.of(new User("noemail", "$2a$h", null, "h", "6789", "k",
                 Instant.EPOCH, ReportStatus.UNLOCKED)));
-        assertThatThrownBy(() -> subscriptions.activatePaid("ghost", Product.ID_PROTECTION, "pay_1"))
+        assertThatThrownBy(() -> subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ghost", Product.ID_PROTECTION, "pay_1"))
                 .isInstanceOf(UnknownSubscriberException.class);
-        assertThatThrownBy(() -> subscriptions.activatePaid("noemail", Product.ID_PROTECTION, "pay_1"))
+        assertThatThrownBy(() -> subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "noemail", Product.ID_PROTECTION, "pay_1"))
                 .isInstanceOf(UnknownSubscriberException.class);
-        assertThatThrownBy(() -> subscriptions.activatePaid("ada", Product.CREDIT_MONITORING, "pay_1"))
+        assertThatThrownBy(() -> subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.CREDIT_MONITORING, "pay_1"))
                 .isInstanceOf(ProductNotOfferedException.class);
-        assertThatThrownBy(() -> subscriptions.activatePaid("ada", null, "pay_1"))
+        assertThatThrownBy(() -> subscriptions.activatePaid(SubscriptionActivationController.ACTOR, "ada", null, "pay_1"))
                 .isInstanceOf(ProductNotOfferedException.class);
         assertThat(store.findAll("ada")).isEmpty();
     }
@@ -182,9 +199,9 @@ class SubscriptionServiceTest {
     void anActivationWhoseTermCannotBeStoredIsAuditedAsFailed() {
         SubscriptionRepository failing = mock(SubscriptionRepository.class);
         given(failing.activate(any(), anyString())).willThrow(SdkClientException.create("timeout"));
-        assertThatThrownBy(() -> service(PaymentGateway.none(), failing).activatePaid("ada", Product.ID_PROTECTION, "pay_9"))
+        assertThatThrownBy(() -> service(PaymentGateway.none(), failing).activatePaid(SubscriptionActivationController.ACTOR, "ada", Product.ID_PROTECTION, "pay_9"))
                 .isInstanceOf(SdkClientException.class);
-        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("user:ada"), eq("user:ada"), eq("FAILED"), any(Map.class));
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("service:payments"), eq("user:ada"), eq("FAILED"), any(Map.class));
     }
 
     @Test
@@ -325,7 +342,10 @@ class SubscriptionServiceTest {
                 .isInstanceOf(ProductNotOfferedException.class);
 
         assertThat(controller.notOffered(new ProductNotOfferedException()).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(controller.unknownUser(new UnknownSubscriberException()).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        var unknown = controller.unknownUser(new UnknownSubscriberException());
+        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(unknown.getBody().getType()).hasToString("urn:creditagent:problem:unknown-user");
+        verify(audit).record(eq(AuditLog.Event.SUBSCRIPTION_STARTED), eq("service:payments"), eq("user:ada"), eq("OK"), any(Map.class));
         var down = controller.storeUnavailable(SdkClientException.create("down"));
         assertThat(down.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(down.getHeaders().getFirst("Retry-After")).isEqualTo("5");

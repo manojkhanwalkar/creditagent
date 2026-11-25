@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.net.URI;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -30,6 +31,13 @@ import software.amazon.awssdk.core.exception.SdkException;
 class SubscriptionActivationController {
 
     static final String PATH = "/internal/v1/subscriptions/activations";
+    /** The audit actor for activations through this API (a browser purchase is {@code user:<id>}). */
+    static final String ACTOR = "service:payments";
+    /**
+     * Marks the 404 that means "no such user" (refund), so the caller can tell it from the bare 404 of
+     * an internal API that is off (a configuration error: retry and alert, never refund).
+     */
+    static final URI UNKNOWN_USER = URI.create("urn:creditagent:problem:unknown-user");
 
     private final SubscriptionService subscriptions;
 
@@ -53,7 +61,7 @@ class SubscriptionActivationController {
     ResponseEntity<ActivationResponse> activate(@Valid @RequestBody ActivationRequest request) {
         Product product = Product.parse(request.product()).orElseThrow(ProductNotOfferedException::new);
         SubscriptionService.Activation activation =
-                subscriptions.activatePaid(request.userId(), product, request.paymentReference());
+                subscriptions.activatePaid(ACTOR, request.userId(), product, request.paymentReference());
         ActivationResponse body = new ActivationResponse(activation.outcome(), activation.expiresAt());
         return switch (activation.outcome()) {
             case ACTIVE, ALREADY_SAME_PAYMENT -> ResponseEntity.ok(body);
@@ -68,8 +76,9 @@ class SubscriptionActivationController {
 
     @ExceptionHandler(UnknownSubscriberException.class)
     ResponseEntity<ProblemDetail> unknownUser(UnknownSubscriberException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage()));
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+        problem.setType(UNKNOWN_USER);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
     }
 
     /** DynamoDB failed (after the SDK's own retries): 503 with Retry-After; the caller retries with the same payment. */

@@ -219,7 +219,7 @@ public class SubscriptionService implements AccountSubscriptions {
         return switch (checkout) {
             case PaymentGateway.Redirect redirect -> new SubscribeResult(Outcome.CHECKOUT, product, null, redirect.url());
             case PaymentGateway.Paid paid -> {
-                Activation activation = activate(account, product, paid.paymentReference());
+                Activation activation = activate("user:" + userId, account, product, paid.paymentReference());
                 yield activation.outcome() == ActivationOutcome.ALREADY_ACTIVE
                         ? new SubscribeResult(Outcome.ALREADY_ACTIVE, product, null, null)
                         : new SubscribeResult(Outcome.ACTIVE, product, activation.expiresAt(), null);
@@ -230,19 +230,22 @@ public class SubscriptionService implements AccountSubscriptions {
     /**
      * Starts a term for a payment confirmed elsewhere (the payments-service, through
      * {@code POST /internal/v1/subscriptions/activations}). Safe to repeat: the same payment answers
-     * {@link ActivationOutcome#ALREADY_SAME_PAYMENT}.
+     * {@link ActivationOutcome#ALREADY_SAME_PAYMENT}, which writes no audit entry (nothing changed).
+     *
+     * @param actor who confirmed the payment, for the audit record ({@code service:payments})
      *
      * @throws ProductNotOfferedException if the product cannot be bought
      * @throws UnknownSubscriberException if there is no such account, or it has no email to hold a term
      * @throws RuntimeException if DynamoDB fails (audited as {@code FAILED})
      */
-    public Activation activatePaid(String userId, Product product, String paymentReference) {
+    public Activation activatePaid(String actor, String userId, Product product, String paymentReference) {
+        Objects.requireNonNull(actor, "actor");
         if (product == null || !OFFERED.contains(product)) {
             throw new ProductNotOfferedException();
         }
         Objects.requireNonNull(paymentReference, "paymentReference");
         User account = auth.account(userId).filter(u -> u.email() != null).orElseThrow(UnknownSubscriberException::new);
-        return activate(account, product, paymentReference);
+        return activate(actor, account, product, paymentReference);
     }
 
     /**
@@ -251,7 +254,7 @@ public class SubscriptionService implements AccountSubscriptions {
      * record says so, for a refund. The store's conditional write decides; a repeat of the payment that
      * bought the active term is recognised by its {@code paymentReference}.
      */
-    Activation activate(User account, Product product, String paymentReference) {
+    Activation activate(String actor, User account, Product product, String paymentReference) {
         Instant now = clock.instant();
         Instant end = now.atZone(ZoneOffset.UTC).plusYears(1).toInstant();
         Subscription term = new Subscription(account.userId(), product, now, end, paymentReference);
@@ -262,7 +265,7 @@ public class SubscriptionService implements AccountSubscriptions {
             started = store.activate(term, account.email());
         } catch (RuntimeException e) {
             // The payment was taken but no term was stored: record it, so it can be refunded or applied.
-            audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, "user:" + account.userId(), "user:" + account.userId(),
+            audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, actor, "user:" + account.userId(),
                     "FAILED", detail);
             log.warn("Payment {} for {} was taken but its term could not be stored: {}", paymentReference, product,
                     SafeLogging.describe(e));
@@ -276,7 +279,7 @@ public class SubscriptionService implements AccountSubscriptions {
                 return new Activation(ActivationOutcome.ALREADY_SAME_PAYMENT, same.get());
             }
         }
-        audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, "user:" + account.userId(), "user:" + account.userId(),
+        audit.record(AuditLog.Event.SUBSCRIPTION_STARTED, actor, "user:" + account.userId(),
                 started ? "OK" : "ALREADY_ACTIVE", detail);
         if (!started) {
             log.warn("Payment {} for {} started nothing: already subscribed; refund it", paymentReference, product);

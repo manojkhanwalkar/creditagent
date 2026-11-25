@@ -158,7 +158,8 @@ class SubscriptionActivationFlowTest {
 
     @Test
     void unknownUsersAndInvalidRequestsAreRefused() throws Exception {
-        mvc.perform(activation(SERVICE, body("nobody", "ID_PROTECTION", "pi_1"))).andExpect(status().isNotFound());
+        mvc.perform(activation(SERVICE, body("nobody", "ID_PROTECTION", "pi_1"))).andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.type").value(SubscriptionActivationController.UNKNOWN_USER.toString()));
         String user = newUser();
         for (String bad : List.of(body(user, "CREDIT_MONITORING", "pi_1"), body(user, "gold", "pi_1"),
                 body("Bad User", "ID_PROTECTION", "pi_1"), body(user, "ID_PROTECTION", "has space"),
@@ -244,6 +245,8 @@ class SubscriptionActivationFlowTest {
         assertThat(at(request, "paymentReference").get("maxLength")).isEqualTo(128);
         assertThat((List<String>) at(spec, "components", "schemas", "ActivationResponse", "properties", "outcome").get("enum"))
                 .containsExactlyElementsOf(Arrays.stream(SubscriptionService.ActivationOutcome.values()).map(Enum::name).toList());
+        assertThat((List<String>) at(spec, "components", "schemas", "UnknownUserProblem", "properties", "type").get("enum"))
+                .containsExactly(SubscriptionActivationController.UNKNOWN_USER.toString());
     }
 
     @Test

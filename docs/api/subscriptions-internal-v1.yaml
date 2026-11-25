@@ -26,7 +26,8 @@ paths:
         '200':
           description: >
             ACTIVE (this payment started a term) or ALREADY_SAME_PAYMENT (this payment already bought
-            the active term; nothing changed).
+            the active term; nothing changed). ACTIVE is audited as SUBSCRIPTION_STARTED / OK with actor
+            service:payments; ALREADY_SAME_PAYMENT writes no audit entry.
           content:
             application/json:
               schema:
@@ -38,13 +39,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         '401':
-          description: Missing or wrong service token.
+          description: >
+            Missing or wrong service token. A configuration error: retry with backoff and alert; never
+            refund.
         '404':
-          description: Unknown user (or the internal API is off).
+          description: >
+            With problem type urn:creditagent:problem:unknown-user, no such user (or an account without an
+            email): refund. A 404 without that type means the internal API is off (no INTERNAL_API_TOKEN
+            configured): a configuration error, so retry with backoff and alert; never refund.
           content:
             application/problem+json:
               schema:
-                $ref: '#/components/schemas/Problem'
+                $ref: '#/components/schemas/UnknownUserProblem'
         '409':
           description: >
             ALREADY_ACTIVE - another payment's term is active. This payment started nothing; the caller
@@ -99,6 +105,19 @@ components:
           type: string
           format: date-time
           description: End of the active term; absent for ALREADY_ACTIVE.
+    UnknownUserProblem:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: ['urn:creditagent:problem:unknown-user']
+        status:
+          type: integer
+        title:
+          type: string
+        detail:
+          type: string
     Problem:
       type: object
       properties:
