@@ -12,6 +12,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
+/**
+ * Wires subscriptions ({@code credit.subscriptions.*}): the Subscriptions table (created at start-up when
+ * {@code createTables} is on), the payment gateway chosen by {@code PAYMENTS_PROVIDER} behind a 30 s
+ * availability cache, and {@link SubscriptionService}.
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(SubscriptionProperties.class)
 class SubscriptionConfiguration {
@@ -26,7 +31,7 @@ class SubscriptionConfiguration {
 
     @Bean
     PaymentGateway paymentGateway(SubscriptionProperties properties, AuthProperties auth) {
-        return gateway(properties, auth);
+        return new CachingPaymentGateway(gateway(properties, auth), CachingPaymentGateway.DEFAULT_TTL, Clock.systemUTC());
     }
 
     /** The test gateway gives subscriptions away, so it is refused unless DynamoDB is local. */

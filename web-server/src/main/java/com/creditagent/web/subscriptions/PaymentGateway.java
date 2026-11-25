@@ -9,14 +9,27 @@ import java.util.Objects;
  * answers with a {@link Redirect} to the provider's hosted payment page, and the term starts when the
  * provider confirms the payment; so card data never reaches this server. A gateway that can charge at
  * once (the test gateway) answers {@link Paid}.
+ *
+ * <p>The branch-by-abstraction seam for the payments-service extraction (ADR 0002): P2 builds the
+ * service behind this contract, and P3 adds a remote implementation selected by config.
  */
 public interface PaymentGateway {
 
     /**
+     * The request the planned payments-service takes, so the remote gateway maps one to one.
+     *
      * @param amountCents the price in the currency's minor unit
-     * @param idempotencyKey the same for repeats of one purchase, so a retried request never charges twice
+     * @param currency an ISO 4217 code such as {@code USD}
+     * @param idempotencyKey the same for repeats of one purchase, so a retried request never charges twice;
+     *     passed to the provider unchanged (1 to 128 printable characters)
+     * @param returnUrl where a hosted payment page sends the user back to: absolute http(s), or null until
+     *     a redirecting provider exists
      */
-    record CheckoutRequest(String userId, Product product, long amountCents, String currency, String idempotencyKey) {
+    record CheckoutRequest(String userId, Product product, long amountCents, String currency, String idempotencyKey,
+            URI returnUrl) {
+
+        public static final int MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+
         public CheckoutRequest {
             Objects.requireNonNull(userId, "userId");
             Objects.requireNonNull(product, "product");
@@ -25,6 +38,27 @@ public interface PaymentGateway {
             if (amountCents <= 0) {
                 throw new IllegalArgumentException("A price must be positive");
             }
+            if (!currency.matches("[A-Z]{3}")) {
+                throw new IllegalArgumentException("currency must be an ISO 4217 code");
+            }
+            if (idempotencyKey.isEmpty() || idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH
+                    || !idempotencyKey.chars().allMatch(c -> c > 0x20 && c < 0x7f)) {
+                throw new IllegalArgumentException("idempotencyKey must be 1 to 128 printable characters");
+            }
+            if (returnUrl != null && !isWebUrl(returnUrl)) {
+                throw new IllegalArgumentException("returnUrl must be an absolute http(s) URL");
+            }
+        }
+
+        /** A request without a return URL (no redirecting provider yet). */
+        public CheckoutRequest(String userId, Product product, long amountCents, String currency, String idempotencyKey) {
+            this(userId, product, amountCents, currency, idempotencyKey, null);
+        }
+
+        private static boolean isWebUrl(URI url) {
+            String scheme = url.getScheme();
+            return url.isAbsolute() && url.getHost() != null
+                    && ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme));
         }
     }
 

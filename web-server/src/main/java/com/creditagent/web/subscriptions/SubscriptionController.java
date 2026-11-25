@@ -86,7 +86,8 @@ class SubscriptionController {
         return unavailable("Subscriptions could not be read. Please try again shortly.");
     }
 
-    private static ResponseEntity<ProblemDetail> unavailable(String detail) {
+    /** A 503 problem with {@code Retry-After: 5}; shared with {@link SubscriptionActivationController}. */
+    static ResponseEntity<ProblemDetail> unavailable(String detail) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "5")
                 .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, detail));
     }

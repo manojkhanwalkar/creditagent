@@ -1,0 +1,129 @@
+openapi: 3.0.3
+info:
+  title: CreditAgent web-server internal subscriptions API
+  version: 1.0.0
+  description: >
+    Called by the payments-service (ADR 0002) after it has taken a payment, to start the user's
+    subscription term. web-server owns the Subscriptions table and is its only writer. Internal only:
+    every call needs `Authorization: Bearer <INTERNAL_API_TOKEN>`; without a configured token the
+    internal API answers 404. Safe to repeat with the same paymentReference.
+servers:
+  - url: http://web-server:8080
+security:
+  - serviceToken: []
+paths:
+  /internal/v1/subscriptions/activations:
+    post:
+      operationId: activateSubscription
+      summary: Start a one-year term for a confirmed payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivationRequest'
+      responses:
+        '200':
+          description: >
+            ACTIVE (this payment started a term) or ALREADY_SAME_PAYMENT (this payment already bought
+            the active term; nothing changed). ACTIVE is audited as SUBSCRIPTION_STARTED / OK with actor
+            service:payments; ALREADY_SAME_PAYMENT writes no audit entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationResponse'
+        '400':
+          description: Invalid request (sizes, format, or a product that cannot be bought).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: >
+            Missing or wrong service token. A configuration error: retry with backoff and alert; never
+            refund.
+        '404':
+          description: >
+            With problem type urn:creditagent:problem:unknown-user, no such user (or an account without an
+            email): refund. A 404 without that type means the internal API is off (no INTERNAL_API_TOKEN
+            configured): a configuration error, so retry with backoff and alert; never refund.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/UnknownUserProblem'
+        '409':
+          description: >
+            ALREADY_ACTIVE - another payment's term is active. This payment started nothing; the caller
+            must refund it (saga compensation). Audited as SUBSCRIPTION_STARTED / ALREADY_ACTIVE.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationResponse'
+        '503':
+          description: >
+            DynamoDB failed; audited as SUBSCRIPTION_STARTED / FAILED when the write was attempted.
+            Retry after Retry-After seconds with the same paymentReference.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  securitySchemes:
+    serviceToken:
+      type: http
+      scheme: bearer
+  schemas:
+    ActivationRequest:
+      type: object
+      required: [userId, product, paymentReference]
+      properties:
+        userId:
+          type: string
+          pattern: '^[a-z0-9._-]{1,64}$'
+          maxLength: 64
+        product:
+          type: string
+          enum: [ID_PROTECTION]
+          description: Case-insensitive. Only products on offer can be activated.
+        paymentReference:
+          type: string
+          pattern: '^[\x21-\x7E]{1,128}$'
+          maxLength: 128
+          description: The provider's reference for the payment; the deduplication key.
+    ActivationResponse:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [ACTIVE, ALREADY_SAME_PAYMENT, ALREADY_ACTIVE]
+        expiresAt:
+          type: string
+          format: date-time
+          description: End of the active term; absent for ALREADY_ACTIVE.
+    UnknownUserProblem:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: ['urn:creditagent:problem:unknown-user']
+        status:
+          type: integer
+        title:
+          type: string
+        detail:
+          type: string
+    Problem:
+      type: object
+      properties:
+        status:
+          type: integer
+        title:
+          type: string
+        detail:
+          type: string

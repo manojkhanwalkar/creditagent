@@ -14,6 +14,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
+/**
+ * Wires the web server's core beans ({@code credit.web.*}): the JSON request-size limit on the listed
+ * endpoints, the MCP report source, the score-calculator client and {@link CreditScoreService}.
+ */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(WebServerProperties.class)
 class WebServerConfiguration {
@@ -29,7 +33,7 @@ class WebServerConfiguration {
         return RequestSizeLimitFilter.registration(MAX_JSON_BYTES,
                 "/api/v1/credit-score", "/api/v1/chat", "/api/v1/auth/login", "/api/v1/auth/login/*", "/api/v1/credit-report/status",
                 "/api/v1/account/export", "/api/v1/account/delete",
-                "/internal/v1/report-locks/lookup", "/internal/v1/connector/*",
+                "/internal/v1/report-locks/lookup", "/internal/v1/connector/*", "/internal/v1/subscriptions/activations",
                 "/oauth/register", "/oauth/authorize", "/oauth/authorize/*", "/oauth/token", "/oauth/revoke");
     }
 
