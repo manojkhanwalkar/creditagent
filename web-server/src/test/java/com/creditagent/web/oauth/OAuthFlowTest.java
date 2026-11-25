@@ -16,7 +16,7 @@ import com.creditagent.web.auth.InMemoryRepositories;
 import com.creditagent.web.auth.JwtService;
 import com.creditagent.web.auth.OtpLoginService;
 import com.creditagent.web.auth.OtpTesting;
-import com.creditagent.web.auth.RecordingOtpSender;
+import com.creditagent.web.auth.RecordingNotificationGateway;
 import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.SsnHasher;
 import com.creditagent.web.auth.TestSecrets;
@@ -78,7 +78,7 @@ class OAuthFlowTest {
         static final InMemoryRepositories.Users USERS = new InMemoryRepositories.Users();
         static final InMemoryRepositories.Sessions SESSIONS = new InMemoryRepositories.Sessions();
         static final InMemoryRepositories.OtpChallenges CHALLENGES = new InMemoryRepositories.OtpChallenges();
-        static final RecordingOtpSender OTP = new RecordingOtpSender();
+        static final RecordingNotificationGateway OTP = new RecordingNotificationGateway();
 
         @Bean
         OtpLoginService otpLoginService(AuthService auth) {
@@ -456,7 +456,7 @@ class OAuthFlowTest {
     @Test
     void aProviderOutageAtSendIsA503FromTheService() throws Exception {
         String body = consentSignIn("Avery", PASSWORD, SSN).andReturn().getResponse().getContentAsString();
-        Wiring.OTP.failure = new com.creditagent.web.auth.otp.OtpDeliveryException(OtpChannel.SMS, new RuntimeException("down"));
+        Wiring.OTP.failure = new com.creditagent.web.auth.otp.OtpDeliveryException(OtpChannel.SMS, new RuntimeException("down"), false);
         try {
             org.assertj.core.api.Assertions.assertThatThrownBy(
                     () -> otp.send(JsonPath.read(body, "$.challengeId"), OtpChannel.SMS))

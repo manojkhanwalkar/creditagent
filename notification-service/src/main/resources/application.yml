@@ -41,6 +41,9 @@ credit:
     email: ${NOTIFICATIONS_EMAIL:ses}
     # sns | log
     sms: ${NOTIFICATIONS_SMS:sns}
+    # Local sign-in only: with sms=log, also log the text and its sign-in code (refused unless DynamoDB
+    # is local). For runs without SNS or Mailpit, e.g. the AWS Emulator.
+    sms-log-codes: ${NOTIFICATIONS_SMS_LOG_CODES:false}
     region: ${AWS_REGION:us-east-1}
     ses-endpoint: ${NOTIFICATIONS_SES_ENDPOINT:}
     sns-endpoint: ${NOTIFICATIONS_SNS_ENDPOINT:}

@@ -64,7 +64,7 @@ public final class RemoteEmailSender implements EmailSender {
         this.client = Objects.requireNonNull(client);
         if (token == null || token.isBlank()) {
             throw new IllegalStateException(
-                    "NOTIFICATIONS_MODE=remote needs INTERNAL_API_TOKEN, the notification-service's token");
+                    "Alert emails need INTERNAL_API_TOKEN, the notification-service's token");
         }
         this.token = token;
         this.keyKey = hmac(token.getBytes(StandardCharsets.UTF_8), "credit-agent/alert-idempotency-key/v1");
@@ -76,12 +76,6 @@ public final class RemoteEmailSender implements EmailSender {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(timeout);
         return new RemoteEmailSender(RestClient.builder().baseUrl(url).requestFactory(factory).build(), token);
-    }
-
-    /** Only the templated alert goes through the service; free text is never sent. */
-    @Override
-    public void send(String to, String subject, String body) {
-        throw new UnsupportedOperationException("The notification-service sends templates only");
     }
 
     @Override

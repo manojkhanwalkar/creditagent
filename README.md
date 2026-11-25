@@ -33,8 +33,8 @@ See [docs/architecture.md](docs/architecture.md) for the diagram and design note
 | `client-agent` | 8086 | `POST /api/v1/advice` (needs `Authorization: Bearer <INTERNAL_API_TOKEN>`); calls the agent over A2A |
 | `offers-service` | 8090 | Card offers for a score and ZIP code: MCP at `/mcp` (tool `get_credit_card_offers`), and `POST /api/v1/offers` (`{score, zip}`), which calls that tool through the MCP server. Ranks up to 10 offers from a placeholder marketplace |
 | `dark-web-monitor` | 8091 | Runs continuously: every `DARKWEB_SCAN_INTERVAL` it checks registered users' emails against known dark-web locations and writes each exposure to the `Alerts` DynamoDB table. The source is a placeholder that contacts nothing |
-| `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each ID Protection subscriber whose address was found in the last 24 hours: one email per user, no locations. SMTP via `MAIL_HOST` (compose: Mailpit at http://localhost:8025); without one it sends nothing |
-| `notification-service` | 8094 | Internal only (service token): `POST /internal/v1/notifications` sends one templated email (SES or SMTP) or SMS (SNS), once per `Idempotency-Key`. Takes no traffic yet; see [Notifications](#notifications) |
+| `alert-notifier` | 8093 | Once a day (08:00 UTC) emails each ID Protection subscriber whose address was found in the last 24 hours: one email per user, no locations. Sent through `notification-service` (compose: lands in Mailpit at http://localhost:8025); without `INTERNAL_API_TOKEN` it sends nothing |
+| `notification-service` | 8094 | Internal only (service token): `POST /internal/v1/notifications` sends one templated email (SES or SMTP) or SMS (SNS), once per `Idempotency-Key`. Sends every sign-in code (web-server) and dark-web alert (alert-notifier); see [Notifications](#notifications) |
 | `alerts-service` | 8092 | Internal only (service token): `POST /internal/v1/alerts/lookup` (`{email}`) answers whether the `Alerts` table holds a record for that email, and where it was found |
 | `user-advisor-agent` | 8089 | Chat back end, internal only (service token): `POST /internal/v1/conversations/{id}/messages`, `DELETE /internal/v1/conversations/{id}`. Input and output guardrails, a placeholder LLM, per-conversation memory in RAM |
 | `claude-connector` | 8088 | Remote MCP server for Claude at `/mcp` (OAuth 2.1 protected resource); tools `get_credit_score`, `get_credit_report`, `get_credit_advice`, `get_report_lock_status`, `set_report_lock`. The web server is its authorization server (`/oauth/*`, `/.well-known/oauth-authorization-server`) |
@@ -66,7 +66,7 @@ Then:
   curl -o card.png localhost:8087/api/v1/sample-cards/123-45-6789
   curl -o blurry.png 'localhost:8087/api/v1/sample-cards/123-45-6789?blur=4'
   ```
-* open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN. The local stack has no AWS account, so sign-in codes are written to the web server's log instead of being sent (`OTP_DELIVERY=log`): `docker compose logs web-server | grep 'sign-in code'`;
+* open http://localhost:8080, register with `card.png` as the card photo (`blurry.png` is refused with "too blurry … try again"), log in, and look up that SSN. The local stack has no AWS account: pick **email** for the code and read it in Mailpit (http://localhost:8025), where `notification-service` delivers it. Texts are only logged, without the code; to sign in by text instead, set `NOTIFICATIONS_SMS_LOG_CODES=true` in `.env` and read it with `docker compose logs notification-service | grep 'local sign-in only'`;
 * get recommendations through the agents:
   ```bash
   curl -s localhost:8086/api/v1/advice -H "Authorization: Bearer $INTERNAL_API_TOKEN" -H 'Content-Type: application/json' -d '{"ssn":"123-45-6789"}'
@@ -78,14 +78,17 @@ Then:
 
 1. Install it once. On Fedora or Amazon Linux: `sudo dnf install -y https://downloads.aws.com/aws-emulator/packages/aws-emulator/LTS/latest/aws-emulator-x86_64.rpm` (to check AWS's signature first, see [Getting started on Linux](https://docs.aws.amazon.com/emulator/latest/userguide/getting-started-linux.html)). Without it, `start.sh` uses Podman instead: it downloads the package, checks AWS's signature and builds a local image.
 2. Start it: `scripts/aws-emulator/start.sh`. It runs in the background on `https://127.0.0.1:9297` with telemetry off and 2 GiB of memory at most. It writes fresh credentials and a certificate to `~/.aws/emulator/9297/`, and builds a Java trust store that holds both the JDK's certificates and the emulator's.
-3. In each shell that runs a service, run `source scripts/aws-emulator/env.sh` (it adds the trust store to `JAVA_TOOL_OPTIONS`, so every JVM prints "Picked up JAVA_TOOL_OPTIONS" on stderr), then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
+3. Once, before opening the service shells, make the shared service token: `openssl rand -hex 32 > ~/.creditagent-internal-token` (every service must use the same value).
+4. In each shell that runs a service, run `source scripts/aws-emulator/env.sh` (it adds the trust store to `JAVA_TOOL_OPTIONS`, so every JVM prints "Picked up JAVA_TOOL_OPTIONS" on stderr), then start the service as in [Run without Docker](#run-without-docker), without the `docker run` and `DYNAMODB_ENDPOINT` parts. For example:
    ```bash
    source scripts/aws-emulator/env.sh
+   export INTERNAL_API_TOKEN=$(cat ~/.creditagent-internal-token)   # the same value in every shell
+   mvn -pl notification-service spring-boot:run        # sends the sign-in codes (logged here)
    JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) mvn -pl web-server spring-boot:run
    ```
-4. Stop it with `scripts/aws-emulator/stop.sh`. Everything it held is in memory, so restarting gives empty tables. Each start makes new credentials and a new certificate, so restart the services after it.
+5. Stop it with `scripts/aws-emulator/stop.sh`. Everything it held is in memory, so restarting gives empty tables. Each start makes new credentials and a new certificate, so restart the services after it.
 
-Sign-in codes are written to the web server's log (`OTP_DELIVERY=log`), not sent. Emulator 1.0.531 keeps SES in its sandbox: a sender can never be verified locally, so every email is refused. It also doesn't implement SNS `Publish` to a phone number yet (it answers `501 NotImplemented`). The SES and SNS calls are covered by unit tests with mocked clients.
+`notification-service` logs messages instead of sending them (`NOTIFICATIONS_EMAIL=log`, `NOTIFICATIONS_SMS=log`), and `env.sh` sets `NOTIFICATIONS_SMS_LOG_CODES=true`, so **sign in by text** and read the code with `grep 'local sign-in only'` in its log (emails are logged without the code). Start `notification-service` with the other services. Emulator 1.0.531 keeps SES in its sandbox: a sender can never be verified locally, so every email is refused. It also doesn't implement SNS `Publish` to a phone number yet (it answers `501 NotImplemented`). The SES and SNS calls are covered by unit tests with mocked clients.
 
 ## Run without Docker
 
@@ -93,9 +96,14 @@ Start each service with `mvn -pl <module> spring-boot:run`. Registration needs t
 
 ```bash
 docker run -d -p 8000:8000 amazon/dynamodb-local:3.3.2 -jar DynamoDBLocal.jar -inMemory -sharedDb
-JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true \
-  AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local mvn -pl web-server spring-boot:run
+export INTERNAL_API_TOKEN=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true \
+  AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local
+# Sign-in codes come from notification-service: here texts are logged with their code (local only).
+NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log NOTIFICATIONS_SMS_LOG_CODES=true mvn -pl notification-service spring-boot:run &
+JWT_SECRET=$(openssl rand -hex 32) SSN_HMAC_KEY=$(openssl rand -hex 32) mvn -pl web-server spring-boot:run
 ```
+
+Sign in by text and read the code from the notification-service log (`local sign-in only`).
 
 The generator and the MCP server share the `CreditReports` table (the same DynamoDB) and both keys, and the MCP server needs NRG running:
 
@@ -125,7 +133,7 @@ Every login needs the password and a one-time code:
 
 Codes are stored only as an HMAC bound to their challenge (key derived from `JWT_SECRET`), compared in constant time and used once; challenge ids are stored as SHA-256 hashes; challenges expire through the table's TTL. Each limit is a conditional DynamoDB write, so parallel requests cannot get past it. Sends, failures and successful logins are audit events (`LOGIN_CODE_SENT`, `LOGIN_CODE_FAILED`, `LOGIN_SUCCEEDED`). Accounts made before the mobile number was asked for get codes by email only.
 
-**AWS.** With `OTP_DELIVERY=aws` (the default) the web server's role needs `ses:SendEmail` (from a verified `OTP_EMAIL_FROM` identity, out of the SES sandbox) and `sns:Publish` to phone numbers (SMS spend limit raised, and for US numbers a registered toll-free, 10DLC or short-code origination number in `OTP_SMS_ORIGINATION_NUMBER`). Calls are bounded by `OTP_TIMEOUT` (5 s) with the SDK's standard retries; a send that fails answers 503. If the provider refused the message (a 4xx that is not throttling) the send is given back and the user can retry or pick the other channel at once; after a timeout, 5xx or throttling the message may still arrive, so the send keeps counting, its code stays valid, and the 503 says when a new code may be asked for (`Retry-After`). Tests mock the SES and SNS clients; no AWS account is needed. `OTP_DELIVERY=log` writes codes to the log instead, and is refused unless `DYNAMODB_ENDPOINT` is on `localhost` or the compose `dynamodb` host.
+**Delivery.** The web server sends each code through `notification-service` (`NOTIFICATIONS_URL`, `INTERNAL_API_TOKEN`, template `OTP_SIGN_IN`, key `otp:<challengeId>:<send number>`); it holds no SES or SNS client or AWS messaging permission, and won't start without the token. Calls are bounded by `NOTIFICATIONS_CONNECT_TIMEOUT` (2 s) and `NOTIFICATIONS_TIMEOUT` (10 s), and only a failed connect is retried (same key, backoff and jitter); the service retries its providers itself. Sign-in depends on the service: while it is down, sending a code answers 503 with `Retry-After`. A send that fails answers 503. If the provider refused the message (the service answers 422) the send is given back and the user can retry or pick the other channel at once; after a timeout, 5xx, 429 or an unreachable service the message may still arrive, so the send keeps counting, its code stays valid, and the 503 says when a new code may be asked for (`Retry-After`). Provider set-up (SES identity, SNS origination number, IAM) is on `notification-service`; see [Notifications](#notifications).
 
 **Claude connector.** Allowing the connector takes the same code step: the consent page posts user id, password and SSN to `POST /oauth/authorize/sign-in` (opens a challenge), sends the code through `POST /api/v1/auth/login/otp`, then posts the authorization request, SSN, challenge and code to `POST /oauth/authorize/approve`, which answers `{redirect}` with the authorization code. A form post of `decision=allow` without the code is refused; Deny is still a plain form post.
 
@@ -154,7 +162,7 @@ The REST API "plugs into" the MCP interface: `POST /api/v1/offers` builds an MCP
 | `alerts-service` | Internal look-up for the web server: `POST /internal/v1/alerts/lookup` with the email in the body (never in a URL or a log), behind the service token |
 | Login | The web server asks `alerts-service` for the user's email, in parallel with the offers look-up, once, waiting at most `ALERTS_LOGIN_TIMEOUT` (1.5 s) for the answer (after a quick read of the account). When something was found it also reads the user's subscription from DynamoDB (bounded by `DYNAMODB_TIMEOUT`, 5 s), as does the subscriptions extra; all three run side by side, and none of them can fail the login. If a record exists, the page shows a banner. An ID Protection subscriber sees the locations and dates; a free user is told only that something was found, with a link to subscribe (the data export always includes every finding). If the service is down or slow, login still works and the page asks `GET /api/v1/alerts` (retried) at once, then again after 5 and 30 seconds |
 
-| Email | `alert-notifier` runs once a day (`NOTIFIER_CRON`, 08:00 UTC). It reads, through the table's `by-day` index, the alerts no email has covered yet: normally those first found in the 24 hours before the run, since the previous run took the rest; it looks back up to `NOTIFIER_LOOKBACK` (7 days) so a failed send or a missed run catches up the next day. It claims each one with a conditional write (so two runs or replicas never email the same alert) and sends each ID Protection subscriber one plain-text email; a free user's alerts are claimed without an email, so they never crowd subscribers out of a run. A failed send releases its claims for the next run. Without a mail relay it claims nothing. At most `NOTIFIER_SENDS_PER_SECOND` (10) emails a second |
+| Email | `alert-notifier` runs once a day (`NOTIFIER_CRON`, 08:00 UTC). It reads, through the table's `by-day` index, the alerts no email has covered yet: normally those first found in the 24 hours before the run, since the previous run took the rest; it looks back up to `NOTIFIER_LOOKBACK` (7 days) so a failed send or a missed run catches up the next day. It claims each one with a conditional write (so two runs or replicas never email the same alert) and sends each ID Protection subscriber one email through `notification-service` (template `DARK_WEB_ALERT`: the count, the first-seen date and the sign-in address; the service owns the wording, and the key `alert:<HMAC of the address>:<run time>` stops a repeat); a free user's alerts are claimed without an email, so they never crowd subscribers out of a run. A failed send (refused, unknown or the service down) releases its claims for the next run. Without `INTERNAL_API_TOKEN` it claims nothing. At most `NOTIFIER_SENDS_PER_SECOND` (10) emails a second |
 
 To see the banner locally, set `DARKWEB_PLACEHOLDER_EXPOSED` to a registered user's email; it shows at that user's next login after the monitor's next cycle. To see the email without waiting for 08:00, start the stack with `NOTIFIER_CRON='0 * * * * *'` (every minute) and open Mailpit at http://localhost:8025.
 
@@ -170,7 +178,7 @@ ID Protection is a paid, one-year subscription: subscribers see where and when t
 
 ## Notifications
 
-`notification-service` (port 8094) will send every sign-in code and dark-web alert, so provider clients, templates and credentials live in one place. It takes no traffic yet: web-server and alert-notifier still send their own messages, and switch to it behind `NOTIFICATIONS_MODE` in the next steps (N3 remote clients, N4 cut-over). The contract is [`notification-service-v1.yaml`](notification-service/src/main/resources/static/openapi/notification-service-v1.yaml).
+`notification-service` (port 8094) sends every sign-in code (from web-server) and dark-web alert (from alert-notifier), so provider clients, templates and credentials live in one place; neither caller sends anything itself ([ADR 0001](docs/adr/0001-extract-notification-service.md)). The contract is [`notification-service-v1.yaml`](notification-service/src/main/resources/static/openapi/notification-service-v1.yaml).
 
 `POST /internal/v1/notifications`, with `Authorization: Bearer <INTERNAL_API_TOKEN>` and `Idempotency-Key` (1 to 128 printable characters), body `{channel: EMAIL|SMS, to, template, params}`:
 
@@ -194,7 +202,7 @@ ID Protection is a paid, one-year subscription: subscribers see where and when t
 
 **Delivery guarantee.** The key is reserved with a conditional put (PENDING, with a 60 s lease), then the provider is called, then the record becomes SENT. A clear refusal deletes the reservation (not delivered, so the same key may send); an unknown outcome marks it UNCERTAIN (it may have arrived, so the key never sends again). So a key sends at most once, except in one window: if the service stops after calling the provider but before recording the outcome, the record stays PENDING and, once the lease runs out, the same request sends again (at-least-once there). A different request never takes over a key. The lease must exceed the longest send (3 × the DynamoDB timeout + the longer of the provider and SMTP timeouts, 16 s by default), and so must the shutdown phase; both are checked at start-up.
 
-**Providers.** `NOTIFICATIONS_EMAIL=ses|smtp|log` and `NOTIFICATIONS_SMS=sns|log`. SES v2 and SNS Publish (transactional, straight to the number) are bounded by `NOTIFICATIONS_PROVIDER_TIMEOUT` with the SDK's standard retries (one layer); SMTP uses the mail timeouts plus an overall limit per send (`NOTIFICATIONS_SMTP_TIMEOUT`, 10 s; past it the outcome is unknown) and refuses STARTTLS off for any relay but localhost or `mailpit`. `log` sends nothing and writes the template and masked destination (never the code); it is refused unless `DYNAMODB_ENDPOINT` is local. Inbound limits come from `web-support` (429/503 with `Retry-After`), and shutdown is graceful (`NOTIFICATIONS_SHUTDOWN_TIMEOUT`, 20 s). In AWS the service's role needs `ses:SendEmail`, `sns:Publish` and `dynamodb:PutItem`, `UpdateItem`, `DeleteItem`, `GetItem` on its table.
+**Providers.** `NOTIFICATIONS_EMAIL=ses|smtp|log` and `NOTIFICATIONS_SMS=sns|log`. SES v2 and SNS Publish (transactional, straight to the number) are bounded by `NOTIFICATIONS_PROVIDER_TIMEOUT` with the SDK's standard retries (one layer); SMTP uses the mail timeouts plus an overall limit per send (`NOTIFICATIONS_SMTP_TIMEOUT`, 10 s; past it the outcome is unknown) and refuses STARTTLS off for any relay but localhost or `mailpit`. `log` sends nothing and writes the template and masked destination (never the code); it is refused unless `DYNAMODB_ENDPOINT` is local. For local sign-in by text, `NOTIFICATIONS_SMS_LOG_CODES=true` (with `NOTIFICATIONS_SMS=log`, under the same local-only rule) also logs the text and its code. Inbound limits come from `web-support` (429/503 with `Retry-After`), and shutdown is graceful (`NOTIFICATIONS_SHUTDOWN_TIMEOUT`, 20 s). In AWS the service's role needs `ses:SendEmail`, `sns:Publish` and `dynamodb:PutItem`, `UpdateItem`, `DeleteItem`, `GetItem` on its table.
 
 Run it alone: `INTERNAL_API_TOKEN=$(openssl rand -hex 32) DYNAMODB_ENDPOINT=http://localhost:8000 DYNAMODB_CREATE_TABLES=true NOTIFICATIONS_EMAIL=log NOTIFICATIONS_SMS=log AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local mvn -pl notification-service spring-boot:run`, then
 
@@ -203,7 +211,7 @@ curl -i localhost:8094/internal/v1/notifications -H "Authorization: Bearer $INTE
   -H 'Content-Type: application/json' -d '{"channel":"SMS","to":"+15555550100","template":"OTP_SIGN_IN","params":{"code":"123456","validSeconds":"300"}}'
 ```
 
-In compose it sends email to Mailpit (http://localhost:8025) and logs texts.
+In compose it sends email to Mailpit (http://localhost:8025) and logs texts (with the code only when `NOTIFICATIONS_SMS_LOG_CODES=true`); web-server and alert-notifier start after it.
 
 ## Chat
 
@@ -291,7 +299,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `KYC_MAX_IMAGE_BYTES`, `KYC_MAX_PIXELS` | KYC service | `10485760`, `40000000` |
 | `KYC_MAX_CONCURRENT` | KYC service | `4` (photo checks in progress at once; each decodes an image in memory) |
 | `KYC_SAMPLE_CARDS_ENABLED` | KYC service | `false` (compose sets `true`); demo only, makes a card for any SSN |
-| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service, alerts service, notification service, generator (erase API), notifier (remote notifications) | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
+| `INTERNAL_API_TOKEN` | web server, agent, MCP server, connector, advisor agent, offers service, alerts service, notification service, generator (erase API), notifier (alert emails; without it none are sent) | **required**, at least 32 characters. The agent and the MCP server present it to the web server to check report locks, and the web server and the agent present it to the MCP server so their own reads are not lock-checked again. Without it, third-party pulls are refused and the web server's own lookups are lock-checked like a third party's |
 | `REPORTS_URL`, `ACCOUNT_ERASE_TIMEOUT` | web server | `http://localhost:8083` (the report generator, which erases a deleted account's stored reports), `5s` a try |
 | `ACCOUNT_RETENTION`, `ACCOUNT_RETENTION_MAX_PER_RUN`, `ACCOUNT_RETENTION_CRON` | web server | `730d`, `1000`, `0 15 4 * * *` (UTC): accounts with no login for that long are deleted with their data |
 | `CREDIT_REPORT_RETENTION`, `CREDIT_REPORT_PURGE_MAX`, `CREDIT_REPORT_RETENTION_CRON` | generator | `730d`, `10000`, `0 30 3 * * *` (UTC): stored reports not refreshed for that long are deleted |
@@ -304,10 +312,7 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `AWS_REGION`, `USERS_TABLE`, `SESSIONS_TABLE` | web server | `us-east-1`, `credit-agent-users`, `credit-agent-sessions` |
 | `DYNAMODB_CREATE_TABLES` | web server | `false` (compose sets `true` for DynamoDB Local) |
 | `DYNAMODB_TIMEOUT` | web server | `5s` (longest DynamoDB call, retries included; the SDK's standard retry mode backs off with jitter) |
-| `OTP_DELIVERY` | web server | `aws` (SES and SNS); `log` for local development only (docker compose sets it) |
-| `OTP_EMAIL_FROM`, `OTP_SES_CONFIGURATION_SET`, `OTP_SES_ENDPOINT` | web server | `CreditAgent <no-reply@creditagent.example>` (a verified SES identity), none, AWS |
-| `OTP_SMS_ORIGINATION_NUMBER`, `OTP_SMS_SENDER_ID`, `OTP_SNS_ENDPOINT` | web server | account default, none, AWS |
-| `OTP_AWS_REGION`, `OTP_TIMEOUT`, `OTP_CHALLENGES_TABLE` | web server | `AWS_REGION`, `5s`, `credit-agent-login-challenges` (TTL on `expiresAt`) |
+| `OTP_CHALLENGES_TABLE` | web server | `credit-agent-login-challenges` (TTL on `expiresAt`); codes are sent by the notification service |
 | `OTP_CODE_TTL`, `OTP_CHALLENGE_TTL`, `OTP_MAX_ATTEMPTS`, `OTP_MAX_SENDS`, `OTP_RESEND_COOLDOWN`, `OTP_MAX_SENDS_PER_USER_PER_HOUR` | web server | `5m`, `10m`, `5`, `3`, `30s`, `10` |
 | `CREDIT_RETRY_MAX_ATTEMPTS`, `CREDIT_RETRY_INITIAL_DELAY`, `CREDIT_RETRY_MULTIPLIER`, `CREDIT_RETRY_MAX_DELAY`, `CREDIT_RETRY_JITTER` | every service that calls another | `3`, `100ms`, `2`, `1s`, `50ms`: retries of recoverable failures with exponential backoff and jitter (see [architecture](docs/architecture.md#resilience)) |
 | `OAUTH_TOKEN_KEY` | web server | empty = OAuth (and so the Claude connector's sign-in) is off. At least 32 characters; signs client ids and encrypts codes and access tokens |
@@ -319,17 +324,17 @@ Claude ──(MCP over HTTPS, Bearer token)──> claude-connector :8088 ──
 | `ALERTS_TABLE` | monitor, alerts service, notifier | `Alerts` |
 | `SUBSCRIPTIONS_TABLE` | web server, notifier | `credit-agent-subscriptions` |
 | `PAYMENTS_PROVIDER`, `ID_PROTECTION_PRICE_CENTS`, `SUBSCRIPTIONS_CURRENCY` | web server | `none` (`test` for local development only), `2999` (a placeholder until pricing is decided), `USD` |
-| `NOTIFICATIONS_MODE` | web server, notifier | `local`: sign-in codes by SES and SNS, alert emails by `MAIL_HOST`, from each process. `remote`: both through the notification-service (`POST /internal/v1/notifications` with `INTERNAL_API_TOKEN`); the web server then builds no SES or SNS client |
 | `NOTIFICATIONS_URL` | web server, notifier | `http://localhost:8094` (compose: `http://notification-service:8094`). Checked at start-up: an absolute http(s) URL, and https unless the host is `localhost`, `127.0.0.1`, `::1` or a compose service name (no dot), so codes and the token never cross a network in clear text |
 | `NOTIFICATIONS_TIMEOUT` | web server, notifier | `10s` (web server), `15s` (notifier): longest one call, above the service's own worst case (about 8 s). The web server retries only a failed connect (same `Idempotency-Key`), never a timeout or a 5xx; the notifier does not retry, and the next run picks up a failed send |
 | `NOTIFICATIONS_CONNECT_TIMEOUT` | web server | `2s`: longest a connect may take. With the defaults (3 tries, `credit.retry` backoff) a sign-in waits at most about 14.5 s for the service: two connects that time out (4 s), the backoff (under 0.5 s), then a try that runs to `NOTIFICATIONS_TIMEOUT` (10 s) |
 | `NOTIFIER_CRON`, `NOTIFIER_LOOKBACK`, `NOTIFIER_MAX_ALERTS_PER_RUN`, `NOTIFIER_SENDS_PER_SECOND` | notifier | `0 0 8 * * *` (UTC), `7d`, `10000`, `10` |
-| `NOTIFIER_FROM`, `NOTIFIER_APP_URL` | notifier | `alerts@creditagent.local`, empty (compose: `http://localhost:8080`) |
-| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notifier, notification service (`smtp`) | empty = no email sent (and no alert marked), `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the notifier refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
+| `NOTIFIER_APP_URL` | notifier | empty (compose: `http://localhost:8080`); the sender address is the service's `NOTIFICATIONS_EMAIL_FROM` |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_SMTP_AUTH`, `MAIL_STARTTLS` | notification service (`smtp`) | required for `smtp`, `587`, empty, empty, `true`, `true`. Compose defaults to Mailpit with auth and TLS off; the service refuses to start with STARTTLS off for any relay but localhost or `mailpit` |
 | `DARKWEB_SCAN_INTERVAL`, `DARKWEB_SCAN_INITIAL_DELAY`, `DARKWEB_LOCATIONS`, `DARKWEB_MAX_EMAILS_PER_CYCLE` | monitor | `1h` (compose: `60s`), `10s`, `paste-site-alpha,breach-forum-beta,marketplace-gamma`, `10000` |
 | `DARKWEB_PLACEHOLDER_EXPOSED`, `DARKWEB_PLACEHOLDER_RATE` | monitor | empty, `0` (no invented exposures) |
 | `ALERTS_DYNAMODB_TIMEOUT` | alerts service | `2s`: DynamoDB budget, retries included; kept below the web server's `ALERTS_TIMEOUT` so retries never stack |
 | `NOTIFICATIONS_EMAIL`, `NOTIFICATIONS_SMS` | notification service | `ses`, `sns`; `smtp` (with the `MAIL_*` settings) for email; `log` for local development only (compose: `smtp` and `log`) |
+| `NOTIFICATIONS_SMS_LOG_CODES` | notification service | `false`. `true` (local sign-in by text only) logs texts with their code; needs `NOTIFICATIONS_SMS=log` and a local `DYNAMODB_ENDPOINT` (the emulator's `env.sh` sets it) |
 | `NOTIFICATIONS_EMAIL_FROM`, `NOTIFICATIONS_SES_CONFIGURATION_SET`, `NOTIFICATIONS_SES_ENDPOINT` | notification service | `CreditAgent <no-reply@creditagent.example>`, none, AWS |
 | `NOTIFICATIONS_SMS_ORIGINATION_NUMBER`, `NOTIFICATIONS_SMS_SENDER_ID`, `NOTIFICATIONS_SNS_ENDPOINT` | notification service | account default, none, AWS |
 | `NOTIFICATIONS_PROVIDER_TIMEOUT`, `NOTIFICATIONS_DYNAMODB_TIMEOUT`, `NOTIFICATIONS_LEASE` | notification service | `4s`, `2s`, `60s` (a send in progress holds its key this long; must exceed the two timeouts together) |

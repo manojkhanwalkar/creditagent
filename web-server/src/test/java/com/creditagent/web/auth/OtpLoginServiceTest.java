@@ -10,7 +10,6 @@ import com.creditagent.web.auth.AuthExceptions.TooManyCodesException;
 import com.creditagent.web.auth.AuthExceptions.UnauthenticatedException;
 import com.creditagent.web.auth.otp.OtpChannel;
 import com.creditagent.web.auth.otp.OtpDeliveryException;
-import com.creditagent.web.notify.LocalNotificationGateway;
 import com.creditagent.web.notify.NotificationGateway;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -22,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
-/** The two-step login, against in-memory repositories and recording (mock) SES and SNS senders. */
+/** The two-step login, against in-memory repositories and a recording (mock) notification-service per channel. */
 class OtpLoginServiceTest {
 
     static final String PASSWORD = "correct horse battery staple";
@@ -31,8 +30,8 @@ class OtpLoginServiceTest {
     final InMemoryRepositories.Users users = new InMemoryRepositories.Users();
     final InMemoryRepositories.Sessions sessions = new InMemoryRepositories.Sessions();
     final InMemoryRepositories.OtpChallenges challenges = new InMemoryRepositories.OtpChallenges();
-    final RecordingOtpSender email = new RecordingOtpSender();
-    final RecordingOtpSender sms = new RecordingOtpSender();
+    final RecordingNotificationGateway email = new RecordingNotificationGateway();
+    final RecordingNotificationGateway sms = new RecordingNotificationGateway();
     final List<String> auditLines = new ArrayList<>();
     /** Keeps each audit record as "event=… actor=… outcome=… {details}". */
     final AuditLog audit = org.mockito.Mockito.mock(AuditLog.class, invocation -> {
@@ -57,8 +56,9 @@ class OtpLoginServiceTest {
                 TestSecrets.of("otp").getBytes(StandardCharsets.UTF_8), clock, audit);
     }
 
-    LocalNotificationGateway gateway(com.creditagent.web.auth.otp.OtpSender emailSender) {
-        return new LocalNotificationGateway(Map.of(OtpChannel.EMAIL, emailSender, OtpChannel.SMS, sms));
+    /** Email sends go to {@code emailGateway}, texts to {@link #sms}. */
+    NotificationGateway gateway(NotificationGateway emailGateway) {
+        return n -> (n.channel() == OtpChannel.EMAIL ? emailGateway : sms).send(n);
     }
 
     @Test
@@ -365,16 +365,14 @@ class OtpLoginServiceTest {
         assertThat(challenges.byId.get(id).attempts()).isZero();
     }
 
-    /** A 4xx the provider answers when it rejects a message outright (not throttling). */
+    /** The service answered 422: the provider rejected the message outright. */
     static OtpDeliveryException rejected(OtpChannel channel) {
-        return new OtpDeliveryException(channel,
-                software.amazon.awssdk.services.sesv2.model.MessageRejectedException.builder().statusCode(400).build());
+        return new OtpDeliveryException(channel, new IllegalStateException("refused (422)"), true);
     }
 
-    /** A failure after which the message may still have been delivered. */
+    /** A failure after which the message may still have been delivered (a timeout, a 5xx). */
     static OtpDeliveryException uncertain(OtpChannel channel) {
-        return new OtpDeliveryException(channel,
-                software.amazon.awssdk.core.exception.ApiCallTimeoutException.create(5000));
+        return new OtpDeliveryException(channel, new IllegalStateException("timed out"), false);
     }
 
     @Test
@@ -429,12 +427,12 @@ class OtpLoginServiceTest {
     }
 
     /** Delivers the message, then fails as a timed-out call would. */
-    static final class OtpSenderThatDeliversThenFails implements com.creditagent.web.auth.otp.OtpSender {
+    static final class OtpSenderThatDeliversThenFails implements NotificationGateway {
         String code;
 
         @Override
-        public void send(String destination, String code, Duration validFor) {
-            this.code = code;
+        public void send(Notification n) {
+            this.code = n.params().get("code");
             throw uncertain(OtpChannel.EMAIL);
         }
     }

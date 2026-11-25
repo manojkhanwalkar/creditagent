@@ -5,14 +5,10 @@ import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.context.properties.bind.Binder;
-import org.springframework.core.env.Environment;
 
 /**
- * Where sign-in codes are sent from ({@code credit.notifications}).
+ * The notification-service that sends sign-in codes ({@code credit.notifications}).
  *
- * @param mode {@code local} (SES and SNS from this process, the default, also when blank) or
- *     {@code remote} (through the notification-service; SES and SNS are then not built)
  * @param url the notification-service base URL: absolute http(s) with a host, and https unless the host
  *     is local ({@code localhost}, {@code 127.0.0.1}, {@code ::1}) or a compose service name (no dot), so
  *     codes and the service token never cross a network in clear text
@@ -21,17 +17,12 @@ import org.springframework.core.env.Environment;
  *     fast even with the connect retries
  */
 @ConfigurationProperties("credit.notifications")
-public record NotificationsProperties(Mode mode, String url, Duration timeout, Duration connectTimeout) {
-
-    public static final String MODE = "credit.notifications.mode";
-
-    public enum Mode { LOCAL, REMOTE }
+public record NotificationsProperties(String url, Duration timeout, Duration connectTimeout) {
 
     /** Hosts where plain http is acceptable: this machine. A name without a dot is a compose service. */
     static final Set<String> LOCAL_HOSTS = Set.of("localhost", "127.0.0.1", "::1", "[::1]");
 
     public NotificationsProperties {
-        mode = mode == null ? Mode.LOCAL : mode;
         url = url == null || url.isBlank() ? "http://localhost:8094" : url.strip();
         timeout = timeout == null ? Duration.ofSeconds(10) : timeout;
         connectTimeout = connectTimeout == null ? Duration.ofSeconds(2) : connectTimeout;
@@ -39,11 +30,6 @@ public record NotificationsProperties(Mode mode, String url, Duration timeout, D
             throw new IllegalArgumentException("credit.notifications.timeout and connect-timeout must be positive");
         }
         requireSafeUrl(url);
-    }
-
-    /** The mode as Spring binds it, so a blank value means local here too (used before beans exist). */
-    public static Mode mode(Environment environment) {
-        return Binder.get(environment).bind(MODE, Mode.class).orElse(Mode.LOCAL);
     }
 
     static void requireSafeUrl(String url) {

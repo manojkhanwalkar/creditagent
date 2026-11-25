@@ -7,19 +7,6 @@ server:
 spring:
   application:
     name: alert-notifier
-  # The SMTP relay. Without MAIL_HOST no email is sent (placeholder sender). Every call is bounded.
-  mail:
-    host: ${MAIL_HOST:}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
-    properties:
-      mail.smtp.auth: ${MAIL_SMTP_AUTH:true}
-      mail.smtp.starttls.enable: ${MAIL_STARTTLS:true}
-      mail.smtp.starttls.required: ${MAIL_STARTTLS:true}
-      mail.smtp.connectiontimeout: 5000
-      mail.smtp.timeout: 10000
-      mail.smtp.writetimeout: 10000
 
 credit:
   notifier:
@@ -30,7 +17,6 @@ credit:
     lookback: ${NOTIFIER_LOOKBACK:7d}
     max-alerts-per-run: ${NOTIFIER_MAX_ALERTS_PER_RUN:10000}
     sends-per-second: ${NOTIFIER_SENDS_PER_SECOND:10}
-    from: ${NOTIFIER_FROM:alerts@creditagent.local}
     app-url: ${NOTIFIER_APP_URL:}
     dynamodb-endpoint: ${DYNAMODB_ENDPOINT:}
     region: ${AWS_REGION:us-east-1}
@@ -39,24 +25,19 @@ credit:
     # Only ID Protection subscribers are emailed; read-only (dynamodb:GetItem).
     subscriptions-table: ${SUBSCRIPTIONS_TABLE:credit-agent-subscriptions}
     create-tables: ${DYNAMODB_CREATE_TABLES:false}
-  # How alert emails are sent. local = the SMTP relay above (spring.mail, MAIL_HOST). remote = the
-  # notification-service's DARK_WEB_ALERT template (POST /internal/v1/notifications with INTERNAL_API_TOKEN).
+  # The notification-service, which sends the alert email (DARK_WEB_ALERT template, POST
+  # /internal/v1/notifications with INTERNAL_API_TOKEN). Without the token no email is sent and alerts
+  # stay unclaimed.
   notifications:
-    mode: ${NOTIFICATIONS_MODE:local}
     url: ${NOTIFICATIONS_URL:http://localhost:8094}
     # Longest one call may take; above the service's own worst case (about 8 s). Not retried: a failed
     # send releases its claims and the next run tries again.
     timeout: ${NOTIFICATIONS_TIMEOUT:15s}
   internal:
-    # The shared service token the notification-service expects (remote mode only).
+    # The shared service token the notification-service expects.
     token: ${INTERNAL_API_TOKEN:}
 
 management:
-  health:
-    mail:
-      # A relay outage must not mark the notifier unhealthy (or restart it): failed sends are released
-      # and retried, and the run logs them.
-      enabled: false
   endpoints:
     web:
       exposure:

@@ -209,4 +209,12 @@ class RemoteNotificationGatewayTest {
             assertThat(text).doesNotContain("042917", "+15555550100", TOKEN);
         });
     }
+
+    @Test
+    void aNotificationPrintsNeitherTheDestinationNorTheCodeNorTheKey() {
+        Notification n = new Notification(OtpChannel.SMS, "+15555550100", Template.OTP_SIGN_IN,
+                Map.of("code", "042917", "validSeconds", "300"), "otp:challenge-id:1");
+        assertThat(n.toString()).contains("SMS", "OTP_SIGN_IN", "[code, validSeconds]")
+                .doesNotContain("042917", "+15555550100", "challenge-id");
+    }
 }

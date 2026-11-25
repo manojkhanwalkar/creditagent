@@ -8,89 +8,30 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.creditagent.web.auth.otp.LoggingOtpSender;
-import com.creditagent.web.auth.otp.OtpChannel;
+import com.creditagent.clients.RetrySettings;
+import com.creditagent.common.AuditLog;
 import com.creditagent.web.auth.otp.OtpProperties;
-import com.creditagent.web.auth.otp.OtpSender;
-import com.creditagent.web.auth.otp.SesEmailOtpSender;
-import com.creditagent.web.auth.otp.SnsSmsOtpSender;
-import com.creditagent.web.notify.LocalNotificationGateway;
 import com.creditagent.web.notify.NotificationGateway;
 import com.creditagent.web.notify.NotificationsProperties;
 import com.creditagent.web.notify.RemoteNotificationGateway;
 import java.time.Duration;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
-import software.amazon.awssdk.core.retry.RetryMode;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.web.client.RestClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
-import software.amazon.awssdk.services.sesv2.SesV2Client;
-import software.amazon.awssdk.services.sns.SnsClient;
 
 class OtpConfigurationTest {
 
     final OtpConfiguration config = new OtpConfiguration();
 
-    static OtpProperties otp(OtpProperties.Delivery delivery, String ses, String sns) {
-        return new OtpProperties(delivery, "eu-west-1", ses, sns, "no-reply@creditagent.example", null, null, null,
-                Duration.ofSeconds(4), "challenges", null, null, null, null, null, null);
+    static OtpProperties otp() {
+        return new OtpProperties("challenges", null, null, null, null, null, null);
     }
 
     static AuthProperties auth(String dynamoEndpoint, boolean createTables) {
         return new AuthProperties(TestSecrets.of("jwt"), TestSecrets.of("ssn"), "credit-agent", Duration.ofHours(1),
                 Duration.ofMinutes(5), new AuthProperties.DynamoDb(dynamoEndpoint, "us-east-1", "u", "s", createTables, null));
-    }
-
-    @Test
-    void sesAndSnsCallsAreBoundedAndRetriedWithBackoff() {
-        ClientOverrideConfiguration overrides = OtpConfiguration.overrides(Duration.ofSeconds(4));
-        assertThat(overrides.apiCallTimeout()).contains(Duration.ofSeconds(4));
-        assertThat(overrides.apiCallAttemptTimeout()).contains(Duration.ofSeconds(2));
-        assertThat(overrides.retryMode()).contains(RetryMode.STANDARD);
-    }
-
-    @Test
-    void awsDeliveryUsesSesForEmailAndSnsForSms() {
-        Map<OtpChannel, OtpSender> senders = OtpConfiguration.senders(otp(OtpProperties.Delivery.AWS, null, null),
-                auth(null, false), mock(SesV2Client.class), mock(SnsClient.class));
-        assertThat(senders.get(OtpChannel.EMAIL)).isInstanceOf(SesEmailOtpSender.class);
-        assertThat(senders.get(OtpChannel.SMS)).isInstanceOf(SnsSmsOtpSender.class);
-    }
-
-    @Test
-    void logDeliveryWorksOnlyAgainstALocalDynamoDb() {
-        Map<OtpChannel, OtpSender> senders = OtpConfiguration.senders(otp(OtpProperties.Delivery.LOG, null, null),
-                auth("http://dynamodb:8000", true), null, null);
-        assertThat(senders.values()).hasSize(2).allMatch(LoggingOtpSender.class::isInstance);
-
-        for (String local : new String[] {"http://localhost:8000", "http://127.0.0.1:8000", "http://[::1]:8000"}) {
-            assertThat(OtpConfiguration.senders(otp(OtpProperties.Delivery.LOG, null, null), auth(local, false), null, null))
-                    .hasSize(2);
-        }
-        for (String awsEndpoint : new String[] {null, " ", "https://dynamodb.us-east-1.amazonaws.com",
-                "https://vpce-1a2b-dynamodb.us-east-1.vpce.amazonaws.com", "http://localhost.evil.example", "::not a uri"}) {
-            assertThatThrownBy(() -> OtpConfiguration.senders(otp(OtpProperties.Delivery.LOG, null, null),
-                    auth(awsEndpoint, false), null, null))
-                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("local development only");
-        }
-    }
-
-    @Test
-    void clientsAreBuiltForTheRegionAndOptionalEndpoints() {
-        try (SesV2Client ses = config.sesClient(otp(OtpProperties.Delivery.AWS, "http://localhost:4566", null));
-                SnsClient sns = config.snsClient(otp(OtpProperties.Delivery.AWS, null, "http://localhost:4566"))) {
-            assertThat(ses.serviceClientConfiguration().region().id()).isEqualTo("eu-west-1");
-            assertThat(ses.serviceClientConfiguration().endpointOverride()).hasValueSatisfying(
-                    uri -> assertThat(uri.toString()).isEqualTo("http://localhost:4566"));
-            assertThat(sns.serviceClientConfiguration().endpointOverride()).hasValueSatisfying(
-                    uri -> assertThat(uri.toString()).isEqualTo("http://localhost:4566"));
-        }
-        try (SesV2Client ses = config.sesClient(otp(OtpProperties.Delivery.AWS, "", null));
-                SnsClient sns = config.snsClient(otp(OtpProperties.Delivery.AWS, null, ""))) {
-            assertThat(ses.serviceClientConfiguration().endpointOverride()).isEmpty();
-            assertThat(sns.serviceClientConfiguration().endpointOverride()).isEmpty();
-        }
     }
 
     @Test
@@ -106,108 +47,74 @@ class OtpConfigurationTest {
         DynamoDbClient dynamo = mock(DynamoDbClient.class);
         when(dynamo.describeTable(any(java.util.function.Consumer.class))).thenReturn(DescribeTableResponse.builder().build());
 
-        assertThat(config.otpChallengeRepository(dynamo, auth(null, false), otp(OtpProperties.Delivery.AWS, null, null)))
+        assertThat(config.otpChallengeRepository(dynamo, auth(null, false), otp()))
                 .isInstanceOf(DynamoDbOtpChallengeRepository.class);
         verify(dynamo, never()).describeTable(any(java.util.function.Consumer.class));
 
-        config.otpChallengeRepository(dynamo, auth("http://dynamodb:8000", true), otp(OtpProperties.Delivery.AWS, null, null));
+        config.otpChallengeRepository(dynamo, auth("http://dynamodb:8000", true), otp());
         verify(dynamo).describeTable(any(java.util.function.Consumer.class));
     }
 
     @Test
-    void theServiceBeanIsWiredFromTheProperties() {
-        AuthService authService = mock(AuthService.class);
-        org.springframework.beans.factory.ObjectProvider<SesV2Client> ses = providerOf(mock(SesV2Client.class));
-        org.springframework.beans.factory.ObjectProvider<SnsClient> sns = providerOf(mock(SnsClient.class));
-        NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
-                auth(null, false), new NotificationsProperties(null, null, null, null), ses, sns, org.springframework.web.client.RestClient.builder(),
-                com.creditagent.clients.RetrySettings.DEFAULTS, "");
-        assertThat(gateway).isInstanceOf(LocalNotificationGateway.class);
-        assertThat(config.otpLoginService(authService, new InMemoryRepositories.OtpChallenges(),
-                otp(OtpProperties.Delivery.AWS, null, null), auth(null, false), gateway,
-                new com.creditagent.common.AuditLog())).isNotNull();
-    }
-
-    @Test
-    void localIsTheDefaultMode() {
-        NotificationsProperties defaults = new NotificationsProperties(null, null, null, null);
-        assertThat(defaults.mode()).isEqualTo(NotificationsProperties.Mode.LOCAL);
-        assertThat(defaults.url()).isEqualTo("http://localhost:8094");
-        assertThat(defaults.timeout()).isEqualTo(Duration.ofSeconds(10));
-        assertThat(defaults.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
-        assertThatThrownBy(() -> new NotificationsProperties(null, null, null, Duration.ZERO))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new NotificationsProperties(null, null, Duration.ZERO, null))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void remoteModeSendsThroughTheServiceWithoutSesOrSns() {
-        NotificationGateway gateway = config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null),
-                auth(null, false), new NotificationsProperties(NotificationsProperties.Mode.REMOTE, "http://notification-service:8094",
-                        Duration.ofSeconds(10), null), providerOf(null), providerOf(null), org.springframework.web.client.RestClient.builder(),
-                com.creditagent.clients.RetrySettings.DEFAULTS, TestSecrets.of("internal"));
+    void codesAreSentThroughTheServiceAndNeedTheToken() {
+        NotificationGateway gateway = config.notificationGateway(
+                new NotificationsProperties("http://notification-service:8094", Duration.ofSeconds(10), null),
+                RestClient.builder(), RetrySettings.DEFAULTS, TestSecrets.of("internal"));
         assertThat(gateway).isInstanceOf(RemoteNotificationGateway.class);
-        assertThatThrownBy(() -> config.notificationGateway(otp(OtpProperties.Delivery.AWS, null, null), auth(null, false),
-                new NotificationsProperties(NotificationsProperties.Mode.REMOTE, null, null, null), providerOf(null), providerOf(null),
-                org.springframework.web.client.RestClient.builder(), com.creditagent.clients.RetrySettings.DEFAULTS, " ")).isInstanceOf(IllegalStateException.class)
+        assertThat(config.otpLoginService(mock(AuthService.class), new InMemoryRepositories.OtpChallenges(), otp(),
+                auth(null, false), gateway, new AuditLog())).isNotNull();
+        assertThatThrownBy(() -> config.notificationGateway(new NotificationsProperties(null, null, null),
+                RestClient.builder(), RetrySettings.DEFAULTS, " ")).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("INTERNAL_API_TOKEN");
     }
 
-    final org.springframework.boot.test.context.runner.ApplicationContextRunner runner =
-            new org.springframework.boot.test.context.runner.ApplicationContextRunner()
-                    .withUserConfiguration(OtpConfiguration.class)
-                    .withBean(DynamoDbClient.class, () -> mock(DynamoDbClient.class))
-                    .withBean(AuthProperties.class, () -> auth(null, false))
-                    .withBean(AuthService.class, () -> mock(AuthService.class))
-                    .withBean(com.creditagent.common.AuditLog.class, com.creditagent.common.AuditLog::new)
-                    .withBean(org.springframework.web.client.RestClient.Builder.class, org.springframework.web.client.RestClient::builder)
-                    .withBean(com.creditagent.clients.RetrySettings.class, () -> com.creditagent.clients.RetrySettings.DEFAULTS)
-                    .withPropertyValues("credit.auth.otp.email-from=no-reply@creditagent.example",
-                            "credit.auth.otp.table=challenges", "credit.internal.token=" + TestSecrets.of("internal"));
-
     @Test
-    void theContextIsLocalByDefaultAndRemoteBuildsNoSesOrSns() {
-        runner.run(context -> {
-            assertThat(context).hasNotFailed();
-            assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(LocalNotificationGateway.class);
-            assertThat(context).hasSingleBean(SesV2Client.class).hasSingleBean(SnsClient.class);
-        });
-        runner.withPropertyValues("credit.notifications.mode=remote", "credit.notifications.url=http://notification-service:8094")
-                .run(context -> {
-                    assertThat(context).hasNotFailed();
-                    assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(RemoteNotificationGateway.class);
-                    assertThat(context).doesNotHaveBean(SesV2Client.class).doesNotHaveBean(SnsClient.class);
-                });
+    void theServiceDefaultsAreLocalAndBounded() {
+        NotificationsProperties defaults = new NotificationsProperties(null, null, null);
+        assertThat(defaults.url()).isEqualTo("http://localhost:8094");
+        assertThat(defaults.timeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThat(defaults.connectTimeout()).isEqualTo(Duration.ofSeconds(2));
+        assertThatThrownBy(() -> new NotificationsProperties(null, null, Duration.ZERO))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new NotificationsProperties(null, Duration.ZERO, null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /** Only what the context gets from elsewhere in the app: no SES or SNS client, no AWS credentials. */
+    final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withUserConfiguration(OtpConfiguration.class)
+            .withBean(DynamoDbClient.class, () -> mock(DynamoDbClient.class))
+            .withBean(AuthProperties.class, () -> auth(null, false))
+            .withBean(AuthService.class, () -> mock(AuthService.class))
+            .withBean(AuditLog.class, AuditLog::new)
+            .withBean(RestClient.Builder.class, RestClient::builder)
+            .withBean(RetrySettings.class, () -> RetrySettings.DEFAULTS)
+            .withPropertyValues("credit.auth.otp.table=challenges");
+
     @Test
-    void aBlankModeIsLocalForTheSesAndSnsBeansToo() {
-        runner.withPropertyValues("credit.notifications.mode=").run(context -> {
-            assertThat(context).hasNotFailed().hasSingleBean(SesV2Client.class).hasSingleBean(SnsClient.class);
-            assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(LocalNotificationGateway.class);
-        });
+    void theContextStartsWithOnlyTheServiceUrlAndToken() {
+        runner.withPropertyValues("credit.notifications.url=http://notification-service:8094",
+                "credit.internal.token=" + TestSecrets.of("internal")).run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(OtpLoginService.class);
+                    assertThat(context.getBean(NotificationGateway.class)).isInstanceOf(RemoteNotificationGateway.class);
+                    assertThat(context.getBeanNamesForType(Object.class)).noneMatch(name -> name.matches("(?i).*(ses|sns).*client.*"));
+                });
+        // Without the token, sign-in could never send a code: the context refuses to start.
+        runner.run(context -> assertThat(context).hasFailed());
     }
 
     @Test
     void theServiceUrlMustBeHttpsUnlessLocal() {
         for (String ok : new String[] {"http://localhost:8094", "http://127.0.0.1:8094", "http://[::1]:8094",
                 "http://notification-service:8094", "https://notifications.internal.example", "HTTPS://Notify.Example/"}) {
-            assertThat(new NotificationsProperties(null, ok, null, null).url()).isEqualTo(ok);
+            assertThat(new NotificationsProperties(ok, null, null).url()).isEqualTo(ok);
         }
         for (String bad : new String[] {"http://notifications.internal.example", "http://10.0.0.5:8094", "ftp://localhost",
                 "notification-service:8094", "/internal", "http://", "http://exa mple"}) {
-            assertThatThrownBy(() -> new NotificationsProperties(null, bad, null, null)).as(bad)
+            assertThatThrownBy(() -> new NotificationsProperties(bad, null, null)).as(bad)
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("NOTIFICATIONS_URL");
         }
-        runner.withPropertyValues("credit.notifications.url=http://notify.example.com").run(context ->
-                assertThat(context).hasFailed());
-    }
-
-    @SuppressWarnings("unchecked")
-    static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
-        org.springframework.beans.factory.ObjectProvider<T> provider = mock(org.springframework.beans.factory.ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(value);
-        return provider;
+        runner.withPropertyValues("credit.notifications.url=http://notify.example.com",
+                "credit.internal.token=" + TestSecrets.of("internal")).run(context -> assertThat(context).hasFailed());
     }
 }
