@@ -47,8 +47,8 @@
         <maven.compiler.release>26</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <langchain4j.version>1.23.0</langchain4j.version>
-        <langchain4j-beta.version>1.23.0-beta33</langchain4j-beta.version>
+        <langchain4j.version>1.24.0</langchain4j.version>
+        <langchain4j-beta.version>1.24.0-beta34</langchain4j-beta.version>
         <a2a-java-sdk.version>1.5.1.Final</a2a-java-sdk.version>
         <!-- Line coverage every module must keep (the whole project targets 95% in CI). -->
         <coverage.module.minimum>0.90</coverage.module.minimum>
